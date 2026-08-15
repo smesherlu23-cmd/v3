@@ -227,7 +227,7 @@ def _extract_exe_icon(exe_full: str, icon_cache: str) -> str | None:
         log.exception("не удалось вытащить иконку из %s", exe_full)
         return None
 
-def _steam_games(icon_cache: str | None) -> list[dict]:
+def _steam_games(icon_cache: str | None, posters: bool = True) -> list[dict]:
     games = []
     seen = set()
     for root in _steam_roots():
@@ -247,7 +247,7 @@ def _steam_games(icon_cache: str | None) -> list[dict]:
                 seen.add(appid)
                 installdir = _vdf_val(text, "installdir")
                 icon, fit = steam_art._steam_icon(root, appid, icon_cache)
-                poster = steam_art._steam_portrait(root, appid, icon_cache)
+                poster = steam_art._steam_portrait(root, appid, icon_cache, posters)
                 track = (_steam_game_exe(lib, installdir, name, icon_cache, appid)
                          if os.name == "nt" else None)
                 if not icon and os.name == "nt" and icon_cache:

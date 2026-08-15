@@ -103,6 +103,10 @@ def prune_icon_cache(store, icon_cache: str | None = None,
 ICON_SCHEMA = 9
 
 def backfill_icons(store, icon_cache: str | None = None, refresh: bool = False) -> bool:
+    # «Постеры для игр» читаются здесь, а не приходят параметром: дозаполнение
+    # запускается из четырёх мест, и забытый аргумент в любом из них молча
+    # вернул бы походы в CDN. Store у функции и так есть.
+    posters = bool(store.state()["settings"].get("game_posters", True))
     changed = False
     for app in list(store.state().get("apps", [])):
         patch = {}
@@ -122,7 +126,7 @@ def backfill_icons(store, icon_cache: str | None = None, refresh: bool = False) 
             if exe:
                 patch["track_exe"] = exe
         if path.startswith("steam://") and (refresh or not app.get("poster")):
-            poster = steam_art.poster_for(path, icon_cache)
+            poster = steam_art.poster_for(path, icon_cache, posters)
             if poster and poster != app.get("poster"):
                 patch["poster"] = poster
         if patch:

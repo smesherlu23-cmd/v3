@@ -1042,6 +1042,54 @@ def test_cdn_circuit_breaker():
         discovery.reset_cdn_state()
 
 
+def test_posters_off_means_no_network():
+    """Выключенные «Постеры для игр» действительно выключают походы в CDN.
+
+    Флаг использовался ровно в двух местах, и оба — про отрисовку. Загрузка
+    же шла безусловно: пользователь, выключивший постеры, продолжал ходить в
+    CDN Valve, передавать туда список своих appid и занимать диск.
+    """
+    from app.platform import discovery
+
+    urls = []
+    original = discovery.steam_art._http_get
+
+    def spy(url, timeout=None):
+        urls.append(url)
+        return None
+
+    discovery.steam_art._http_get = spy
+    discovery.reset_cdn_state()
+    try:
+        with tempfile.TemporaryDirectory() as cache:
+            discovery.poster_for("steam://rungameid/730", cache, posters=False)
+            ok(urls == [], "poster_for с выключенными постерами не ходит в сеть")
+
+            discovery.reset_cdn_state()
+            discovery.poster_for("steam://rungameid/730", cache, posters=True)
+            ok(urls, "а с включёнными — ходит, то есть проверка не пустая")
+
+            # backfill_icons читает настройку сам: его зовут из четырёх мест,
+            # и забытый аргумент в любом из них вернул бы загрузку молча.
+            with tempfile.TemporaryDirectory() as d:
+                store = Store(os.path.join(d, "data.json"))
+                store.set_setting("game_posters", False)
+                store.add_app({"name": "CS2", "path": "steam://rungameid/730",
+                               "category_id": "work"})
+                urls.clear()
+                discovery.reset_cdn_state()
+                discovery.backfill_icons(store, cache)
+                ok(urls == [], "и дозаполнение значков тоже молчит")
+
+                store.set_setting("game_posters", True)
+                discovery.reset_cdn_state()
+                discovery.backfill_icons(store, cache, refresh=True)
+                ok(urls, "включённая настройка возвращает загрузку")
+    finally:
+        discovery.steam_art._http_get = original
+        discovery.reset_cdn_state()
+
+
 def test_hotkey_rejection():
     """A single bad accelerator must not take the other hotkeys down with it.
 
@@ -3546,7 +3594,7 @@ def test_ui_add_screen():
     before = set(_threading.enumerate())
     try:
         discovery.discover_apps = (
-            lambda icon_cache=None, on_progress=None, report=None: list(found))
+            lambda icon_cache=None, on_progress=None, report=None, posters=True: list(found))
         discovery.backfill_icons = lambda *a, **kw: False
         with tempfile.TemporaryDirectory() as d:
             store = Store(os.path.join(d, "data.json"))
@@ -3649,7 +3697,7 @@ def test_ui_scanning_is_just_a_spinner():
     before = set(_threading.enumerate())
     gate = _threading.Event()
     try:
-        def slow(icon_cache=None, on_progress=None, report=None):
+        def slow(icon_cache=None, on_progress=None, report=None, posters=True):
             gate.wait(3)
             return []
         discovery.discover_apps = slow
@@ -3807,7 +3855,7 @@ def test_ui_calm_mode():
         real_discover, real_backfill = discovery.discover_apps, discovery.backfill_icons
         try:
             discovery.discover_apps = (
-                lambda icon_cache=None, on_progress=None, report=None: list(found))
+                lambda icon_cache=None, on_progress=None, report=None, posters=True: list(found))
             discovery.backfill_icons = lambda *a, **kw: False
             import threading as _threading
             before = set(_threading.enumerate())
@@ -4602,7 +4650,7 @@ def test_ui_background_rescan():
             return False
 
         discovery.backfill_icons = fake_backfill
-        discovery.discover_apps = (lambda icon_cache=None, on_progress=None, report=None:
+        discovery.discover_apps = (lambda icon_cache=None, on_progress=None, report=None, posters=True:
                                    [{"name": "Fresh", "path": "C:/fresh.exe",
                                      "source": "startmenu"}])
         try:
@@ -4642,7 +4690,7 @@ def test_ui_discovery_reuse():
     real_discover = discovery.discover_apps
     before = set(__import__("threading").enumerate())
     try:
-        def counting(icon_cache=None, on_progress=None, report=None):
+        def counting(icon_cache=None, on_progress=None, report=None, posters=True):
             scans["n"] += 1
             return []
 
