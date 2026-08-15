@@ -68,18 +68,29 @@ def is_enabled() -> bool:
 def set_autostart(enabled: bool) -> bool:
     if os.name != "nt":
         return False
+    # Ярлык из «Автозагрузки» убираем в обоих случаях: при включении — чтобы
+    # программа не стартовала дважды вместе с ключом реестра, при выключении —
+    # потому что иначе выключить автозапуск не получится.
     remove_startup_shortcut()
     try:
         import winreg
 
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            if enabled:
+        if enabled:
+            # CreateKeyEx, а не OpenKey: на свежем профиле Windows ветки
+            # `...\CurrentVersion\Run` может не быть вовсе, и OpenKey падает
+            # с FileNotFoundError — переключатель «Запускать с Windows» тихо
+            # не срабатывал. Существующую ветку CreateKeyEx просто открывает.
+            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
+                                    winreg.KEY_SET_VALUE) as key:
                 winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, _launch_command())
-            else:
-                try:
-                    winreg.DeleteValue(key, APP_NAME)
-                except FileNotFoundError:
-                    pass
+            return True
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as key:
+                winreg.DeleteValue(key, APP_NAME)
+        except FileNotFoundError:
+            pass          # нет ветки или нет значения — выключать уже нечего
         return True
     except Exception:
         log.exception("не удалось установить автозапуск")

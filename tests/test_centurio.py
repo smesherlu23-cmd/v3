@@ -2036,7 +2036,10 @@ def test_log_is_ready_before_the_store_is_read():
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.FunctionDef) and n.name == "main")
 
-    def first_line(match) -> int | None:
+    def first_line(match):
+        # Без аннотации намеренно: в этом файле нет `from __future__ import
+        # annotations`, а `int | None` вычисляется в момент объявления и
+        # падает на Python 3.9, который есть в матрице CI.
         lines = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and match(n.func)]
         return min(lines) if lines else None
 
