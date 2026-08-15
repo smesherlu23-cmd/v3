@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from ...infra import log
+from .. import win_icons
 
 _JUNK_TOKENS = ("uninstall", "удал", "readme", "read me", "help", "документац",
                 "documentation", "release notes", "website", "на сайт", "лиценз",
@@ -404,6 +405,23 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
     return apps
 
 def _win_extract_one(path: str, icon_cache: str) -> str | None:
+    """Иконка одного файла.
+
+    Через этот вызов идут все одиночные извлечения — Epic, Steam и
+    дозаполнение значков, — и раньше каждое поднимало свой процесс PowerShell.
+    Холодный старт PowerShell 0.3–1.5 с, так что библиотека из 50 игр без кэша
+    давала минуту фоновой работы и 50 порождённых процессов. Теперь тот же
+    `PrivateExtractIcons` зовётся из Python через `ctypes`; PowerShell остаётся
+    запасным путём на случай, если Win32 или Pillow почему-то не отработали.
+    """
+    if not path or not icon_cache:
+        return None
+    out = win_icons.cache_path(path, icon_cache)
+    if os.path.exists(out):
+        return out
+    if win_icons.extract_png(path, out):
+        return out
+
     ps = _WIN_ICON_ONE_PS.replace("__CACHE__", _ps_literal(icon_cache)).replace(
         "__EXE__", _ps_literal(path))
     try:

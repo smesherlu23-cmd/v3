@@ -1074,6 +1074,59 @@ def test_cdn_circuit_breaker():
         discovery.reset_cdn_state()
 
 
+def test_icons_are_extracted_without_powershell():
+    """Иконка достаётся через `ctypes`, а не скрытым процессом PowerShell.
+
+    Раньше на каждый файл поднимался PowerShell, внутри которого
+    `Add-Type -TypeDefinition` компилировал C# с `DllImport("user32")`. Цена —
+    0.3–1.5 с холодного старта на файл: библиотека из 50 игр без кэша значков
+    давала минуту фоновой работы и 50 порождённых процессов. Репутация —
+    скрытый PowerShell с P/Invoke из скомпилированного в рантайме кода это
+    два самых тяжёлых признака, по которым Centurio принимают за infostealer.
+
+    Настоящее извлечение проверяется только на Windows-раннере: там берётся
+    системный exe, и результат обязан быть читаемым PNG.
+    """
+    from app.platform import win_icons
+    from app.platform.discovery import windows as win
+
+    with tempfile.TemporaryDirectory() as cache:
+        first = win_icons.cache_path(r"C:\Apps\Thing.exe", cache)
+        ok(first.endswith("_256.png"), f"имя в кэше как у прежнего PowerShell ({first})")
+        ok(first == win_icons.cache_path(r"c:\apps\THING.exe", cache),
+           "регистр пути не плодит второй файл — иначе накопленный кэш пропал бы")
+
+        if not win_icons.available():
+            ok(win_icons.extract_png(r"C:\Windows\System32\notepad.exe", first) is False,
+               "вне Windows извлечение просто отвечает отказом")
+            return
+
+        exe = os.path.join(os.environ.get("windir", r"C:\Windows"), "explorer.exe")
+        out = win_icons.cache_path(exe, cache)
+        ok(win_icons.extract_png(exe, out) is True, f"иконка достаётся из {exe}")
+        ok(os.path.exists(out) and os.path.getsize(out) > 0, "и сохраняется файлом")
+
+        from PIL import Image
+        with Image.open(out) as im:
+            ok(im.format == "PNG" and im.size == (256, 256), f"это PNG 256×256 ({im.size})")
+            ok(im.convert("RGBA").getchannel("A").getbbox() is not None,
+               "и картинка не пустая — альфа-канал не весь нулевой")
+
+        calls = []
+        real_run = win._run_powershell
+        win._run_powershell = lambda *a, **kw: calls.append(1)
+        try:
+            got = win._win_extract_one(exe, cache)
+            ok(got == out, "одиночное извлечение отдаёт тот же файл")
+            ok(calls == [], "и не поднимает PowerShell вовсе")
+        finally:
+            win._run_powershell = real_run
+
+        ok(win_icons.extract_png(os.path.join(cache, "no-such.exe"),
+                                 os.path.join(cache, "x.png")) is False,
+           "несуществующий файл — отказ, а не исключение")
+
+
 def test_system_programs_are_launched_by_full_path():
     """`powershell` и `explorer` по имени резолвятся через PATH.
 
