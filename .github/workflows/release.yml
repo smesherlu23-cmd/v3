@@ -25,7 +25,12 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Не `windows-latest`: на нём теперь Visual Studio 2026, а Flutter 3.29.2
+    # (его тянет flet 0.28.3) просит у CMake генератор «Visual Studio 16 2019»
+    # и падает с «could not find any instance of Visual Studio». Когда flet
+    # переедет на Flutter, знающий про VS 2026, образ можно вернуть обратно.
+    # Тесты в ci.yml это не касается — они собираются без Flutter.
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
@@ -76,8 +81,12 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Build the installer
+        shell: pwsh
         run: |
-          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" installer\centurio.iss
+          # Скобки обязательны: `$env:ProgramFiles(x86)` PowerShell читает как
+          # `$env:ProgramFiles` плюс литерал «(x86)» и ищет ISCC.exe в
+          # «C:\Program Files(x86)» — без пробела, то есть нигде.
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\centurio.iss
 
       - name: Sign the installer
         shell: pwsh

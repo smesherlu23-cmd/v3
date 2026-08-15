@@ -30,6 +30,7 @@ from .toast import Notifier, ToastHost
 
 WINDOW_TTL = 2.0
 TILE_CACHE_MAX = 600
+ICON_SIZE_TTL = 30.0
 
 CATEGORY_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
 
@@ -56,6 +57,8 @@ class CenturioUI:
         self._tile_epoch: tuple = ()
         self._add_ui: dict | None = None
         self._cat_index: dict[str, dict] = {}
+        self._icon_size = 0
+        self._icon_size_at = 0.0
         self._visible = True
         self._dirty = False
         self._capture_active = False
@@ -1102,14 +1105,29 @@ class CenturioUI:
             self.toast.error(res.get("error", "Папка не найдена"))
 
     def icon_cache_size(self) -> int:
+        """Размер кэша значков — пересчитывается не чаще раза в полминуты.
+
+        Обход каталога со `stat` на каждый файл вызывается из отрисовки вкладки
+        «Библиотека», то есть на каждое нажатие любого переключателя на ней.
+        При нескольких тысячах файлов это заметная задержка на ровном месте, а
+        цифра при этом справочная и на секунду устареть может.
+        """
+        now = time.monotonic()
+        if self._icon_size_at and now - self._icon_size_at <= ICON_SIZE_TTL:
+            return self._icon_size
         total = 0
         try:
             for entry in Path(self.icon_cache_dir()).rglob("*"):
                 if entry.is_file():
                     total += entry.stat().st_size
         except OSError:
-            return 0
+            total = 0
+        self._icon_size, self._icon_size_at = total, now
         return total
+
+    def forget_icon_cache_size(self) -> None:
+        """Сбросить кэш цифры — после того, как каталог заведомо изменился."""
+        self._icon_size_at = 0.0
 
     def clear_icon_cache(self):
         removed = 0
@@ -1124,6 +1142,7 @@ class CenturioUI:
             self.toast.error("Не удалось очистить кэш")
             return
         self.store.update_apps([a["id"] for a in self.apps()], {"icon": None, "poster": None})
+        self.forget_icon_cache_size()
         self.toast.show(f"Кэш очищен, файлов удалено: {removed}")
         self.scan.backfill_icons_async()
         self.refresh()

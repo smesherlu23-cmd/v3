@@ -8,7 +8,7 @@ from . import colors as C
 from . import screens
 from . import widgets as Wg
 from .format import T
-from .images import img_b64, is_launcher_art
+from .images import icon_image, is_launcher_art, raster_path
 
 QUICK_H = 88
 
@@ -221,7 +221,7 @@ class GridView:
 
     def _use_poster(self, a):
         return bool(self.ui._settings.get("game_posters", True)
-                    and is_launcher_art(a) and img_b64(a.get("poster")))
+                    and is_launcher_art(a) and raster_path(a.get("poster")))
 
     def _grid(self, apps, key):
         ids = [a["id"] for a in apps]
@@ -371,8 +371,8 @@ class GridView:
     def _build_poster_tile(self, a, compact, running, selected, ids_box, box=None):
         width = C.POSTER_W_COMPACT if compact else C.POSTER_W
         height = C.POSTER_H_COMPACT if compact else C.POSTER_H
-        poster = ft.Image(src_base64=img_b64(a.get("poster")), width=width, height=height,
-                          fit=ft.ImageFit.COVER)
+        poster = icon_image(a.get("poster"), width=width, height=height,
+                            fit=ft.ImageFit.COVER) or ft.Container()
         scrim = ft.Container(
             T(a["name"], size=12, weight=ft.FontWeight.W_600, color=C.WHITE,
               max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),

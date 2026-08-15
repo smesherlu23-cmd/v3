@@ -638,6 +638,25 @@ def test_store_get_app_returns_a_copy():
 
         ok(s.get_app("no-such-id") is None, "a missing id still returns None")
 
+        # `state()` зовётся на каждый refresh, в том числе из фоновых потоков,
+        # поэтому копия делается своим обходом вместо `copy.deepcopy` — втрое
+        # дешевле. Изоляция от этого меняться не должна ни на одном уровне
+        # вложенности.
+        s.add_set("Утро", [app_id])
+        snapshot = s.state()
+        snapshot["apps"][0]["name"] = "Mutated"
+        snapshot["apps"][0]["args"].append("--nope")
+        snapshot["categories"][0]["name"] = "Mutated"
+        snapshot["sets"][0]["items"][0]["slot"] = 99
+        snapshot["settings"]["collapsed"].append("nope")
+
+        fresh = s.state()
+        ok(fresh["apps"][0]["name"] == "Original", "state() отдаёт копию верхнего уровня")
+        ok(fresh["apps"][0]["args"] == [], "и вложенных списков")
+        ok(fresh["categories"][0]["name"] != "Mutated", "и соседних разделов")
+        ok(fresh["sets"][0]["items"][0]["slot"] != 99, "и записей на третьем уровне")
+        ok(fresh["settings"]["collapsed"] == [], "и списков внутри настроек")
+
 
 def test_store_refuses_to_downgrade_a_newer_file():
     """A file saved by a schema this build doesn't know gets backed up untouched."""
@@ -886,9 +905,22 @@ def test_store_batched_writes():
         ok(s.flush() is True and writes["n"] == 1,
            "but they were queued and land in exactly one write once flushed")
 
+        # Каждое сохранение переписывает файл целиком — на библиотеке в 500
+        # программ это ~8.5 мс синхронно в потоке интерфейса. Одиночные
+        # переключатели («избранное», «от администратора», горячая клавиша)
+        # били по диску на каждый щелчок, хотя массовые пути давно батчатся.
         writes["n"] = 0
-        s.update_app(s.state()["apps"][0]["id"], {"favorite": True})
-        ok(writes["n"] == 1, "a single update still writes immediately")
+        app_id = s.state()["apps"][0]["id"]
+        s.update_app(app_id, {"favorite": True})
+        ok(writes["n"] == 0, "одиночное изменение не блокирует щелчок записью на диск")
+        ok(s.get_app(app_id)["favorite"] is True, "в памяти оно видно сразу")
+        ok(s.flush() is True and writes["n"] == 1, "и досохраняется одной записью")
+        ok(Store(os.path.join(d, "data.json")).get_app(app_id)["favorite"] is True,
+           "то есть доезжает до диска")
+
+        writes["n"] = 0
+        s.update_app(app_id, {"favorite": False}, persist=True)
+        ok(writes["n"] == 1, "явный persist=True по-прежнему пишет сразу")
 
         writes["n"] = 0
         before = len(s.state()["apps"])
@@ -1040,6 +1072,106 @@ def test_cdn_circuit_breaker():
     finally:
         discovery.steam_art._http_get = original
         discovery.reset_cdn_state()
+
+
+def test_icons_are_extracted_without_powershell():
+    """Иконка достаётся через `ctypes`, а не скрытым процессом PowerShell.
+
+    Раньше на каждый файл поднимался PowerShell, внутри которого
+    `Add-Type -TypeDefinition` компилировал C# с `DllImport("user32")`. Цена —
+    0.3–1.5 с холодного старта на файл: библиотека из 50 игр без кэша значков
+    давала минуту фоновой работы и 50 порождённых процессов. Репутация —
+    скрытый PowerShell с P/Invoke из скомпилированного в рантайме кода это
+    два самых тяжёлых признака, по которым Centurio принимают за infostealer.
+
+    Настоящее извлечение проверяется только на Windows-раннере: там берётся
+    системный exe, и результат обязан быть читаемым PNG.
+    """
+    from app.platform import win_icons
+    from app.platform.discovery import windows as win
+
+    with tempfile.TemporaryDirectory() as cache:
+        first = win_icons.cache_path(r"C:\Apps\Thing.exe", cache)
+        ok(first.endswith("_256.png"), f"имя в кэше как у прежнего PowerShell ({first})")
+        ok(first == win_icons.cache_path(r"c:\apps\THING.exe", cache),
+           "регистр пути не плодит второй файл — иначе накопленный кэш пропал бы")
+
+        if not win_icons.available():
+            ok(win_icons.extract_png(r"C:\Windows\System32\notepad.exe", first) is False,
+               "вне Windows извлечение просто отвечает отказом")
+            return
+
+        exe = os.path.join(os.environ.get("windir", r"C:\Windows"), "explorer.exe")
+        out = win_icons.cache_path(exe, cache)
+        ok(win_icons.extract_png(exe, out) is True, f"иконка достаётся из {exe}")
+        ok(os.path.exists(out) and os.path.getsize(out) > 0, "и сохраняется файлом")
+
+        from PIL import Image
+        with Image.open(out) as im:
+            ok(im.format == "PNG" and im.size == (256, 256), f"это PNG 256×256 ({im.size})")
+            ok(im.convert("RGBA").getchannel("A").getbbox() is not None,
+               "и картинка не пустая — альфа-канал не весь нулевой")
+
+        calls = []
+        real_run = win._run_powershell
+        win._run_powershell = lambda *a, **kw: calls.append(1)
+        try:
+            got = win._win_extract_one(exe, cache)
+            ok(got == out, "одиночное извлечение отдаёт тот же файл")
+            ok(calls == [], "и не поднимает PowerShell вовсе")
+        finally:
+            win._run_powershell = real_run
+
+        ok(win_icons.extract_png(os.path.join(cache, "no-such.exe"),
+                                 os.path.join(cache, "x.png")) is False,
+           "несуществующий файл — отказ, а не исключение")
+
+
+def test_system_programs_are_launched_by_full_path():
+    """`powershell` и `explorer` по имени резолвятся через PATH.
+
+    Если раньше системного каталога в PATH стоит директория, куда пишет
+    непривилегированный процесс — типовая ошибка установки инструментов
+    разработчика, — подменяется исполняемый файл.
+    """
+    from app.platform.discovery import windows as win
+    from app.platform.launcher import explorer_exe
+
+    ps, explorer = win._powershell_exe(), explorer_exe()
+    if os.name != "nt":
+        ok(ps == "powershell" and explorer == "explorer",
+           "вне Windows остаются имена — там этих программ всё равно нет")
+        return
+
+    ok(os.path.isabs(ps) and os.path.isfile(ps), f"powershell берётся по полному пути ({ps})")
+    ok(os.path.isabs(explorer) and os.path.isfile(explorer),
+       f"проводник тоже ({explorer})")
+    windir = (os.environ.get("windir") or r"C:\Windows").lower()
+    ok(ps.lower().startswith(windir) and explorer.lower().startswith(windir),
+       "и оба лежат внутри каталога Windows, а не там, куда указал PATH")
+
+
+def test_single_instance_mutex_is_per_session():
+    """Мьютекс живёт в `Local\\`, а не в `Global\\`.
+
+    Глобальное пространство имён общее на всю машину: на терминальном сервере
+    второй пользователь не смог бы запустить программу. Вдобавок создание
+    объекта в `Global\\` требует SeCreateGlobalPrivilege, которой у обычного
+    пользователя может не быть, — `CreateMutexW` возвращает 0, `acquire`
+    отвечает True, и защита от второго экземпляра просто отключается.
+    """
+    from app.platform import single_instance
+
+    ok(single_instance.MUTEX_NAME.startswith("Local\\"),
+       f"имя мьютекса ограничено сеансом ({single_instance.MUTEX_NAME})")
+
+    if os.name != "nt":
+        return
+    try:
+        ok(single_instance.acquire() is True, "первый экземпляр захватывает мьютекс")
+        ok(single_instance.acquire() is True, "повторный вызов в том же процессе — не отказ")
+    finally:
+        single_instance.release()
 
 
 def test_posters_off_means_no_network():
@@ -1747,6 +1879,19 @@ def test_discovery():
     for fn in ("Best-Exe", "Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
               "Get-LogoAttr", "Get-Pkg"):
         ok(fn in discovery._WIN_PS, f"_WIN_PS defines/calls {fn}")
+
+    # Скрытый PowerShell, внутри которого `Add-Type -TypeDefinition` компилирует
+    # C# с `DllImport`, — классика offensive tooling, попадающая под AMSI, и
+    # один из самых тяжёлых признаков, по которым Centurio принимают за
+    # infostealer. Значки теперь достаёт `win_icons` через ctypes, и вернуться
+    # к компиляции в рантайме молча уже не выйдет.
+    for name, script in (("_WIN_PS", discovery._WIN_PS),
+                         ("_WIN_ICON_ONE_PS", discovery._WIN_ICON_ONE_PS),
+                         ("_WIN_STORE_ICON_ONE_PS", discovery._WIN_STORE_ICON_ONE_PS)):
+        ok("-TypeDefinition" not in script, f"{name}: не компилирует C# в рантайме")
+        ok("DllImport" not in script, f"{name}: не объявляет P/Invoke")
+    ok("Save-Icon" not in discovery._WIN_PS,
+       "пакетный поиск вообще не трогает значки — их достаёт Python после отсева мусора")
     ok("-AllUsers" in discovery._WIN_PS,
        "a per-user Get-AppxPackage miss gets a second, -AllUsers try")
     ok("Import-Module Appx" in discovery._WIN_PS,
@@ -4250,6 +4395,47 @@ def test_ui_icons_are_never_letters():
            "nothing in the window draws a letter placeholder any more")
 
 
+def test_images_are_handed_over_as_paths_not_base64():
+    """Растр уходит клиенту путём — кодирование осталось только браузеру.
+
+    base64 занимал ×1.33 от файла строкой в памяти Python и ещё столько же в
+    протоколе Flet; постер 600×900 превращался в ~200 КБ строки. Хуже того,
+    при библиотеке больше 192 картинок кэш начинал пробуксовывать: каждый
+    `refresh` заново читал с диска и кодировал вытесненные картинки —
+    синхронно, в потоке отрисовки.
+    """
+    try:
+        import flet as ft  # noqa: F401
+
+        from app.ui import images
+    except Exception as exc:
+        skip("UI image-source test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        png = str(iconify.generate_icon(os.path.join(d, "icon.png"), 32))
+        missing = os.path.join(d, "gone.png")
+
+        try:
+            images.embed_images(False)
+            img = images.icon_image(png, width=32, height=32)
+            ok(img is not None and img.src == png, f"путь уходит как есть ({img and img.src})")
+            ok(img.src_base64 is None, "и ничего не кодируется")
+
+            ok(images.raster_path(png) == png, "существующий растр опознаётся")
+            ok(images.raster_path(missing) is None, "отсутствующий файл — нет")
+            ok(images.raster_path(os.path.join(d, "icon.txt")) is None, "как и не картинка")
+            ok(images.icon_image(missing) is None,
+               "для отсутствующего файла картинки нет — рисуется значок-заглушка")
+
+            images.embed_images(True)
+            web = images.icon_image(png, width=32, height=32)
+            ok(web is not None and web.src_base64, "в режиме CENTURIO_WEB картинка кодируется")
+            ok(web.src is None, "потому что страница в браузере не читает файлы с диска")
+        finally:
+            images.embed_images(False)
+
+
 def test_ui_icon_slot_respects_stored_fit():
     """A Steam app's «icon» field is sometimes a wide capsule/header image and
     sometimes a genuinely square one — which one it got is recorded in
@@ -4416,6 +4602,37 @@ def test_toast_lifecycle():
     ok(host.text.value == "Второй" and host.control.visible,
        "a stale timer doesn't clear the toast that replaced it")
     host.stop()
+
+
+def test_icon_cache_size_is_not_recounted_on_every_draw():
+    """Обход каталога кэша не повторяется на каждое нажатие переключателя.
+
+    `icon_cache_size` вызывается из отрисовки вкладки «Библиотека», а это
+    `rglob` со `stat` на каждый файл. При нескольких тысячах файлов кэша
+    получалась заметная задержка на каждый чих, притом что цифра справочная.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI icon-cache-size test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+
+        cache = Path(ui.icon_cache_dir())
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "a.png").write_bytes(b"x" * 1000)
+
+        first = ui.icon_cache_size()
+        ok(first == 1000, f"размер считается ({first})")
+
+        (cache / "b.png").write_bytes(b"x" * 500)
+        ok(ui.icon_cache_size() == 1000, "повторный вызов берёт запомненное, а не обходит диск")
+
+        ui.forget_icon_cache_size()
+        ok(ui.icon_cache_size() == 1500, "после явного сброса цифра пересчитывается")
 
 
 def test_ui_settings_cache():

@@ -24,6 +24,7 @@ from app.platform import windows as W
 from app.platform.launcher import Launcher
 from app.platform.tray import TrayController
 from app.ui import colors as C
+from app.ui import images
 from app.ui.app import CenturioUI
 from app.ui.iconify import ensure_icons, tray_icon_path
 
@@ -63,6 +64,10 @@ def main(page: ft.Page):
 
     ensure_icons(ASSETS_DIR)
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
+    # Картинки отдаются клиенту путём, а не строкой base64. В браузере такого
+    # пути нет — страница не может открыть файл на диске, — поэтому там
+    # включается кодирование.
+    images.embed_images(is_web)
     start_hidden = "--hidden" in sys.argv
 
     page.title = "Centurio"
@@ -330,6 +335,13 @@ def main(page: ft.Page):
                 ui.refresh()
             if refresh:
                 store.set_setting("icon_schema", discovery.ICON_SCHEMA)
+            # Прибираться нужно и тому, кто добавил программы один раз и больше
+            # не сканирует: раньше `prune_icon_cache` звался только из «Проверить
+            # снова», то есть у такого пользователя значки, постеры и steam_*.jpg
+            # копились вечно. Удаляются только осиротевшие файлы старше двух
+            # недель, так что делать это на старте безопасно.
+            discovery.prune_icon_cache(store, cache)
+            ui.forget_icon_cache_size()
         except Exception:
             log.exception("сбой при заполнении значков")
     threading.Thread(target=_backfill, daemon=True).start()
