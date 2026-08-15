@@ -1879,6 +1879,19 @@ def test_discovery():
     for fn in ("Best-Exe", "Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
               "Get-LogoAttr", "Get-Pkg"):
         ok(fn in discovery._WIN_PS, f"_WIN_PS defines/calls {fn}")
+
+    # Скрытый PowerShell, внутри которого `Add-Type -TypeDefinition` компилирует
+    # C# с `DllImport`, — классика offensive tooling, попадающая под AMSI, и
+    # один из самых тяжёлых признаков, по которым Centurio принимают за
+    # infostealer. Значки теперь достаёт `win_icons` через ctypes, и вернуться
+    # к компиляции в рантайме молча уже не выйдет.
+    for name, script in (("_WIN_PS", discovery._WIN_PS),
+                         ("_WIN_ICON_ONE_PS", discovery._WIN_ICON_ONE_PS),
+                         ("_WIN_STORE_ICON_ONE_PS", discovery._WIN_STORE_ICON_ONE_PS)):
+        ok("-TypeDefinition" not in script, f"{name}: не компилирует C# в рантайме")
+        ok("DllImport" not in script, f"{name}: не объявляет P/Invoke")
+    ok("Save-Icon" not in discovery._WIN_PS,
+       "пакетный поиск вообще не трогает значки — их достаёт Python после отсева мусора")
     ok("-AllUsers" in discovery._WIN_PS,
        "a per-user Get-AppxPackage miss gets a second, -AllUsers try")
     ok("Import-Module Appx" in discovery._WIN_PS,

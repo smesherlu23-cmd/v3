@@ -88,36 +88,39 @@ def _is_windows_system(name: str, path: str) -> bool:
         return True
     return False
 
-_PS_ICON_FUNCS = r'''
+# Здесь больше нет ни `Add-Type -TypeDefinition`, ни `DllImport`: значки из
+# exe достаёт `platform/win_icons.py` тем же `PrivateExtractIcons`, только из
+# Python через ctypes. Компиляция C# в рантайме с P/Invoke — классика
+# offensive tooling, попадающая под AMSI, и один из самых тяжёлых признаков,
+# по которым антивирусы принимают Centurio за infostealer. За PowerShell
+# осталось то, для чего он действительно нужен: ярлыки меню «Пуск», реестр и
+# Get-AppxPackage.
+_PS_PRELUDE = r'''
 $ErrorActionPreference='SilentlyContinue'
 try{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8}catch{}
 $OutputEncoding=[System.Text.Encoding]::UTF8
 $cache=__CACHE__
-Add-Type -AssemblyName System.Drawing
-$script:CentBig=$false
-try {
-  Add-Type -ReferencedAssemblies 'System.Drawing' -TypeDefinition @"
-using System;using System.Runtime.InteropServices;using System.Drawing;
-public class CentIcon {
- [DllImport("user32.dll")] public static extern int PrivateExtractIcons(string p,int i,int cx,int cy,IntPtr[] h,int[] id,int n,int f);
- [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr h);
- public static Bitmap Get(string p,int s){ IntPtr[] h=new IntPtr[1]; int[] id=new int[1]; int r=PrivateExtractIcons(p,0,s,s,h,id,1,0); if(r>0 && h[0]!=IntPtr.Zero){ Icon ic=Icon.FromHandle(h[0]); Bitmap b=new Bitmap(ic.ToBitmap()); DestroyIcon(h[0]); return b; } return null; } }
-"@
-  $script:CentBig=$true
-} catch { $script:CentBig=$false }
 function Md5($s){ $m=[System.Security.Cryptography.MD5]::Create(); (($m.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($s.ToLower())))|ForEach-Object{$_.ToString('x2')}) -join '' }
+'''
+
+# Запасной путь для одиночного файла — только штатная сборка System.Drawing,
+# без компиляции чего-либо. Иконка выйдет мельче, чем даёт PrivateExtractIcons,
+# но сюда попадают лишь случаи, когда ctypes-извлечение не отработало.
+_PS_FALLBACK_ICON = r'''
+Add-Type -AssemblyName System.Drawing
 function Save-Icon($exe){
   if(-not $cache){ return $null }
   if(-not (Test-Path -LiteralPath $exe)){ return $null }
   $f=Join-Path $cache ((Md5 $exe)+'_256.png')
   if(Test-Path -LiteralPath $f){ return $f }
   $bmp=$null
-  if($script:CentBig){ try{ $bmp=[CentIcon]::Get($exe,256) }catch{ $bmp=$null } }
-  if(-not $bmp){ try{ $ic=[System.Drawing.Icon]::ExtractAssociatedIcon($exe); if($ic){ $bmp=$ic.ToBitmap() } }catch{ $bmp=$null } }
+  try{ $ic=[System.Drawing.Icon]::ExtractAssociatedIcon($exe); if($ic){ $bmp=$ic.ToBitmap() } }catch{ $bmp=$null }
   if($bmp){ try{ $bmp.Save($f,[System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); return $f }catch{} }
   return $null
 }
+'''
 
+_PS_STORE_FUNCS = r'''
 function Resolve-StoreAsset($dir,$rel){
   $full=Join-Path $dir $rel
   if(Test-Path -LiteralPath $full){ return $full }
@@ -192,10 +195,10 @@ function Save-StoreIcon($family,$appId){
 }
 '''
 
-_WIN_PS = _PS_ICON_FUNCS + r'''
+_WIN_PS = _PS_PRELUDE + _PS_STORE_FUNCS + r'''
 $sh=New-Object -ComObject WScript.Shell
 $out=New-Object System.Collections.ArrayList
-function Add-App($n,$p,$s){ if(-not $n -or -not $p){ return }; if($p.ToLower() -like '*\windows\*'){ return }; $ic=Save-Icon $p; [void]$out.Add([PSCustomObject]@{name="$n";path="$p";icon=$ic;src="$s"}) }
+function Add-App($n,$p,$s){ if(-not $n -or -not $p){ return }; if($p.ToLower() -like '*\windows\*'){ return }; [void]$out.Add([PSCustomObject]@{name="$n";path="$p";icon=$null;src="$s"}) }
 function Add-Store($n,$id){
   if(-not $n -or -not $id){ return }
   $parts=$id -split '!',2
@@ -282,12 +285,12 @@ try{
 $out | ConvertTo-Json -Compress
 '''
 
-_WIN_ICON_ONE_PS = _PS_ICON_FUNCS + r'''
+_WIN_ICON_ONE_PS = _PS_PRELUDE + _PS_FALLBACK_ICON + r'''
 $r=Save-Icon __EXE__
 if($r){ Write-Output $r }
 '''
 
-_WIN_STORE_ICON_ONE_PS = _PS_ICON_FUNCS + r'''
+_WIN_STORE_ICON_ONE_PS = _PS_PRELUDE + _PS_STORE_FUNCS + r'''
 $r=Save-StoreIcon __FAMILY__ __APPID__
 if($r.icon){ Write-Output $r.icon }
 '''
@@ -397,8 +400,15 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
         src = (x.get("src") if x.get("src") in ("startmenu", "registry", "store", "localapps")
                else "registry")
         icon = x.get("icon")
-        if src == "store" and icon:
-            trim_transparent_padding(icon)
+        if src == "store":
+            if icon:
+                trim_transparent_padding(icon)
+        elif icon_cache and not icon:
+            # Значки достаются здесь, а не внутри PowerShell. Помимо ухода от
+            # компиляции C# в рантайме это ещё и меньше работы: до сюда
+            # доходят только записи, пережившие отсев мусора, а скрипт
+            # извлекал иконку каждой найденной, включая выброшенные следом.
+            icon = _win_extract_one(path, icon_cache)
         apps.append({"name": name, "path": path, "icon": icon,
                      "icon_fit": "contain", "source": src,
                      "sub": "Microsoft Store" if src == "store" else ""})
