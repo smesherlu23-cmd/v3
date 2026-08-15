@@ -234,20 +234,28 @@ def quick_bindings(apps, reserved=()) -> list[tuple[str, str]]:
     return [(accel, app_id) for app_id, accel in quick_accels(apps, reserved).items()]
 
 
-def free_quick_slot(apps) -> int:
+def free_quick_slot(apps, reserved=()) -> int:
+    """Номер первого свободного быстрого слота; 0 — свободных не осталось.
+
+    `reserved` обязателен так же, как и в `quick_accels`: реально биндится
+    результат `resolve_accels`, который резервирует клавишу вызова самого
+    Centurio. Без него подсказка пустой плитки предлагала слот, уже занятый
+    соседним приложением. Сами зарезервированные комбинации тоже считаются
+    занятыми — клавишей вызова вполне может оказаться `Ctrl+1`.
+    """
     taken = set()
-    for accel in quick_accels(apps).values():
+    for accel in list(quick_accels(apps, reserved).values()) + [a for a in reserved if a]:
         mods, key = split_accel(accel)
         if mods == {"ctrl"} and key.isdigit():
             taken.add(key)
     return next((n for n in range(1, QUICK_SLOTS + 1) if str(n) not in taken), 0)
 
 
-def app_for_accel(apps, accel: str) -> str | None:
+def app_for_accel(apps, accel: str, reserved=()) -> str | None:
     want = normalize_accel(accel)
     if not want:
         return None
-    return next((aid for aid, ac in quick_accels(apps).items()
+    return next((aid for aid, ac in quick_accels(apps, reserved).items()
                  if normalize_accel(ac) == want), None)
 
 

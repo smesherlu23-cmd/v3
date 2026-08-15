@@ -18,6 +18,10 @@ permissions:
 env:
   BUILD_DIR: build/windows
   SETUP_EXE: installer/Output/CenturioSetup.exe
+  # Консоль раннера — cp1252, а `flet build` рисует прогресс символами вроде
+  # U+25CF: без этого сборка падает в UnicodeEncodeError, не начавшись.
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
 
 jobs:
   build:

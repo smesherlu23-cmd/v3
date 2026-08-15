@@ -665,13 +665,24 @@ def test_store_refuses_to_downgrade_a_newer_file():
             saved = json.load(fh)
         ok(saved == future, "byte-for-byte, including the field this build can't parse")
 
-        s.flush()
+        # Библиотека открывается на чтение. `_sanitize` оставляет только
+        # понятные этой сборке ключи, поэтому любая запись стёрла бы всё
+        # остальное — а копия оригинала создаётся один раз и вторую попытку
+        # уже не подстрахует.
+        ok(s.read_only is True, "файл более новой схемы открыт только на чтение")
+        s.add_app({"name": "Added while read-only", "path": "/x", "category_id": "work"})
+        ok(s.flush() is False, "сохранение отвечает отказом, а не молчаливым успехом")
+        with open(path, encoding="utf-8") as fh:
+            on_disk = json.load(fh)
+        ok(on_disk == future, "и сам файл остаётся ровно таким, каким был")
+        ok(len(s.state()["apps"]) == 2,
+           "в памяти правка видна — интерфейс не притворяется, что ничего не произошло")
+
         ok(not os.path.exists(os.path.join(d, f"centurio-data.v{SCHEMA_VERSION + 2}.json")),
            "saving the now-sanitised state doesn't touch the backup again")
         with open(backup, encoding="utf-8") as fh:
             still_original = json.load(fh)
-        ok(still_original == future,
-           "the backup survives even after this build writes its own (older) file back")
+        ok(still_original == future, "копия оригинала тоже цела")
 
         ok(Store(os.path.join(d, "plain.json")).newer_version is None,
            "a fresh store with no file at all reports no version conflict")
@@ -753,6 +764,35 @@ def test_store_write_failure():
         broken.on_error = lambda msg: 1 / 0
         with disk_full(broken):
             ok(broken.flush() is False, "a throwing error callback doesn't break the save path")
+
+
+def test_store_validates_settings_on_write_not_only_on_read():
+    """Мусорное значение не должно доезжать до диска.
+
+    Проверка стояла только на чтении, поэтому между записью и следующим
+    запуском приложение работало с испорченными настройками: `apply_window`
+    считала `max(LIBRARY_MIN_W, "not-an-int")` и падала в `TypeError`, тот
+    проглатывался общим `except Exception` — окно просто не восстанавливалось.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "data.json")
+        s = Store(path)
+
+        bad = [("win_w", "not-an-int", None), ("minimize_to_tray", "yes", True),
+               ("collapsed", "oops", []), ("accent", 42, "#f5f5f7"),
+               ("icon_schema", True, 0)]
+        for key, junk, expected in bad:
+            s.set_setting(key, junk)
+            ok(s.settings()[key] == expected,
+               f"{key}={junk!r} отвергнут в памяти (стало {s.settings()[key]!r})")
+            ok(Store(path).settings()[key] == expected, f"{key} не уехал на диск испорченным")
+
+        good = [("win_w", 1280), ("minimize_to_tray", False), ("collapsed", ["work"]),
+                ("accent", "#ff8800"), ("icon_schema", 3), ("win_x", None)]
+        for key, value in good:
+            s.set_setting(key, value)
+            ok(s.settings()[key] == value, f"{key}={value!r} сохраняется как есть")
+        ok(Store(path).settings()["collapsed"] == ["work"], "и переживает перезапуск")
 
 
 def test_store_flushes_to_disk_before_swapping_the_file():
@@ -1859,6 +1899,64 @@ def test_launcher_monitor_lifecycle():
             sys.modules["psutil"] = prev_mod
 
 
+def test_running_badge_clears_when_nothing_is_tracked():
+    """Метка «запущено» не остаётся на программах, которых больше нет.
+
+    Пересчёт `_name_ids` жил внутри `if tracked`, поэтому опустевший индекс —
+    все программы удалены или все они URL-схемы без `track_exe` — оставлял
+    прошлый результат навсегда. Заодно проверяется, что смена состава
+    индекса будит монитор, а не ждёт очередного тика.
+    """
+    import threading
+    import time
+    import types
+
+    from app.infra import procs
+    from app.platform.launcher import Launcher
+
+    running = ["chrome.exe"]
+    fake = types.ModuleType("psutil")
+    fake.process_iter = lambda attrs=None: [
+        types.SimpleNamespace(info={"pid": i, "name": name})
+        for i, name in enumerate(running, start=1)]
+    prev_mod = sys.modules.get("psutil")
+    sys.modules["psutil"] = fake
+    prev_hook = threading.excepthook
+    crashes = []
+    threading.excepthook = lambda args: crashes.append(args)
+
+    def wait_for(predicate, limit=2.0):
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.02)
+        return predicate()
+
+    lch = Launcher()
+    try:
+        procs._at = 0.0          # снимок процессов кэшируется на 2 секунды
+        lch.set_apps([{"id": "chrome", "path": r"C:\x\chrome.exe"}])
+        lch.start_monitor(interval=0.05)
+        ok(wait_for(lambda: lch.running_ids() == ["chrome"]),
+           f"запущенная программа отмечается ({lch.running_ids()})")
+
+        procs._at = 0.0
+        lch.set_apps([])
+        ok(wait_for(lambda: lch.running_ids() == []),
+           f"после опустевшей библиотеки метка снимается ({lch.running_ids()})")
+
+        ok(not crashes, "монитор при этом не падает")
+    finally:
+        lch.stop_monitor()
+        threading.excepthook = prev_hook
+        procs._at = 0.0
+        if prev_mod is None:
+            sys.modules.pop("psutil", None)
+        else:
+            sys.modules["psutil"] = prev_mod
+
+
 def test_launcher_emit():
     """Running-state changes are emitted once, and only when they change."""
     from app.platform.launcher import Launcher
@@ -1921,6 +2019,72 @@ def test_color_parsing():
     ok(C.category_color({"color": "#123456"}) == "#123456", "category_color uses explicit hex")
     ok(C.category_color({"name": "Игры"}) == "#ffffff",
        "and falls back to the theme's white when nothing was chosen")
+
+
+def test_tray_and_hints_show_the_hotkeys_that_are_bound():
+    """Меню трея и подсказка пустого слота считают ту же раскладку, что биндер.
+
+    Биндится результат `resolve_accels`, который резервирует клавишу вызова
+    Centurio. Трей же звал `quick_accels` без `reserved` и показывал клавиши
+    на позицию раньше настоящих, а `free_quick_slot` предлагал слот, уже
+    занятый соседним приложением.
+    """
+    from app.core.hotkeys import free_quick_slot, resolve_accels
+    from app.ui import screens
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        store.set_setting("launch_hotkey", "Ctrl+1")
+        ids = [store.add_app({"name": n, "path": f"/x/{n}", "category_id": "work"})["id"]
+               for n in ("A", "B")]
+        for app_id in ids:
+            store.update_app(app_id, {"quick": True})
+
+        state = store.state()
+        bound, _sets = resolve_accels(state["apps"], state["sets"], "Ctrl+1")
+        ok(bound[ids[0]] == "Ctrl+2" and bound[ids[1]] == "Ctrl+3",
+           f"Ctrl+1 занят вызовом Centurio, приложения начинают с Ctrl+2 ({bound})")
+
+        labels = {item["id"]: item["label"] for item in screens.tray_items(store)}
+        ok(labels[ids[0]].endswith("Ctrl+2") and labels[ids[1]].endswith("Ctrl+3"),
+           f"трей показывает ровно назначенное ({list(labels.values())})")
+
+        free = free_quick_slot(state["apps"], reserved=["Ctrl+1"])
+        ok(free == 4, f"подсказка пустого слота предлагает первый действительно свободный ({free})")
+
+
+def test_launch_arguments_keep_quoted_paths_intact():
+    r"""Кавычки снимаются, обратная косая черта — нет.
+
+    `shlex.split(posix=False)` кавычки не снимал: программа получала
+    `"C:\Program Files\a.txt"` вместе с ними, а перед запуском от
+    администратора `list2cmdline` экранировал уже закавыченный токен ещё раз.
+    Простой `posix=True` не годится с другой стороны — он считает обратную
+    косую черту экранированием и съедает разделители пути Windows.
+    """
+    import subprocess
+
+    from app.core.text import split_args
+    from app.platform.launcher import Launcher
+
+    quoted = r'--file "C:\Program Files\a.txt"'
+    ok(split_args(quoted) == ["--file", r"C:\Program Files\a.txt"],
+       f"кавычки сняты, путь целый ({split_args(quoted)})")
+    ok(subprocess.list2cmdline(split_args(quoted)) == r'--file "C:\Program Files\a.txt"',
+       "и обратно в командную строку он собирается без второго экранирования")
+
+    ok(split_args(r"C:\Users\me\app.exe --flag") == [r"C:\Users\me\app.exe", "--flag"],
+       "незакавыченный путь Windows не теряет разделители")
+    ok(split_args("--tag 'a b' --n 5") == ["--tag", "a b", "--n", "5"],
+       "одинарные кавычки работают так же")
+    ok(split_args("--url http://x/y#frag") == ["--url", "http://x/y#frag"],
+       "решётка в середине аргумента не обрубает строку")
+
+    lch = Launcher()
+    ok(lch._as_args(quoted) == ["--file", r"C:\Program Files\a.txt"],
+       "запуск разбирает строку тем же правилом")
+    ok(lch._as_args('незакрытая "кавычка') == ["незакрытая", '"кавычка'],
+       "явно неправильный ввод не роняет запуск")
 
 
 def test_launch_options():

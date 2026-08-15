@@ -230,7 +230,15 @@ _STR_SETTINGS = {"accent", "tile_size", "rail_size", "view_filter", "view_sort",
 _INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y"}
 
 
-def _clean_setting_value(key: str, value, default):
+def clean_setting_value(key: str, value, default):
+    """Привести одно значение настройки к своему типу или вернуть умолчание.
+
+    Вызывается и при чтении файла, и при записи: раньше проверка была только
+    на чтении, поэтому мусорное значение доезжало до диска и жило до
+    следующего запуска. `apply_window` считала `max(LIBRARY_MIN_W,
+    "not-an-int")`, падала в `TypeError`, тот проглатывался общим
+    `except Exception` — и окно просто не восстанавливалось.
+    """
     if key in _BOOL_SETTINGS:
         return value if isinstance(value, bool) else default
     if key in _STR_SETTINGS:
@@ -251,7 +259,7 @@ def clean_settings(raw) -> dict:
     if isinstance(raw, dict):
         for key, default in DEFAULT_SETTINGS.items():
             if key in raw:
-                settings[key] = _clean_setting_value(key, raw[key], default)
+                settings[key] = clean_setting_value(key, raw[key], default)
     if settings["ui_defaults_version"] < UI_DEFAULTS_VERSION:
         settings["ui_defaults_version"] = UI_DEFAULTS_VERSION
     return settings

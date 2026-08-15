@@ -123,7 +123,7 @@ class GridView:
                    (cat.get("color"), cat.get("icon")) if cat else None)
             cards.append(self._cached_piece(("qcard", app["id"]), sig,
                                              lambda a=app, ac=accel: self._quick_card(a, ac)))
-        free = free_quick_slot(self.ui.apps())
+        free = free_quick_slot(self.ui.apps(), reserved=[self.ui.launch_hotkey()])
         if free and (not cards or self._fits_in_row(len(cards))):
             cards.append(self._cached_piece(("qempty",), free,
                                              lambda f=free: self._quick_empty(f)))
