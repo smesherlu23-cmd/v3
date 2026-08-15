@@ -5,16 +5,24 @@
 ; Build first:   flet build windows
 ; Then compile:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\centurio.iss
 ; Output:        installer\Output\CenturioSetup.exe
+;
+; Проще запускать scripts\build_release.ps1 — он делает и то, и другое,
+; сверяя версии и подписывая результат.
 
 #define MyAppName "Centurio"
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "Centurio"
 #define MyAppExeName "Centurio.exe"
+#define MyAppDescription "Панель запуска приложений, всегда доступная из трея"
 ; flet build windows output directory (relative to this script's parent):
 #define BuildDir "..\build\windows"
 
 [Setup]
-AppId={{B2F1C7A0-6C1E-4D2E-9E4A-CENTURIO0001}}
+; Настоящий GUID: по AppId Windows опознаёт «то же приложение» при
+; обновлении и удалении. Прежнее значение содержало буквы CENTURIO, которые
+; не являются шестнадцатеричными цифрами. Менять его после первого
+; публичного релиза нельзя — старая установка перестанет опознаваться.
+AppId={{5DB06D53-80BB-4A28-8A1C-869D1F09FD9F}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -28,6 +36,15 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+SetupIconFile=..\assets\centurio.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
+; Пустые свойства файла — самостоятельный признак для эвристик антивирусов
+; и первое, что видит пользователь в свойствах установщика.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} — {#MyAppDescription}
+VersionInfoProductName={#MyAppName}
+VersionInfoCopyright=© {#MyAppPublisher}
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"

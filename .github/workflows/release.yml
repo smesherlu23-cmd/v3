@@ -1,0 +1,116 @@
+name: Release
+
+# Собирает дистрибутив на Windows и выкладывает его в релиз GitHub.
+#
+# Ручной запуск (workflow_dispatch) собирает и оставляет артефакты в прогоне —
+# этим удобно проверять сборку, ничего не публикуя. Тег `v1.2.3` дополнительно
+# создаёт релиз; версия в теге обязана совпадать с версией в исходниках,
+# иначе прогон падает до сборки.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BUILD_DIR: build/windows
+  SETUP_EXE: installer/Output/CenturioSetup.exe
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      # Версии в app/__init__.py, pyproject.toml и centurio.iss сверяет
+      # test_packaging_metadata. Здесь остаётся сверить их с тегом.
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $version = (python -c "from app import __version__; print(__version__)").Trim()
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          if ($version -ne $tag) {
+            throw "тег $tag не совпадает с версией в исходниках $version"
+          }
+          "версия $version" | Write-Host
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Test
+        env:
+          CI: "1"
+        run: python -m pytest -q
+
+      - name: Build the application
+        run: flet build windows --verbose
+
+      - name: Sign the application
+        shell: pwsh
+        env:
+          SIGNING_DLIB: ${{ secrets.SIGNING_DLIB }}
+          SIGNING_METADATA: ${{ secrets.SIGNING_METADATA }}
+        run: ./scripts/sign.ps1 -Path "${{ env.BUILD_DIR }}/Centurio.exe"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer
+        run: |
+          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" installer\centurio.iss
+
+      - name: Sign the installer
+        shell: pwsh
+        env:
+          SIGNING_DLIB: ${{ secrets.SIGNING_DLIB }}
+          SIGNING_METADATA: ${{ secrets.SIGNING_METADATA }}
+        run: ./scripts/sign.ps1 -Path "${{ env.SETUP_EXE }}"
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash "${{ env.SETUP_EXE }}" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  CenturioSetup.exe" } |
+            Set-Content -Encoding ascii installer/Output/SHA256SUMS.txt
+          Get-Content installer/Output/SHA256SUMS.txt | Write-Host
+
+      # Инсталлятор — единственное, что имеет смысл раздавать: `flet build`
+      # кладёт рядом с Centurio.exe набор DLL, и без них голый exe не
+      # запустится. Каталог сборки уезжает архивом только для разбора проблем.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CenturioSetup
+          path: |
+            ${{ env.SETUP_EXE }}
+            installer/Output/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: centurio-windows-build
+          path: ${{ env.BUILD_DIR }}
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "${{ env.SETUP_EXE }}" installer/Output/SHA256SUMS.txt `
+            --title "Centurio ${{ github.ref_name }}" --generate-notes

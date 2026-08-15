@@ -1394,6 +1394,37 @@ def test_packaging_metadata():
        f"requirements-only: {required - declared})")
 
 
+def test_readme_points_at_files_that_exist():
+    """README не должен описывать то, чего в репозитории нет.
+
+    Раздел «Релиз» пережил удаление `scripts/build_release.ps1` и продолжал
+    описывать скрипт с его флагами и `Get-Help`, которого не было: новый
+    разработчик шёл по инструкции и упирался в пустоту. Проверяются только
+    пути внутри репозитория — то, что появляется при сборке или при работе
+    программы, сюда не попадает.
+    """
+    import re
+
+    roots = ("app", "tests", "scripts", "installer", "assets", ".github")
+    generated = ("installer/Output",)
+
+    mentioned = set()
+    for word in re.split(r"[\s`|(),]+", _read("README.md")):
+        path = word.replace("\\", "/")
+        if path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip(".,;:")
+        if "/" not in path or path.split("/")[0] not in roots:
+            continue
+        if path.startswith(generated):
+            continue
+        mentioned.add(path)
+
+    ok(len(mentioned) >= 8, f"README вообще ссылается на файлы репозитория ({mentioned})")
+    missing = sorted(p for p in mentioned if not os.path.exists(os.path.join(_ROOT, p)))
+    ok(not missing, f"README ссылается на несуществующее: {missing}")
+
+
 def test_single_entry_point():
     """app/main.py builds the page; only the root main.py launches it."""
     root_main = _read("main.py")
