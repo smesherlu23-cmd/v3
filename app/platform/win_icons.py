@@ -105,18 +105,26 @@ def _dlls():
         ctypes.c_void_p, ctypes.POINTER(_BITMAPINFO), wintypes.UINT,
     ]
     gdi32.GetDIBits.restype = ctypes.c_int
+    # Типы обязательны и для «очевидных» функций: без argtypes ctypes считает
+    # целочисленный аргумент 32-битным int, а дескриптор GDI на 64-битной
+    # Windows в него не влезает — вызов падает с OverflowError.
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
     return user32, gdi32
 
 
 def _header(size: int) -> _BITMAPINFO:
     info = _BITMAPINFO()
-    head = info.bmiHeader
-    head.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
-    head.biWidth = size
-    head.biHeight = -size          # сверху вниз, иначе картинка выйдет вверх ногами
-    head.biPlanes = 1
-    head.biBitCount = 32
-    head.biCompression = _BI_RGB
+    info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+    info.bmiHeader.biWidth = size
+    info.bmiHeader.biHeight = -size   # сверху вниз, иначе картинка выйдет вверх ногами
+    info.bmiHeader.biPlanes = 1
+    info.bmiHeader.biBitCount = 32
+    info.bmiHeader.biCompression = _BI_RGB
     return info
 
 
@@ -159,17 +167,22 @@ def _render(user32, gdi32, hicon, size: int):
     if not dc:
         return None
     dib = None
+    prior = None
     try:
         dib = gdi32.CreateDIBSection(dc, ctypes.byref(header), _DIB_RGB_COLORS,
                                      ctypes.byref(bits), None, 0)
         if not dib or not bits:
             return None
-        gdi32.SelectObject(dc, dib)
+        prior = gdi32.SelectObject(dc, dib)
         ctypes.memset(bits, 0, size * size * 4)
         if not user32.DrawIconEx(dc, 0, 0, hicon, size, size, 0, None, _DI_NORMAL):
             return None
         raw = ctypes.string_at(bits, size * size * 4)
     finally:
+        # Вернуть прежний объект в DC до удаления: выбранную в контекст
+        # картинку GDI удалить не даст, и она осталась бы утечкой.
+        if prior:
+            gdi32.SelectObject(dc, prior)
         if dib:
             gdi32.DeleteObject(dib)
         gdi32.DeleteDC(dc)
