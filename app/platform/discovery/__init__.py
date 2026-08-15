@@ -1,11 +1,21 @@
+"""Единая точка входа в поиск установленных программ.
+
+Пакет разбит по источникам (`windows`, `steam_paths`, `steam_art`, `epic`,
+`shortcuts`, `icons`), но снаружи — и в приложении, и в тестах, и в
+`app.diagnose` — он используется как один модуль. Поэтому имена источников
+поднимаются сюда: `__all__` перечисляет публичный API, а подчёркнутые имена
+переэкспортируются для тестов и диагностики, которые проверяют внутренности
+каждого источника по отдельности. Отсюда `noqa: F401` на блоках импорта —
+это переэкспорт, а не забытый импорт.
+"""
 from __future__ import annotations
 
 import os
 
 from ...infra import log
-from . import steam_art, steam_paths, windows 
+from . import steam_art, steam_paths, windows  # noqa: F401
 from .epic import _epic_games
-from .icons import ( 
+from .icons import (  # noqa: F401
     ICON_SCHEMA,
     _norm_path,
     backfill_icons,
@@ -13,8 +23,8 @@ from .icons import (
     prune_icon_cache,
     resolve_icon_for,
 )
-from .shortcuts import autostart_names, desktop_names, suggest_first_run 
-from .steam_art import (  
+from .shortcuts import autostart_names, desktop_names, suggest_first_run  # noqa: F401
+from .steam_art import (  # noqa: F401
     _CDN_MAX_FAILURES,
     _cdn_available,
     _cdn_record,
@@ -23,7 +33,7 @@ from .steam_art import (
     poster_for,
     reset_cdn_state,
 )
-from .steam_paths import ( 
+from .steam_paths import (  # noqa: F401
     _STEAM_SKIP_ID,
     _steam_game_exe,
     _steam_games,
@@ -32,7 +42,7 @@ from .steam_paths import (
     reset_steam_exe_cache,
     steam_exe_for,
 )
-from .windows import ( 
+from .windows import (  # noqa: F401
     _WIN_ICON_ONE_PS,
     _WIN_PS,
     _WIN_STORE_ICON_ONE_PS,
