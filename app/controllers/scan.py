@@ -26,6 +26,10 @@ class ScanController:
         self._scan_lock = threading.Lock()
         self._manual_found: list[dict] = []
 
+    def _posters(self) -> bool:
+        """Настройка «Постеры для игр» — она же выключает походы в CDN Valve."""
+        return bool(self.ui.setting("game_posters", True))
+
     def cached_discovery(self):
         if self._discovered is None:
             return None
@@ -60,7 +64,8 @@ class ScanController:
                 if force:
                     discovery.reset_cdn_state()
                     discovery.reset_steam_exe_cache(self.ui.icon_cache_dir())
-                found = discovery.discover_apps(self.ui.icon_cache_dir(), report=report)
+                found = discovery.discover_apps(self.ui.icon_cache_dir(), report=report,
+                                                posters=self._posters())
                 self._remember_discovery(found)
                 errors = report.get("errors") or []
             except Exception as exc:
@@ -255,7 +260,7 @@ class ScanController:
                     discovery.reset_cdn_state()
                     discovery.reset_steam_exe_cache(cache)
                 changed = discovery.backfill_icons(self.store, cache, refresh=not silent)
-                found = discovery.discover_apps(cache)
+                found = discovery.discover_apps(cache, posters=self._posters())
                 self._remember_discovery(found)
                 try:
                     discovery.prune_icon_cache(self.store, cache)

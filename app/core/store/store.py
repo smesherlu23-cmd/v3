@@ -35,6 +35,18 @@ class Store:
         if self._migrated_ui_defaults:
             self._persist()
 
+    @property
+    def read_only(self) -> bool:
+        """Файл сохранён более новой сборкой — писать в него нельзя.
+
+        `_sanitize` оставляет только те ключи, которые понимает эта версия, и
+        ставит свой `version`. Значит первая же правка стёрла бы всё, что
+        добавила новая схема, — а копия оригинала создаётся один раз и вторую
+        попытку уже не подстрахует. Поэтому библиотека открывается на чтение;
+        `CenturioUI.mount` говорит об этом пользователю.
+        """
+        return self.newer_version is not None
+
     def _debounced_persist(self) -> None:
         with self._lock:
             self._persist()
@@ -126,6 +138,8 @@ class Store:
             log.exception("не удалось сохранить копию файла данных версии %s: %s", version, dest)
 
     def _persist(self) -> bool:
+        if self.read_only:
+            return False
         tmp = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -650,7 +664,8 @@ class Store:
     def set_setting(self, key: str, value, persist: bool | str = True) -> dict:
         with self._lock:
             if key in sanitize.DEFAULT_SETTINGS:
-                self.data["settings"][key] = value
+                self.data["settings"][key] = sanitize.clean_setting_value(
+                    key, value, sanitize.DEFAULT_SETTINGS[key])
                 if persist == "debounce":
                     self._persist_debounce.schedule()
                 elif persist:

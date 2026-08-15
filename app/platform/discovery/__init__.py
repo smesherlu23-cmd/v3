@@ -76,7 +76,13 @@ __all__ = [
 
 
 def discover_apps(icon_cache: str | None = None, on_progress=None,
-                  report: dict | None = None) -> list[dict]:
+                  report: dict | None = None, posters: bool = True) -> list[dict]:
+    """Найти установленные программы.
+
+    `posters` — настройка «Постеры для игр». Она влияла только на отрисовку,
+    а обложки всё равно качались: выключивший её пользователь продолжал
+    ходить в CDN Valve, передавать туда список своих appid и занимать диск.
+    """
     if icon_cache:
         try:
             os.makedirs(icon_cache, exist_ok=True)
@@ -86,7 +92,8 @@ def discover_apps(icon_cache: str | None = None, on_progress=None,
     steps = []
     if os.name == "nt":
         steps.append(("windows", "Меню «Пуск» и реестр", _discover_windows))
-    steps += [("steam", "Steam", _steam_games), ("epic", "Epic Games", _epic_games)]
+    steps += [("steam", "Steam", lambda cache: _steam_games(cache, posters)),
+              ("epic", "Epic Games", _epic_games)]
 
     apps: list[dict] = []
     errors = []

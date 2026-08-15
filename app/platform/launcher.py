@@ -3,11 +3,11 @@ from __future__ import annotations
 import ntpath
 import os
 import re
-import shlex
 import subprocess
 import threading
 from pathlib import Path
 
+from ..core.text import split_args
 from ..infra import log, procs
 
 _EXE_EXTS = {".exe", ".bat", ".cmd", ".com"}
@@ -61,9 +61,12 @@ class Launcher:
             for base in names:
                 index.setdefault(base, set()).add(a["id"])
         with self._lock:
-            was_idle = not self._exe_index
+            changed = index != self._exe_index
             self._exe_index = index
-        if index and was_idle:
+        # Будим монитор на любое изменение состава, а не только на переход
+        # «пусто → не пусто»: замена одной программы другой раньше ждала
+        # очередного тика — до 4 секунд, а в фоне до 25.
+        if changed:
             self._wake.set()
 
     def set_background(self, background: bool):
@@ -98,7 +101,14 @@ class Launcher:
                                 if base in names:
                                     matched |= ids
                             self._name_ids = matched
-                        self._emit()
+                    else:
+                        # Индекс опустел — значит следить не за чем, и прошлый
+                        # результат больше не о чём. Без этой ветки метка
+                        # «запущено» оставалась на удалённых программах
+                        # навсегда: пересчёт жил только внутри `if tracked`.
+                        with self._lock:
+                            self._name_ids = set()
+                    self._emit()
                 except Exception:
                     log.exception("process monitor iteration failed")
                 delay = interval if tracked else idle_interval
@@ -134,7 +144,7 @@ class Launcher:
     def _as_args(args) -> list[str]:
         if isinstance(args, str):
             try:
-                return shlex.split(args, posix=False)
+                return split_args(args)
             except ValueError:
                 return args.split()
         return list(args or [])

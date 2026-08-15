@@ -107,14 +107,21 @@ def _steam_icon(root: str, appid: str, icon_cache: str | None = None) -> tuple[s
 
 _STEAM_PORTRAIT_NAMES = ("library_600x900_2x.jpg", "library_600x900.jpg")
 
-def _steam_portrait(root: str, appid: str, icon_cache: str | None = None) -> str | None:
+def _steam_portrait(root: str, appid: str, icon_cache: str | None = None,
+                    posters: bool = True) -> str | None:
+    """Обложка игры: сначала кэш самого Steam, потом — сеть.
+
+    `posters` отключает только поход в CDN. Файл, который Steam уже положил
+    на диск, бесплатен, и запомнить путь к нему стоит: пользователь может
+    включить постеры обратно, и они появятся без пересканирования.
+    """
     cache = os.path.join(root, "appcache", "librarycache")
     sub = os.path.join(cache, str(appid))
     for name in _STEAM_PORTRAIT_NAMES:
         for p in (os.path.join(cache, f"{appid}_{name}"), os.path.join(sub, name)):
             if os.path.exists(p):
                 return p
-    return _steam_cdn_portrait(appid, icon_cache)
+    return _steam_cdn_portrait(appid, icon_cache) if posters else None
 
 def _steam_cdn_portrait(appid: str, icon_cache: str | None) -> str | None:
     if not icon_cache:
@@ -141,13 +148,13 @@ def _steam_cdn_portrait(appid: str, icon_cache: str | None) -> str | None:
     _cdn_mark_missed(key)
     return None
 
-def poster_for(path: str, icon_cache: str | None = None) -> str | None:
+def poster_for(path: str, icon_cache: str | None = None, posters: bool = True) -> str | None:
     m = re.match(r"steam://rungameid/(\d+)", path or "")
     if not m:
         return None
     appid = m.group(1)
     for root in steam_paths._steam_roots():
-        p = _steam_portrait(root, appid, icon_cache)
+        p = _steam_portrait(root, appid, icon_cache, posters)
         if p:
             return p
-    return _steam_cdn_portrait(appid, icon_cache)
+    return _steam_cdn_portrait(appid, icon_cache) if posters else None

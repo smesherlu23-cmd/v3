@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import threading
 import time
 from collections import OrderedDict
@@ -14,7 +13,7 @@ from ..controllers.triage import TriageController
 from ..core import queries
 from ..core.hotkeys import normalize_accel, resolve_accels
 from ..core.store import DEFAULT_LAUNCH_HOTKEY, Store
-from ..core.text import plu_apps, plu_windows
+from ..core.text import plu_apps, plu_windows, split_args
 from ..core.view_state import SEARCH_FIELD, ViewState
 from ..infra import log
 from ..platform import windows as W
@@ -154,6 +153,10 @@ class CenturioUI:
     def setting(self, key, default=None):
         return self._settings.get(key, default)
 
+    def launch_hotkey(self) -> str:
+        """Клавиша вызова Centurio — она же зарезервирована от быстрых слотов."""
+        return self.setting("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
+
     def _accent(self):
         return self._settings.get("accent", C.ACCENT)
 
@@ -231,8 +234,8 @@ class CenturioUI:
         if self.store.newer_version:
             self.toast.error(
                 f"Файл данных сохранён более новой версией Centurio (схема "
-                f"{self.store.newer_version}) — работаю с тем, что понимаю, "
-                f"копия оригинала сохранена рядом",
+                f"{self.store.newer_version}) — показываю то, что понимаю, "
+                f"но ничего не сохраняю: иначе потерялось бы остальное",
                 detail=str(self.store.path))
 
     def set_running(self, ids):
@@ -705,8 +708,7 @@ class CenturioUI:
 
     def _hotkey_clash(self, accel, skip_app_id=None, check_launch=True):
         want = normalize_accel(accel)
-        launch = self.setting("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
-        if check_launch and want == normalize_accel(launch):
+        if check_launch and want == normalize_accel(self.launch_hotkey()):
             return "вызовом Centurio"
         clash = next((a for a in self.apps()
                       if a["id"] != skip_app_id
@@ -714,7 +716,7 @@ class CenturioUI:
         if clash:
             return f"«{clash['name']}»"
         sets = self.sets()
-        _apps, set_slots = resolve_accels(self.apps(), sets, launch)
+        _apps, set_slots = resolve_accels(self.apps(), sets, self.launch_hotkey())
         set_clash = next((rec for rec in sets
                           if normalize_accel(set_slots.get(rec["id"]) or "") == want), None)
         return f"набором «{set_clash['name']}»" if set_clash else None
@@ -737,7 +739,7 @@ class CenturioUI:
     def _set_args(self, app_id, value):
         text = (value or "").strip()
         try:
-            args = shlex.split(text, posix=False) if text else []
+            args = split_args(text) if text else []
         except ValueError:
             args = text.split()
         self.store.update_app(app_id, {"args": args})
