@@ -14,6 +14,21 @@ _EXE_EXTS = {".exe", ".bat", ".cmd", ".com"}
 _DETACHED_PROCESS = 0x00000008
 
 
+def explorer_exe() -> str:
+    """Полный путь к проводнику, а не имя для поиска по PATH.
+
+    Имя резолвится через PATH: если раньше системного каталога там стоит
+    директория, куда пишет непривилегированный процесс, подменяется
+    исполняемый файл. `explorer.exe` лежит в корне каталога Windows, а не в
+    System32, поэтому файловая перенаправка 32-битных процессов его не
+    задевает и `Sysnative` не нужен.
+    """
+    if os.name != "nt":
+        return "explorer"
+    candidate = os.path.join(os.environ.get("windir") or r"C:\Windows", "explorer.exe")
+    return candidate if os.path.isfile(candidate) else "explorer"
+
+
 class Launcher:
     def __init__(self, on_change=None):
         self._procs: dict[str, subprocess.Popen] = {}
@@ -220,7 +235,7 @@ class Launcher:
         if not path or not os.path.exists(path):
             return {"ok": False, "error": "Файл не найден"}
         try:
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            subprocess.Popen([explorer_exe(), "/select,", os.path.normpath(path)])
             return {"ok": True}
         except OSError as exc:
             return {"ok": False, "error": str(exc)}

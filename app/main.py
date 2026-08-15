@@ -330,6 +330,13 @@ def main(page: ft.Page):
                 ui.refresh()
             if refresh:
                 store.set_setting("icon_schema", discovery.ICON_SCHEMA)
+            # Прибираться нужно и тому, кто добавил программы один раз и больше
+            # не сканирует: раньше `prune_icon_cache` звался только из «Проверить
+            # снова», то есть у такого пользователя значки, постеры и steam_*.jpg
+            # копились вечно. Удаляются только осиротевшие файлы старше двух
+            # недель, так что делать это на старте безопасно.
+            discovery.prune_icon_cache(store, cache)
+            ui.forget_icon_cache_size()
         except Exception:
             log.exception("сбой при заполнении значков")
     threading.Thread(target=_backfill, daemon=True).start()

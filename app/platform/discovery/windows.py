@@ -294,11 +294,25 @@ if($r.icon){ Write-Output $r.icon }
 _STORE_PATH_RE = re.compile(r"^shell:appsfolder\\([^!]+)(?:!(.*))?$", re.IGNORECASE)
 
 def _powershell_exe() -> str:
-    if sys.maxsize > 2**32 or os.name != "nt":
+    """Полный путь к powershell.exe, а не имя для поиска по PATH.
+
+    Имя резолвится через PATH, и если раньше системного каталога там стоит
+    директория, куда пишет непривилегированный процесс (типовая ошибка
+    установки инструментов разработчика), подменяется исполняемый файл.
+
+    32-битный процесс на 64-битной Windows видит System32 через
+    файловую перенаправку как SysWOW64, поэтому для него нужен `Sysnative`.
+    """
+    if os.name != "nt":
         return "powershell"
-    sysnative = os.path.join(os.environ.get("windir", r"C:\Windows"),
-                             "Sysnative", "WindowsPowerShell", "v1.0", "powershell.exe")
-    return sysnative if os.path.isfile(sysnative) else "powershell"
+    windir = os.environ.get("windir") or r"C:\Windows"
+    tail = ("WindowsPowerShell", "v1.0", "powershell.exe")
+    roots = ["System32"] if sys.maxsize > 2**32 else ["Sysnative", "System32"]
+    for root in roots:
+        candidate = os.path.join(windir, root, *tail)
+        if os.path.isfile(candidate):
+            return candidate
+    return "powershell"
 
 
 def _run_powershell(script: str, timeout: int = 60):

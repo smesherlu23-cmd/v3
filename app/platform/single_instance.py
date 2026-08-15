@@ -6,7 +6,14 @@ import threading
 from ..infra import log
 
 _ERROR_ALREADY_EXISTS = 183
-MUTEX_NAME = "Global\\CenturioSingleInstanceMutex"
+# `Local\`, а не `Global\`. Глобальное пространство имён общее на всю машину:
+# на терминальном сервере или при быстром переключении пользователей второй
+# пользователь не смог бы запустить программу. Вдобавок создание объекта в
+# `Global\` требует SeCreateGlobalPrivilege, которой у обычного пользователя
+# может не быть, — тогда CreateMutexW возвращает 0, `acquire` отвечает True и
+# защита от второго экземпляра просто отключается. `Local\` — это сеанс входа,
+# ровно та область, в которой «второй экземпляр» и имеет смысл.
+MUTEX_NAME = "Local\\CenturioSingleInstanceMutex"
 
 _handle = None
 _lock = threading.Lock()

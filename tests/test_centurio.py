@@ -638,6 +638,25 @@ def test_store_get_app_returns_a_copy():
 
         ok(s.get_app("no-such-id") is None, "a missing id still returns None")
 
+        # `state()` зовётся на каждый refresh, в том числе из фоновых потоков,
+        # поэтому копия делается своим обходом вместо `copy.deepcopy` — втрое
+        # дешевле. Изоляция от этого меняться не должна ни на одном уровне
+        # вложенности.
+        s.add_set("Утро", [app_id])
+        snapshot = s.state()
+        snapshot["apps"][0]["name"] = "Mutated"
+        snapshot["apps"][0]["args"].append("--nope")
+        snapshot["categories"][0]["name"] = "Mutated"
+        snapshot["sets"][0]["items"][0]["slot"] = 99
+        snapshot["settings"]["collapsed"].append("nope")
+
+        fresh = s.state()
+        ok(fresh["apps"][0]["name"] == "Original", "state() отдаёт копию верхнего уровня")
+        ok(fresh["apps"][0]["args"] == [], "и вложенных списков")
+        ok(fresh["categories"][0]["name"] != "Mutated", "и соседних разделов")
+        ok(fresh["sets"][0]["items"][0]["slot"] != 99, "и записей на третьем уровне")
+        ok(fresh["settings"]["collapsed"] == [], "и списков внутри настроек")
+
 
 def test_store_refuses_to_downgrade_a_newer_file():
     """A file saved by a schema this build doesn't know gets backed up untouched."""
@@ -886,9 +905,22 @@ def test_store_batched_writes():
         ok(s.flush() is True and writes["n"] == 1,
            "but they were queued and land in exactly one write once flushed")
 
+        # Каждое сохранение переписывает файл целиком — на библиотеке в 500
+        # программ это ~8.5 мс синхронно в потоке интерфейса. Одиночные
+        # переключатели («избранное», «от администратора», горячая клавиша)
+        # били по диску на каждый щелчок, хотя массовые пути давно батчатся.
         writes["n"] = 0
-        s.update_app(s.state()["apps"][0]["id"], {"favorite": True})
-        ok(writes["n"] == 1, "a single update still writes immediately")
+        app_id = s.state()["apps"][0]["id"]
+        s.update_app(app_id, {"favorite": True})
+        ok(writes["n"] == 0, "одиночное изменение не блокирует щелчок записью на диск")
+        ok(s.get_app(app_id)["favorite"] is True, "в памяти оно видно сразу")
+        ok(s.flush() is True and writes["n"] == 1, "и досохраняется одной записью")
+        ok(Store(os.path.join(d, "data.json")).get_app(app_id)["favorite"] is True,
+           "то есть доезжает до диска")
+
+        writes["n"] = 0
+        s.update_app(app_id, {"favorite": False}, persist=True)
+        ok(writes["n"] == 1, "явный persist=True по-прежнему пишет сразу")
 
         writes["n"] = 0
         before = len(s.state()["apps"])
@@ -1040,6 +1072,53 @@ def test_cdn_circuit_breaker():
     finally:
         discovery.steam_art._http_get = original
         discovery.reset_cdn_state()
+
+
+def test_system_programs_are_launched_by_full_path():
+    """`powershell` и `explorer` по имени резолвятся через PATH.
+
+    Если раньше системного каталога в PATH стоит директория, куда пишет
+    непривилегированный процесс — типовая ошибка установки инструментов
+    разработчика, — подменяется исполняемый файл.
+    """
+    from app.platform.discovery import windows as win
+    from app.platform.launcher import explorer_exe
+
+    ps, explorer = win._powershell_exe(), explorer_exe()
+    if os.name != "nt":
+        ok(ps == "powershell" and explorer == "explorer",
+           "вне Windows остаются имена — там этих программ всё равно нет")
+        return
+
+    ok(os.path.isabs(ps) and os.path.isfile(ps), f"powershell берётся по полному пути ({ps})")
+    ok(os.path.isabs(explorer) and os.path.isfile(explorer),
+       f"проводник тоже ({explorer})")
+    windir = (os.environ.get("windir") or r"C:\Windows").lower()
+    ok(ps.lower().startswith(windir) and explorer.lower().startswith(windir),
+       "и оба лежат внутри каталога Windows, а не там, куда указал PATH")
+
+
+def test_single_instance_mutex_is_per_session():
+    """Мьютекс живёт в `Local\\`, а не в `Global\\`.
+
+    Глобальное пространство имён общее на всю машину: на терминальном сервере
+    второй пользователь не смог бы запустить программу. Вдобавок создание
+    объекта в `Global\\` требует SeCreateGlobalPrivilege, которой у обычного
+    пользователя может не быть, — `CreateMutexW` возвращает 0, `acquire`
+    отвечает True, и защита от второго экземпляра просто отключается.
+    """
+    from app.platform import single_instance
+
+    ok(single_instance.MUTEX_NAME.startswith("Local\\"),
+       f"имя мьютекса ограничено сеансом ({single_instance.MUTEX_NAME})")
+
+    if os.name != "nt":
+        return
+    try:
+        ok(single_instance.acquire() is True, "первый экземпляр захватывает мьютекс")
+        ok(single_instance.acquire() is True, "повторный вызов в том же процессе — не отказ")
+    finally:
+        single_instance.release()
 
 
 def test_posters_off_means_no_network():
@@ -4416,6 +4495,37 @@ def test_toast_lifecycle():
     ok(host.text.value == "Второй" and host.control.visible,
        "a stale timer doesn't clear the toast that replaced it")
     host.stop()
+
+
+def test_icon_cache_size_is_not_recounted_on_every_draw():
+    """Обход каталога кэша не повторяется на каждое нажатие переключателя.
+
+    `icon_cache_size` вызывается из отрисовки вкладки «Библиотека», а это
+    `rglob` со `stat` на каждый файл. При нескольких тысячах файлов кэша
+    получалась заметная задержка на каждый чих, притом что цифра справочная.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI icon-cache-size test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+
+        cache = Path(ui.icon_cache_dir())
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "a.png").write_bytes(b"x" * 1000)
+
+        first = ui.icon_cache_size()
+        ok(first == 1000, f"размер считается ({first})")
+
+        (cache / "b.png").write_bytes(b"x" * 500)
+        ok(ui.icon_cache_size() == 1000, "повторный вызов берёт запомненное, а не обходит диск")
+
+        ui.forget_icon_cache_size()
+        ok(ui.icon_cache_size() == 1500, "после явного сброса цифра пересчитывается")
 
 
 def test_ui_settings_cache():
