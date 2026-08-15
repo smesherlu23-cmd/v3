@@ -81,8 +81,12 @@ jobs:
         run: choco install innosetup --no-progress -y
 
       - name: Build the installer
+        shell: pwsh
         run: |
-          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" installer\centurio.iss
+          # Скобки обязательны: `$env:ProgramFiles(x86)` PowerShell читает как
+          # `$env:ProgramFiles` плюс литерал «(x86)» и ищет ISCC.exe в
+          # «C:\Program Files(x86)» — без пробела, то есть нигде.
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\centurio.iss
 
       - name: Sign the installer
         shell: pwsh
