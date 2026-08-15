@@ -1,0 +1,40 @@
+[project]
+name = "centurio"
+version = "1.1.0"
+description = "Centurio — персональная, всегда доступная из трея горячая панель приложений."
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "flet[desktop]==0.28.3",
+    "pystray>=0.19.5",
+    "Pillow>=10.0.0",
+    "pynput>=1.7.6",
+    "psutil>=5.9.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.flet]
+org = "com.centurio"
+product = "Centurio"
+company = "Centurio"
+copyright = "."
+build_version = "1.1.0"
+build_number = 1
+
+[tool.flet.app]
+path = "."
