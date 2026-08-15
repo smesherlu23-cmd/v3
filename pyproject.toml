@@ -29,10 +29,14 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.flet]
+# Эти значения уезжают в VERSIONINFO собранного Centurio.exe. Пустые или
+# мусорные свойства файла — самостоятельный признак для эвристик антивирусов
+# (раньше здесь стояло copyright = "."), а репутация в SmartScreen копится на
+# пару «издатель + имя файла», поэтому менять их от релиза к релизу нельзя.
 org = "com.centurio"
 product = "Centurio"
 company = "Centurio"
-copyright = "."
+copyright = "© Centurio"
 build_version = "1.1.0"
 build_number = 1
 

@@ -52,7 +52,7 @@ def _add_header(ui):
 def _add_search_field(ui, state):
     field = state.get("search_field")
     if field is None:
-        field = _field(ui.view.add_query, "Название программы",
+        field = _field(ui.view, "add_search", ui.view.add_query, "Название программы",
                        on_change=lambda e: ui.scan.set_add_query(e.control.value))
         state["search_field"] = field
     elif not ui.view.add_query and field.value:
@@ -63,7 +63,7 @@ def _add_search_field(ui, state):
 def _add_path_field(ui, state):
     field = state.get("path_field")
     if field is None:
-        field = _field(ui.view.manual_path,
+        field = _field(ui.view, "add_path", ui.view.manual_path,
                        r"Или вставьте путь: C:\Program Files\…\app.exe",
                        on_change=lambda e: ui.scan.set_manual_path(e.control.value),
                        on_submit=lambda e: ui.scan.add_manual_path(e.control.value),

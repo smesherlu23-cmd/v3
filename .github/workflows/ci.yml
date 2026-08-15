@@ -5,12 +5,20 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  # Centurio написан под Windows: 12 модулей из 58 не выполняются больше нигде.
+  # Проверка только на Ubuntu оставляла реестр, поиск установленного, раскладку
+  # окон, трей и автозапуск без единого автоматического прогона.
   check:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} · Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.9", "3.12"]
 
     steps:
@@ -34,3 +42,30 @@ jobs:
         env:
           CI: "1"
         run: python -m pytest -q
+
+      # Скрипты сборки выполняются только при релизе, то есть месяцами лежат
+      # без единого прогона — ровно так и сгнил прошлый build_release.ps1.
+      # Разбор без выполнения ловит опечатки, ничего не собирая.
+      - name: Check the build scripts parse
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bad = $false
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              $bad = $true
+              Write-Host "::error file=scripts/$($_.Name)::$($errors -join '; ')"
+            } else {
+              Write-Host "scripts/$($_.Name): ok"
+            }
+          }
+          if ($bad) { exit 1 }
+
+      # Без секретов подпись обязана предупредить и не уронить сборку.
+      - name: Signing is a no-op until it is configured
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/sign.ps1 -Path README.md

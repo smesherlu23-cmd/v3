@@ -16,6 +16,30 @@ def safe_update(control) -> None:
         log.exception("сбой при обновлении контрола после устаревшего события")
 
 
+def track_typing(field: ft.TextField, view, key: str) -> ft.TextField:
+    """Отметить поле как «здесь курсор», чтобы клавиши библиотеки молчали.
+
+    Обработчик клавиатуры в Flet висит на странице целиком и не знает, где
+    фокус, поэтому признак приходится вести вручную. Свои `on_focus`/`on_blur`
+    у поля сохраняются: инспектор и переименование набора сохраняют значение
+    именно по `on_blur`, и подменить его здесь означало бы потерять правку.
+    """
+    prior_focus, prior_blur = field.on_focus, field.on_blur
+
+    def on_focus(e):
+        view.start_typing(key)
+        if prior_focus:
+            prior_focus(e)
+
+    def on_blur(e):
+        view.stop_typing(key)
+        if prior_blur:
+            prior_blur(e)
+
+    field.on_focus, field.on_blur = on_focus, on_blur
+    return field
+
+
 def hoverable(container: ft.Container, normal, hover) -> ft.Container:
     def on_hover(e):
         container.bgcolor = hover if e.data == "true" else normal

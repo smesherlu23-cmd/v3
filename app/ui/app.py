@@ -15,7 +15,7 @@ from ..core import queries
 from ..core.hotkeys import normalize_accel, resolve_accels
 from ..core.store import DEFAULT_LAUNCH_HOTKEY, Store
 from ..core.text import plu_apps, plu_windows
-from ..core.view_state import ViewState
+from ..core.view_state import SEARCH_FIELD, ViewState
 from ..infra import log
 from ..platform import windows as W
 from . import colors as C
@@ -74,14 +74,14 @@ class CenturioUI:
         self.scan = ScanController(self)
         self.triage = TriageController(self)
 
-        self.search_field = ft.TextField(
+        self.search_field = Wg.track_typing(ft.TextField(
             value="", hint_text="Найти или запустить", border=ft.InputBorder.NONE,
             filled=False, dense=True, content_padding=ft.padding.symmetric(0, 0),
             text_size=13.5, color=C.WHITE,
             hint_style=ft.TextStyle(color=C.MUTED_2, size=13.5),
             cursor_color=C.ACCENT, on_change=self._on_search,
             on_click=lambda e: self._open_palette(), always_call_on_tap=True, expand=True,
-        )
+        ), self.view, SEARCH_FIELD)
         self.search_icon = ft.Icon(ft.Icons.SEARCH, size=15, color=C.MUTED_2)
         self.search_tail = ft.Container()
         self.search_box = ft.Container(
@@ -223,6 +223,11 @@ class CenturioUI:
                          self.menu.control, self.toast.control], expand=True)
         self.page.add(root)
         self.refresh()
+        # Store.__init__ мог записать файл раньше, чем появился интерфейс
+        # (миграция ui_defaults), — тогда on_error ещё не был назначен и об
+        # ошибке никто не узнал. Догоняем её здесь.
+        if self.store.write_error:
+            self._on_store_error(self.store.write_error)
         if self.store.newer_version:
             self.toast.error(
                 f"Файл данных сохранён более новой версией Centurio (схема "
@@ -293,6 +298,7 @@ class CenturioUI:
                 del self._tile_cache[app_id]
 
     def _refresh_library(self, content_only: bool):
+        self.view.stop_typing_in_rebuilt_fields()
         if not content_only:
             self.header_holder.content = self.chrome.build_header()
             self.rail_container.width = self.rail()["rail"]

@@ -6,6 +6,14 @@ MODE_KEYS = ("grid", "list")
 SCREENS = ("grid", "add", "settings", "triage")
 PALETTE_FOCUS = ("results", "actions")
 
+# Поля ввода, которые переживают перестроение дерева контролов: поисковое
+# создаётся один раз в `CenturioUI.__init__`, два поля экрана «Добавить» —
+# один раз на заход и лежат в `ui._add_ui`. Всё остальное собирается заново
+# на каждом `refresh()` и теряет фокус вместе со старым контролом —
+# см. `stop_typing_in_rebuilt_fields`.
+SEARCH_FIELD = "search"
+PERSISTENT_FIELDS = frozenset({SEARCH_FIELD, "add_search", "add_path"})
+
 
 class ViewState:
 
@@ -29,6 +37,14 @@ class ViewState:
         self.adv = False
         self.capture = False
         self.capture_target = "app"
+
+        # Ключ поля, в котором сейчас стоит курсор, или None.
+        # `page.on_keyboard_event` в Flet — глобальный обработчик: он
+        # срабатывает независимо от того, где фокус. Поэтому `Delete` внутри
+        # поля «Аргументы» удалял программу из библиотеки, стрелки в поиске
+        # двигали выделение в сетке, а `Escape` в переименовании набора
+        # закрывал редактор. `Keymap` читает этот признак и молчит.
+        self.typing: str | None = None
 
         self.select_mode = False
         self.selection_anchor: str | None = None
@@ -93,6 +109,27 @@ class ViewState:
         if self.popover and not any(c["id"] == self.popover for c in categories):
             self.close_popover()
 
+    def start_typing(self, field: str) -> None:
+        self.typing = field
+
+    def stop_typing(self, field: str) -> None:
+        # Только своё: фокус мог уже уехать в соседнее поле, и его `on_focus`
+        # успел отработать раньше, чем `on_blur` покинутого.
+        if self.typing == field:
+            self.typing = None
+
+    def stop_typing_in_rebuilt_fields(self) -> None:
+        """Снять признак печати с полей, которые сейчас будут пересобраны.
+
+        Все поля, кроме поискового, строятся заново на каждом `refresh()`, а
+        фоновый монитор процессов дёргает его каждые несколько секунд. Старый
+        контрол уходит из дерева вместе с фокусом, но `on_blur` на выброшенном
+        контроле рассчитывать нельзя — без этого признак залипал бы и клавиши
+        библиотеки замолкали до следующего клика по полю и мимо него.
+        """
+        if self.typing not in PERSISTENT_FIELDS:
+            self.typing = None
+
     def move_selection(self, delta, count):
         if not count:
             self.selected = -1
@@ -104,6 +141,7 @@ class ViewState:
         if screen in SCREENS:
             self.screen = screen
             self.active_set = None
+            self.typing = None
             self.close_palette()
             self.close_inspector()
 

@@ -755,6 +755,62 @@ def test_store_write_failure():
             ok(broken.flush() is False, "a throwing error callback doesn't break the save path")
 
 
+def test_store_flushes_to_disk_before_swapping_the_file():
+    """Атомарной замены мало: без fsync содержимое остаётся в кэше ОС.
+
+    `os.replace` меняет запись каталога одним действием, но записанные байты
+    до сброса живут только в памяти. Отключение питания между записью и
+    сбросом — и вместо библиотеки на диске обрезанный файл, который уедет
+    в карантин, а пользователь получит пустой список программ.
+    """
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def spy_fsync(fd):
+        calls.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        calls.append("replace")
+        return real_replace(src, dst)
+
+    with tempfile.TemporaryDirectory() as d:
+        s = Store(os.path.join(d, "data.json"))
+        os.fsync, os.replace = spy_fsync, spy_replace
+        try:
+            s.add_app({"name": "Durable", "path": "/d"})
+        finally:
+            os.fsync, os.replace = real_fsync, real_replace
+
+        ok(calls == ["fsync", "replace"],
+           f"каждая запись сбрасывается на диск, потом заменяет файл (было {calls})")
+        ok(len(Store(os.path.join(d, "data.json")).state()["apps"]) == 1,
+           "и запись доезжает до диска")
+
+
+def test_ui_reports_a_write_error_that_predates_it():
+    """Ошибка первой записи не теряется из-за того, что интерфейса ещё нет.
+
+    `Store.__init__` может сохранить файл сам (миграция `ui_defaults`), а
+    `on_error` назначается только в `CenturioUI.mount`. Раньше такая ошибка
+    не доходила до пользователя вообще.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI early write-error test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        store.write_error = "No space left on device"
+        ui, _ = _ui_for(store)
+
+        ok(ui.toast.icon.color == C.DANGER, "ошибка записи до старта интерфейса показывается")
+        ok("No space left on device" in ui.toast.text.value,
+           f"с текстом ошибки ОС ({ui.toast.text.value})")
+
+
 def test_store_batched_writes():
     """Bulk paths write the file once, not once per record."""
     from app.core.view_state import ViewState
@@ -1145,6 +1201,47 @@ def test_autostart():
         ok(autostart.sync(False) is False, "sync keeps 'off' outside Windows")
 
 
+def test_autostart_cannot_switch_itself_back_on():
+    """Выключенный пользователем автозапуск остаётся выключенным.
+
+    `sync` раньше применяла `preference or is_enabled()`: посторонний ключ
+    `Centurio` в `HKCU\\Run` — от прежней установки, от другой сборки —
+    включал автозапуск обратно, а `app/main.py` этим же переписывал настройку
+    в файле данных. Таблица истинности проверяется на любой платформе,
+    настоящий реестр — только на Windows-раннере.
+    """
+    from app.platform import autostart
+
+    table = [(True, True, False), (True, False, True),
+             (False, True, True), (False, False, False)]
+    for preference, enabled, expected in table:
+        ok(autostart.needs_write(preference, enabled) is expected,
+           f"настройка={preference}, в системе={enabled} → пишем {expected}")
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "data.json")
+        s = Store(path)
+        ok(s.settings()["autostart_adopted"] is False,
+           "у нового файла данных галочка инсталлятора ещё не перенесена")
+        s.set_setting("autostart_adopted", True)
+        ok(Store(path).settings()["autostart_adopted"] is True,
+           "отметка о переносе переживает перезапуск, поэтому он разовый")
+
+    if os.name != "nt":
+        return
+
+    was = autostart.is_enabled()
+    try:
+        autostart.set_autostart(True)
+        ok(autostart.is_enabled() is True, "автозапуск включается")
+        ok(autostart.sync(False) is False and autostart.is_enabled() is False,
+           "чужой ключ в HKCU\\Run не переигрывает выключенную настройку")
+        ok(autostart.sync(True) is True and autostart.is_enabled() is True,
+           "включённая настройка доводится до системы")
+    finally:
+        autostart.set_autostart(was)
+
+
 def types_ns(**kw):
     """A stand-in object with just the attributes a test hands it."""
     import types
@@ -1295,6 +1392,37 @@ def test_packaging_metadata():
     ok(declared == required,
        f"requirements.txt and pyproject agree (pyproject-only: {declared - required}, "
        f"requirements-only: {required - declared})")
+
+
+def test_readme_points_at_files_that_exist():
+    """README не должен описывать то, чего в репозитории нет.
+
+    Раздел «Релиз» пережил удаление `scripts/build_release.ps1` и продолжал
+    описывать скрипт с его флагами и `Get-Help`, которого не было: новый
+    разработчик шёл по инструкции и упирался в пустоту. Проверяются только
+    пути внутри репозитория — то, что появляется при сборке или при работе
+    программы, сюда не попадает.
+    """
+    import re
+
+    roots = ("app", "tests", "scripts", "installer", "assets", ".github")
+    generated = ("installer/Output",)
+
+    mentioned = set()
+    for word in re.split(r"[\s`|(),]+", _read("README.md")):
+        path = word.replace("\\", "/")
+        if path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip(".,;:")
+        if "/" not in path or path.split("/")[0] not in roots:
+            continue
+        if path.startswith(generated):
+            continue
+        mentioned.add(path)
+
+    ok(len(mentioned) >= 8, f"README вообще ссылается на файлы репозитория ({mentioned})")
+    missing = sorted(p for p in mentioned if not os.path.exists(os.path.join(_ROOT, p)))
+    ok(not missing, f"README ссылается на несуществующее: {missing}")
 
 
 def test_single_entry_point():
@@ -1889,6 +2017,73 @@ def test_log():
             # RotatingFileHandler keeps centurio.log open until closed — POSIX
             # lets you unlink an open file, but the TemporaryDirectory cleanup
             # below runs on Windows too, where an open handle blocks deletion.
+            for h in list(_log._LOGGER.handlers):
+                h.close()
+                _log._LOGGER.removeHandler(h)
+
+
+def test_log_is_ready_before_the_store_is_read():
+    """Порядок в `main()`: сначала лог, потом чтение файла данных.
+
+    Про карантин битого файла и про несовместимую схему сообщает сам
+    `Store.__init__`. Пока `log.setup()` шёл после него, эти сообщения — ровно
+    те, ради которых лог и заводят, — уходили в `NullHandler`. Проверяется по
+    исходнику: выполнить `main()` в тесте нельзя, ему нужна страница Flet.
+    """
+    import ast
+
+    src = (Path(__file__).resolve().parent.parent / "app" / "main.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+    def first_line(match):
+        # Без аннотации намеренно: в этом файле нет `from __future__ import
+        # annotations`, а `int | None` вычисляется в момент объявления и
+        # падает на Python 3.9, который есть в матрице CI.
+        lines = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and match(n.func)]
+        return min(lines) if lines else None
+
+    setup_at = first_line(lambda f: isinstance(f, ast.Attribute) and f.attr == "setup"
+                          and isinstance(f.value, ast.Name) and f.value.id == "log")
+    store_at = first_line(lambda f: isinstance(f, ast.Name) and f.id == "Store")
+
+    ok(setup_at is not None, "main() настраивает лог")
+    ok(store_at is not None, "main() создаёт Store")
+    ok(setup_at < store_at,
+       f"log.setup() раньше Store() (строки {setup_at} и {store_at})")
+
+
+def test_log_level_follows_the_debug_setting():
+    """`debug_log` живёт внутри файла данных, а лог поднимается до его чтения.
+
+    Значит уровень нельзя задать одним `setup()` — его повышает вторым шагом
+    `set_debug()`, уже после того, как Store прочитал настройки.
+    """
+    import importlib
+    import logging
+
+    from app.infra import log as _log
+    importlib.reload(_log)
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            _log.setup(debug=False, log_dir=d)
+            _log._LOGGER.handlers = [h for h in _log._LOGGER.handlers
+                                     if isinstance(h, logging.FileHandler)]
+            ok(_log._LOGGER.level == logging.WARNING, "без флага лог остаётся кратким")
+            _log.debug("строка до чтения настроек")
+
+            _log.set_debug(False)
+            ok(_log._LOGGER.level == logging.WARNING, "выключенная настройка ничего не меняет")
+
+            _log.set_debug(True)
+            ok(_log._LOGGER.level == logging.DEBUG, "настройка из файла данных поднимает уровень")
+            _log.debug("строка после чтения настроек")
+
+            with open(os.path.join(d, "centurio.log"), encoding="utf-8") as fh:
+                body = fh.read()
+            ok("строка до чтения настроек" not in body, "до set_debug отладка не пишется")
+            ok("строка после чтения настроек" in body, "после set_debug пишется")
+        finally:
             for h in list(_log._LOGGER.handlers):
                 h.close()
                 _log._LOGGER.removeHandler(h)
@@ -3740,6 +3935,76 @@ def test_ui_keyboard():
         ui.view.close_inspector()
         ui.keymap.handle_key(_key("Escape"))
         ok(hidden == [1], "Esc with nothing left to close hides the window")
+
+
+def test_ui_keys_belong_to_the_focused_field():
+    """Пока курсор в поле ввода, клавиши библиотеки молчат.
+
+    `page.on_keyboard_event` в Flet — глобальный обработчик и не знает, где
+    фокус. Из-за этого `Delete`, нажатый внутри поля «Аргументы», удалял
+    программу из библиотеки, стрелки в поиске двигали выделение в сетке,
+    а `Escape` в поле прятал окно в трей.
+    """
+    try:
+        import flet as ft
+
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI typing-guard test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ids = [store.add_app({"name": n, "path": f"/x/{n}", "category_id": "work"})["id"]
+               for n in ("A", "B", "C")]
+        ui, _ = _ui_for(store)
+
+        ui.view.select_one(ids[0])
+        ui._toggle_adv()
+        args = _find_control(ui.inspector_container, lambda n: isinstance(n, ft.TextField))
+        ok(args is not None, "инспектор показывает поле «Аргументы»")
+
+        args.on_focus(types_ns(control=args))
+        ok(ui.view.typing == "app_args", "фокус в поле отмечается в состоянии")
+        ui.keymap.handle_key(_key("Delete"))
+        ok(len(store.state()["apps"]) == 3, "Delete внутри поля не удаляет программу")
+        ui.keymap.handle_key(_key("a", ctrl=True))
+        ok(len(ui.view.sel) == 1 and not ui.view.select_mode,
+           "Ctrl+A внутри поля выделяет текст, а не все плитки")
+
+        args.on_blur(types_ns(control=args))
+        ok(ui.view.typing is None, "уход фокуса снимает признак")
+        ui.keymap.handle_key(_key("Delete"))
+        ok(len(store.state()["apps"]) == 2, "и Delete снова работает по библиотеке")
+        ui.toast.fire_action()
+
+        search = ui.search_field
+        search.on_focus(types_ns(control=search))
+        hidden = []
+        ui.controllers["hide_to_tray"] = lambda: hidden.append(1)
+        ui.keymap.handle_key(_key("Arrow Down"))
+        ok(ui.view.selected == -1, "стрелки в поиске не двигают выделение в сетке")
+        ui.keymap.handle_key(_key("Escape"))
+        ok(hidden == [], "Escape в поле не прячет окно в трей")
+
+        ui.refresh()
+        ok(ui.view.typing == "search",
+           "поисковое поле переживает перестроение — признак остаётся")
+
+        # Инспектор собирается заново на каждом refresh, в том числе на фоновом
+        # от монитора процессов. Признак обязан уйти вместе со старым контролом,
+        # иначе он залипнет и клавиши библиотеки замолчат насовсем.
+        ui.view.typing = "app_args"
+        ui.refresh()
+        ok(ui.view.typing is None, "у пересобранного поля признак снимается")
+
+        ui.view.set_screen("add")
+        ok(ui.view.typing is None, "смена экрана тоже снимает признак")
+        committed = []
+        ui.scan.commit_add = lambda: committed.append(1)
+        ui.view.typing = "add_search"
+        ui.keymap.handle_key(_key("Enter", ctrl=True))
+        ok(committed == [1], "Ctrl+Enter подтверждает добавление прямо из поля")
 
 
 def test_ui_icons_are_never_letters():

@@ -28,9 +28,20 @@ def _source_files() -> list[Path]:
 
 
 def _modules() -> dict[str, Path]:
+    """Имя модуля → файл, который Python действительно импортирует.
+
+    Пакет побеждает одноимённый модуль: при наличии и `app/ui.py`, и
+    `app/ui/__init__.py` импортируется второй, а первый недостижим. Без этого
+    правила словарь зависел бы от порядка обхода и подсовывал бы проверкам не
+    тот файл — ровно так `app/ui.py` на 3 190 строк прожил незамеченным.
+    За само наличие такой пары отвечает `test_no_module_shadowed_by_package`.
+    """
     found = {PACKAGE: ROOT / PACKAGE / "__init__.py"}
     for path in _source_files():
-        found[_module_name(path)] = path
+        name = _module_name(path)
+        if path.name != "__init__.py" and (path.with_suffix("") / "__init__.py").exists():
+            continue
+        found[name] = path
     return found
 
 
@@ -88,6 +99,67 @@ def test_internal_imports_resolve():
                         f"{path}:{node.lineno} {target!r} has no {alias.name!r}")
 
     assert not broken, "unresolvable internal imports:\n  " + "\n  ".join(broken)
+
+
+def test_no_module_shadowed_by_package():
+    """`app/x.py` рядом с `app/x/` — файл, который никогда не выполнится."""
+    shadowed = [str(p.relative_to(ROOT)) for p in _source_files()
+                if p.name != "__init__.py" and (p.with_suffix("") / "__init__.py").exists()]
+
+    assert not shadowed, ("модуль затенён одноимённым пакетом и недостижим:\n  "
+                          + "\n  ".join(shadowed))
+
+
+def _import_targets(path: Path) -> set[str]:
+    module = _module_name(path)
+    targets: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            targets.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            target = _target_module(module, path, node)
+            targets.add(target)
+            targets.update(f"{target}.{a.name}" for a in node.names)
+    return targets
+
+
+def _reachable_files() -> set[Path]:
+    modules = _modules()
+    queue = [ROOT / "main.py", ROOT / PACKAGE / "main.py", ROOT / PACKAGE / "diagnose.py"]
+    queue += sorted((ROOT / "tests").glob("*.py"))
+    seen: set[Path] = set()
+
+    while queue:
+        path = queue.pop()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        for target in _import_targets(path):
+            if not target.startswith(PACKAGE):
+                continue
+            # Импорт `app.a.b.c` выполняет и все пакеты по пути к нему.
+            parts = target.split(".")
+            for depth in range(1, len(parts) + 1):
+                found = modules.get(".".join(parts[:depth]))
+                if found is not None and found not in seen:
+                    queue.append(found)
+    return seen
+
+
+def test_every_module_is_reachable():
+    """Ни один файл в `app/` не висит в стороне от точек входа и тестов.
+
+    Точки входа: `main.py`, `app/main.py`, `app/diagnose.py` (`python -m
+    app.diagnose` из README) и весь каталог `tests/`. Всё, до чего не
+    дотягивается ни один импорт оттуда, — мёртвый груз: его не выполняет
+    приложение, не проверяют тесты, но по нему ищет grep и на него смотрит
+    линтер. Так в дереве прожила целая до-рефакторинговая копия приложения.
+    """
+    orphans = sorted(str(p.relative_to(ROOT))
+                     for p in set(_modules().values()) - _reachable_files())
+
+    assert not orphans, ("модули недостижимы из точек входа и тестов:\n  "
+                         + "\n  ".join(orphans))
 
 
 def test_layers_do_not_depend_outwards():

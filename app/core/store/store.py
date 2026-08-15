@@ -132,6 +132,12 @@ class Store:
             tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(self.data, fh, ensure_ascii=False, indent=2)
+                # os.replace меняет запись каталога атомарно, но содержимое
+                # временного файла до fsync живёт только в кэше ОС. Отключение
+                # питания между записью и сбросом — и на месте библиотеки
+                # оказывается обрезанный файл, который уедет в карантин.
+                fh.flush()
+                os.fsync(fh.fileno())
             os.replace(tmp, self.path)
         except (OSError, ValueError, TypeError) as exc:
             log.exception("не удалось сохранить файл данных: %s", self.path)

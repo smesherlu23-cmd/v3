@@ -16,6 +16,11 @@ UI_DEFAULTS_VERSION = 1
 
 DEFAULT_SETTINGS = {
     "autostart": False,
+    # Галочку «запускать при входе» ставит инсталлятор, создавая ярлык в
+    # «Автозагрузке». Прочитать её можно только по факту наличия ярлыка и
+    # только один раз — дальше решение принимает пользователь в настройках,
+    # и посторонний ярлык или ключ реестра не должен его переигрывать.
+    "autostart_adopted": False,
     "minimize_to_tray": True,
     "close_to_tray": True,
     "accent": "#f5f5f7",
@@ -214,9 +219,9 @@ def clean_records(raw, clean) -> list[dict]:
 
 
 _BOOL_SETTINGS = {
-    "autostart", "minimize_to_tray", "close_to_tray", "show_quick_row",
-    "game_posters", "auto_rescan", "win_max", "hide_after", "triage",
-    "debug_log",
+    "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray",
+    "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
+    "triage", "debug_log",
 }
 
 _STR_SETTINGS = {"accent", "tile_size", "rail_size", "view_filter", "view_sort",

@@ -6,6 +6,18 @@ from ..core import queries
 from ..core.hotkeys import is_bindable
 
 
+def _survives_typing(e, key: str) -> bool:
+    """Единственный аккорд библиотеки, который работает и в поле ввода.
+
+    Пока курсор в поле, остальные клавиши принадлежат полю: `Delete` стирает
+    символ, стрелки двигают курсор, `Escape` отменяет правку, `Ctrl+A`
+    выделяет текст. Раньше все они уходили в библиотеку — и `Delete`, нажатый
+    в поле «Аргументы», удалял программу. `Ctrl+Enter` исключение: он
+    подтверждает добавление именно во время заполнения формы.
+    """
+    return bool(e.ctrl) and key in ("Enter", "Numpad Enter")
+
+
 class Keymap:
     def __init__(self, ui):
         self.ui = ui
@@ -61,6 +73,8 @@ class Keymap:
             self.ui._launch(row["app"]["id"], from_palette=True, as_admin=admin)
 
     def _library_key(self, e, key):
+        if self.ui.view.typing and not _survives_typing(e, key):
+            return
         if self.ui.view.screen == "triage":
             if self._triage_key(key):
                 return
