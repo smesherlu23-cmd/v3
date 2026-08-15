@@ -56,6 +56,37 @@ _IMG_B64_CACHE = _LruCache(max_entries=192, max_bytes=24 * 1024 * 1024)
 _SVG_CACHE = _LruCache(max_entries=64, max_bytes=2 * 1024 * 1024)
 _IMG_SIZE_CACHE = _LruCache(max_entries=512)
 
+# Кодировать ли растр в base64 вместо того, чтобы отдать путь. Нужно только
+# режиму CENTURIO_WEB: страница в браузере не может открыть файл на диске.
+_EMBED = False
+
+
+def embed_images(embed: bool) -> None:
+    """Переключить растр на base64 — для режима `CENTURIO_WEB`.
+
+    В обычном режиме `ft.Image(src=<путь>)` читает файл сам клиент Flet.
+    Кодирование обходилось в ×1.33 от файла строкой в памяти Python и ещё
+    столько же при сериализации в протокол; постер 600×900 превращался в
+    ~200 КБ строки, а на библиотеке больше 192 картинок кэш начинал
+    пробуксовывать — каждый `refresh` заново читал с диска и кодировал
+    вытесненные картинки, синхронно, в потоке отрисовки.
+    """
+    global _EMBED
+    _EMBED = bool(embed)
+
+
+def raster_path(path) -> str | None:
+    """Путь к существующему растровому файлу — или None.
+
+    Отдельная проверка нужна, потому что «файла нет» и «файл не картинка» для
+    вызывающих одно и то же: в обоих случаях рисуется значок-заглушка. Раньше
+    это выходило побочным эффектом `img_b64`, которая на отсутствующем файле
+    возвращала None.
+    """
+    if not path or not str(path).lower().endswith(_RASTER_EXT):
+        return None
+    return str(path) if os.path.exists(path) else None
+
 
 def img_b64(path) -> str | None:
     if not path or not str(path).lower().endswith(_RASTER_EXT):
@@ -99,9 +130,12 @@ def _svg_markup(path) -> str | None:
 
 
 def icon_image(path, **kw) -> ft.Image | None:
-    b64 = img_b64(path)
-    if b64:
-        return ft.Image(src_base64=b64, **kw)
+    raster = raster_path(path)
+    if raster:
+        if not _EMBED:
+            return ft.Image(src=raster, **kw)
+        b64 = img_b64(raster)
+        return ft.Image(src_base64=b64, **kw) if b64 else None
     svg = _svg_markup(path)
     if svg:
         return ft.Image(src=svg, **kw)

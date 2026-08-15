@@ -24,6 +24,7 @@ from app.platform import windows as W
 from app.platform.launcher import Launcher
 from app.platform.tray import TrayController
 from app.ui import colors as C
+from app.ui import images
 from app.ui.app import CenturioUI
 from app.ui.iconify import ensure_icons, tray_icon_path
 
@@ -63,6 +64,10 @@ def main(page: ft.Page):
 
     ensure_icons(ASSETS_DIR)
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
+    # Картинки отдаются клиенту путём, а не строкой base64. В браузере такого
+    # пути нет — страница не может открыть файл на диске, — поэтому там
+    # включается кодирование.
+    images.embed_images(is_web)
     start_hidden = "--hidden" in sys.argv
 
     page.title = "Centurio"

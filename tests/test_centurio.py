@@ -4329,6 +4329,47 @@ def test_ui_icons_are_never_letters():
            "nothing in the window draws a letter placeholder any more")
 
 
+def test_images_are_handed_over_as_paths_not_base64():
+    """Растр уходит клиенту путём — кодирование осталось только браузеру.
+
+    base64 занимал ×1.33 от файла строкой в памяти Python и ещё столько же в
+    протоколе Flet; постер 600×900 превращался в ~200 КБ строки. Хуже того,
+    при библиотеке больше 192 картинок кэш начинал пробуксовывать: каждый
+    `refresh` заново читал с диска и кодировал вытесненные картинки —
+    синхронно, в потоке отрисовки.
+    """
+    try:
+        import flet as ft  # noqa: F401
+
+        from app.ui import images
+    except Exception as exc:
+        skip("UI image-source test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        png = str(iconify.generate_icon(os.path.join(d, "icon.png"), 32))
+        missing = os.path.join(d, "gone.png")
+
+        try:
+            images.embed_images(False)
+            img = images.icon_image(png, width=32, height=32)
+            ok(img is not None and img.src == png, f"путь уходит как есть ({img and img.src})")
+            ok(img.src_base64 is None, "и ничего не кодируется")
+
+            ok(images.raster_path(png) == png, "существующий растр опознаётся")
+            ok(images.raster_path(missing) is None, "отсутствующий файл — нет")
+            ok(images.raster_path(os.path.join(d, "icon.txt")) is None, "как и не картинка")
+            ok(images.icon_image(missing) is None,
+               "для отсутствующего файла картинки нет — рисуется значок-заглушка")
+
+            images.embed_images(True)
+            web = images.icon_image(png, width=32, height=32)
+            ok(web is not None and web.src_base64, "в режиме CENTURIO_WEB картинка кодируется")
+            ok(web.src is None, "потому что страница в браузере не читает файлы с диска")
+        finally:
+            images.embed_images(False)
+
+
 def test_ui_icon_slot_respects_stored_fit():
     """A Steam app's «icon» field is sometimes a wide capsule/header image and
     sometimes a genuinely square one — which one it got is recorded in

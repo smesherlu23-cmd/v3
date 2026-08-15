@@ -186,11 +186,16 @@ def icon_slot(app, size: int, radius: int, glyph: int | None = None,
               border=None, glyph_color=None, bgcolor=None, cat=None,
               source_glyph: str = "folder"):
     fit = _FIT_BY_KIND.get(app.get("icon_fit"), ft.ImageFit.CONTAIN)
-    inner = icon_image(app.get("icon"), width=size - 8, height=size - 8, fit=fit)
+    name = cat_glyph_name(cat) if cat else source_glyph
+    placeholder = ft.Icon(cat_icon(name), size=glyph or round(size * 0.46),
+                          color=glyph_color or C.SLOT_GLYPH)
+    inner = icon_image(app.get("icon"), width=size - 8, height=size - 8, fit=fit,
+                       # Файл существует, но не читается или битый — показываем
+                       # тот же значок-заглушку, что и при отсутствии иконки,
+                       # вместо пустого места в плитке.
+                       error_content=placeholder)
     if inner is None:
-        name = cat_glyph_name(cat) if cat else source_glyph
-        inner = ft.Icon(cat_icon(name), size=glyph or round(size * 0.46),
-                        color=glyph_color or C.SLOT_GLYPH)
+        inner = placeholder
     return ft.Container(
         inner, width=size, height=size, border_radius=radius,
         bgcolor=bgcolor or C.SLOT_BG,
