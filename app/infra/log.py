@@ -11,6 +11,7 @@ from . import paths
 _LOGGER = logging.getLogger("centurio")
 _LOGGER.addHandler(logging.NullHandler())
 _configured = False
+_FORMAT = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
 
 def is_debug() -> bool:
@@ -21,6 +22,15 @@ def _default_dir() -> Path:
     return paths.data_dir()
 
 
+def _add_console() -> None:
+    # RotatingFileHandler — тоже StreamHandler, поэтому сравнение точное.
+    if any(type(h) is logging.StreamHandler for h in _LOGGER.handlers):
+        return
+    sh = logging.StreamHandler()
+    sh.setFormatter(_FORMAT)
+    _LOGGER.addHandler(sh)
+
+
 def setup(debug: bool | None = None, log_dir: str | Path | None = None) -> logging.Logger:
     global _configured
     if _configured:
@@ -29,27 +39,39 @@ def setup(debug: bool | None = None, log_dir: str | Path | None = None) -> loggi
         debug = is_debug()
 
     _LOGGER.setLevel(logging.DEBUG if debug else logging.WARNING)
-    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 
     try:
         d = Path(log_dir) if log_dir else _default_dir()
         d.mkdir(parents=True, exist_ok=True)
         fh = RotatingFileHandler(d / "centurio.log", maxBytes=512 * 1024,
                                  backupCount=3, encoding="utf-8")
-        fh.setFormatter(fmt)
+        fh.setFormatter(_FORMAT)
         _LOGGER.addHandler(fh)
     except Exception:
         pass
 
     if debug:
-        sh = logging.StreamHandler()
-        sh.setFormatter(fmt)
-        _LOGGER.addHandler(sh)
+        _add_console()
 
     _LOGGER.debug("logging started (log dir: %s)", log_dir or "<default>")
 
     _configured = True
     return _LOGGER
+
+
+def set_debug(enabled: bool) -> None:
+    """Поднять подробность лога после того, как прочитаны настройки.
+
+    `setup()` вызывается до создания `Store`, иначе сообщения о карантине
+    битого файла данных и о несовместимой версии схемы уходят в `NullHandler`.
+    Но флаг `debug_log` лежит внутри этого же файла, поэтому уровень
+    приходится повышать вторым шагом. Понижать нечего: `--debug` и
+    `CENTURIO_DEBUG` уже учтены в `setup()`.
+    """
+    if not enabled or _LOGGER.level == logging.DEBUG:
+        return
+    _LOGGER.setLevel(logging.DEBUG)
+    _add_console()
 
 def debug(msg, *args, **kw):
     _LOGGER.debug(msg, *args, **kw)

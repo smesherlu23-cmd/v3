@@ -5,12 +5,20 @@ on:
     branches: ["**"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  # Centurio написан под Windows: 12 модулей из 58 не выполняются больше нигде.
+  # Проверка только на Ubuntu оставляла реестр, поиск установленного, раскладку
+  # окон, трей и автозапуск без единого автоматического прогона.
   check:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} · Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.9", "3.12"]
 
     steps:

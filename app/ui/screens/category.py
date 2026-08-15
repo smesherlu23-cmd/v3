@@ -44,13 +44,14 @@ def build_category_popover(ui, cat):
     color = C.category_color(cat)
     hue, lightness, _sat = C.hex_to_hsl(color)
 
-    name_field = ft.TextField(
+    name_field = Wg.track_typing(ft.TextField(
         value=cat["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
         text_size=13.5, color=C.TEXT, cursor_color=C.TEXT, expand=True,
         content_padding=ft.padding.symmetric(0, 0),
         text_style=ft.TextStyle(weight=ft.FontWeight.W_600),
         on_blur=lambda e: ui.rename_category(cat["id"], e.control.value),
-        on_submit=lambda e: ui.rename_category(cat["id"], e.control.value))
+        on_submit=lambda e: ui.rename_category(cat["id"], e.control.value)),
+        ui.view, "category_name")
 
     header = ft.Row([
         ft.Container(Wg.cat_glyph(cat, size=18, fill=34 if cat.get("image") else None),
@@ -75,7 +76,8 @@ def build_category_popover(ui, cat):
 
     hex_box = ft.Container(
         ft.Row([ft.Container(width=14, height=14, border_radius=4, bgcolor=color),
-                _field(color.upper(), "#RRGGBB", mono=True, size=12,
+                _field(ui.view, "category_color", color.upper(), "#RRGGBB",
+                       mono=True, size=12,
                        on_submit=lambda e: ui.set_category_color(
                            cat["id"], C.parse_hex(e.control.value) or color))],
                spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER),

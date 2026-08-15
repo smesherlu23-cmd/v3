@@ -22,13 +22,14 @@ def build_set_screen(ui, rec):
 
 def _set_header(ui, rec):
     accel = ui._set_accels.get(rec["id"])
-    name = ft.TextField(
+    name = Wg.track_typing(ft.TextField(
         value=rec["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
         text_size=20, color=C.TEXT, cursor_color=C.TEXT,
         content_padding=ft.padding.symmetric(0, 0),
         text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, font_family="Inter Bold"),
         on_blur=lambda e: ui.set_ops.rename_set(rec["id"], e.control.value),
-        on_submit=lambda e: ui.set_ops.rename_set(rec["id"], e.control.value))
+        on_submit=lambda e: ui.set_ops.rename_set(rec["id"], e.control.value)),
+        ui.view, "set_name")
     count = len(rec["items"])
     meta = [T(f"{count} {plu_programs(count)}", size=12, color=C.MUTED_2)]
     if accel:

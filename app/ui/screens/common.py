@@ -3,6 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from .. import colors as C
+from .. import widgets as Wg
 from ..format import T
 
 
@@ -26,11 +27,11 @@ def _screen_header(title, subtitle, on_close, extra=None):
         border=ft.border.only(bottom=ft.BorderSide(1, C.LINE_2)))
 
 
-def _field(value, hint, on_change=None, on_submit=None, mono=False, size=13):
-    return ft.TextField(
+def _field(view, key, value, hint, on_change=None, on_submit=None, mono=False, size=13):
+    return Wg.track_typing(ft.TextField(
         value=value or "", hint_text=hint, border=ft.InputBorder.NONE, filled=False,
         dense=True, text_size=size, color=C.TEXT, cursor_color=C.TEXT, expand=True,
         hint_style=ft.TextStyle(color=C.MUTED_2, size=size),
         text_style=ft.TextStyle(font_family="mono") if mono else None,
         content_padding=ft.padding.symmetric(0, 0),
-        on_change=on_change, on_submit=on_submit)
+        on_change=on_change, on_submit=on_submit), view, key)

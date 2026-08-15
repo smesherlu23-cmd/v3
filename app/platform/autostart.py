@@ -86,9 +86,48 @@ def set_autostart(enabled: bool) -> bool:
         return False
 
 
+def adopt_installer_choice() -> bool:
+    """Разовый подхват галочки инсталлятора — что стоит в системе сейчас.
+
+    `installer/centurio.iss` создаёт `{userstartup}\\Centurio.lnk`, если при
+    установке отмечена галочка «Запускать при входе в Windows». Другого
+    способа узнать её нет, поэтому первый запуск читает состояние системы и
+    записывает его в настройки. Вызывать это можно ровно один раз — за
+    однократностью следит `autostart_adopted` (см. `app/main.py`).
+    """
+    return is_enabled()
+
+
+def needs_write(preference: bool, enabled: bool) -> bool:
+    """Трогать систему нужно только там, где она расходится с настройкой.
+
+    | настройка | автозапуск стоит | пишем |
+    |-----------|------------------|-------|
+    | True      | True             | нет   |
+    | True      | False            | True  |
+    | False     | True             | False |
+    | False     | False            | нет   |
+
+    Третья строка и есть починенный дефект: раньше вместо неё писалось `True`.
+    Первая и четвёртая важны отдельно — `set_autostart` попутно удаляет ярлык
+    из «Автозагрузки», и вызов на каждом запуске стирал бы ярлык, который
+    пользователь мог положить туда сам.
+    """
+    return bool(preference) != bool(enabled)
+
+
 def sync(preference: bool) -> bool:
+    """Привести систему в соответствие с настройкой — и только с ней.
+
+    Раньше здесь стояло `preference or is_enabled()`, то есть любой ключ
+    `Centurio` в `HKCU\\Run` — оставшийся от прежней установки, от другой
+    сборки, от чего угодно — молча включал автозапуск обратно, а `app/main.py`
+    следом переписывал этим настройку пользователя. Выключить автозапуск было
+    нельзя в принципе.
+    """
     if os.name != "nt":
         return bool(preference)
-    effective = bool(preference) or is_enabled()
-    set_autostart(effective)
-    return effective
+    preference = bool(preference)
+    if needs_write(preference, is_enabled()):
+        set_autostart(preference)
+    return preference

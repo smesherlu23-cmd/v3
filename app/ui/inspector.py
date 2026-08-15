@@ -200,7 +200,7 @@ class InspectorPanel:
         if not open_now:
             return ft.Container(head, padding=ft.padding.only(18, 18, 18, 0))
 
-        args_field = ft.TextField(
+        args_field = Wg.track_typing(ft.TextField(
             value=args_value, hint_text="не заданы", height=32, text_size=11.5,
             color=C.TEXT, bgcolor=C.PANEL, border_color=C.CONTROL,
             focused_border_color=C.LINE_5, border_radius=8,
@@ -208,7 +208,8 @@ class InspectorPanel:
             hint_style=ft.TextStyle(color=C.MUTED_2, size=11.5),
             text_style=ft.TextStyle(font_family="mono"), expand=True,
             on_blur=lambda e: self.ui._set_args(app["id"], e.control.value),
-            on_submit=lambda e: self.ui._set_args(app["id"], e.control.value))
+            on_submit=lambda e: self.ui._set_args(app["id"], e.control.value)),
+            self.ui.view, "app_args")
 
         workdir = (app.get("working_dir") or "").strip()
         folder = ft.Container(

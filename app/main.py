@@ -17,7 +17,7 @@ from app.core.hotkeys import (
     split_binding,
 )
 from app.core.store import DEFAULT_LAUNCH_HOTKEY, Store
-from app.infra import log
+from app.infra import log, paths
 from app.infra.debounce import Debounce
 from app.platform import autostart, single_instance
 from app.platform import windows as W
@@ -52,9 +52,13 @@ def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=
 
 
 def main(page: ft.Page):
+    # Лог поднимается до Store: карантин битого файла данных и отказ читать
+    # более новую схему случаются внутри Store.__init__, и до этой перестановки
+    # уходили в NullHandler — ровно те сообщения, ради которых лог и нужен.
+    # Каталог берётся из paths.data_dir() и от Store не зависит.
+    log.setup(log_dir=paths.data_dir())
     store = Store()
-    log.setup(log_dir=Path(store.path).parent,
-              debug=log.is_debug() or bool(store.state()["settings"].get("debug_log")))
+    log.set_debug(bool(store.state()["settings"].get("debug_log")))
     log.debug("Centurio starting (argv=%s)", sys.argv)
 
     ensure_icons(ASSETS_DIR)
@@ -343,11 +347,16 @@ def main(page: ft.Page):
     threading.Thread(target=_auto_rescan_loop, daemon=True).start()
 
     if not is_web:
-        want = bool(store.state()["settings"].get("autostart", False))
-        effective = autostart.sync(want)
-        if effective != want:
-            store.set_setting("autostart", effective)
+        settings = store.state()["settings"]
+        if not settings.get("autostart_adopted"):
+            # Первый запуск после установки: галочка инсталлятора живёт только
+            # как ярлык в «Автозагрузке», перенести её в настройки можно
+            # единственный раз. Дальше настройка — единственный источник правды.
+            adopted = bool(settings.get("autostart")) or autostart.adopt_installer_choice()
+            store.set_setting("autostart", adopted)
+            store.set_setting("autostart_adopted", True)
             ui.refresh()
+        autostart.sync(bool(store.state()["settings"].get("autostart", False)))
         tray.start()
         if start_hidden:
             hide_window()
