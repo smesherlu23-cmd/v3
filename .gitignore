@@ -15,5 +15,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Артефакты прогона тестов и покрытия.
+.coverage
+coverage.xml
+htmlcov/
+
 *.tmp
 centurio-data.json
