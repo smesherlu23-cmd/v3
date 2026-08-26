@@ -1225,41 +1225,35 @@ def test_posters_off_means_no_network():
 def test_hotkey_rejection():
     """A single bad accelerator must not take the other hotkeys down with it.
 
-    Exercises the mapping builder directly: starting a real GlobalHotKeys
-    listener would need a display and could hang a headless run.
+    Exercises the mapping builder directly: it is a pure function over the
+    binding list, so no window, message loop or RegisterHotKey call is
+    involved and a headless run can never hang.
     """
-    from app.core.hotkeys import HotkeyManager
-
-    class FakeHotKey:
-        @staticmethod
-        def parse(combo):
-            for part in combo.split("+"):
-                if part.startswith("<") and part.endswith(">"):
-                    name = part[1:-1]
-                    if not (name in {"ctrl", "alt", "shift", "cmd", "space", "enter"}
-                            or (name.startswith("f") and name[1:].isdigit())):
-                        raise ValueError(combo)
-                elif len(part) != 1:
-                    raise ValueError(combo)
-            return combo
-
-    class FakeKeyboard:
-        HotKey = FakeHotKey
+    from app.core.hotkeys import (
+        MOD_CONTROL,
+        MOD_SHIFT,
+        HotkeyManager,
+        normalize_accel,
+    )
 
     mgr = HotkeyManager(on_trigger=lambda _aid: None)
-    kb = FakeKeyboard()
 
     mapping, rejected = mgr._build_mapping(
-        kb, [("Ctrl+Shift+G", "good"), ("Ctrl+Пробел", "bad"), ("F8", "also-good")])
-    ok(rejected == ["Ctrl+Пробел"], "only the unparseable accelerator is rejected")
+        [("Ctrl+Shift+G", "good"), ("Ctrl+Пробел", "bad"), ("F8", "also-good")])
+    ok(rejected == ["Ctrl+Пробел"], "only the unbindable accelerator is rejected")
     ok(len(mapping) == 2, "the surviving hotkeys are still registered")
-    ok("<ctrl>+<shift>+g" in mapping and "<f8>" in mapping, "good combos keep their pynput spelling")
+    by_accel = {normalize_accel(b.accel): b for b in mapping.values()}
+    ok(by_accel["ctrl+shift+g"].flags == (MOD_CONTROL | MOD_SHIFT)
+       and by_accel["ctrl+shift+g"].vk == ord("G"),
+       "good combos carry the right Win32 modifiers and virtual key")
+    ok(by_accel["f8"].flags == 0 and by_accel["f8"].vk == 0x77,
+       "a bare F-key needs no modifier and maps to its VK code")
 
-    mapping, rejected = mgr._build_mapping(kb, [("Ctrl+G", "one"), ("ctrl+g", "two")])
+    mapping, rejected = mgr._build_mapping([("Ctrl+G", "one"), ("ctrl+g", "two")])
     ok(rejected == ["ctrl+g"], "a duplicate accelerator is rejected, not silently overwritten")
     ok(len(mapping) == 1, "the first binding of a duplicated combo wins")
 
-    mapping, rejected = mgr._build_mapping(kb, [(None, "x"), ("", "y")])
+    mapping, rejected = mgr._build_mapping([(None, "x"), ("", "y")])
     ok(not mapping and not rejected, "empty accelerators are skipped quietly")
 
 
@@ -1296,19 +1290,14 @@ def test_ci_skip_escalation():
 def test_hotkey_no_double_launch():
     """A globally registered combo must be ignored by the in-window handler.
 
-    pynput doesn't swallow the keystroke, so a focused window sees it too —
-    both handlers firing used to launch two apps on one Ctrl+N.
+    A global hotkey and the in-window Ctrl+N handler could both fire on one
+    press; `handles()` is what tells the window handler to stand down for a
+    combo the global manager owns.
     """
     from app.core.hotkeys import HotkeyManager
 
-    class FakeKeyboard:
-        class HotKey:
-            @staticmethod
-            def parse(combo):
-                return combo
-
     mgr = HotkeyManager(on_trigger=lambda _aid: None)
-    mgr._build_mapping(FakeKeyboard(), [("Ctrl+1", "a"), ("Ctrl+2", "b")])
+    mgr._build_mapping([("Ctrl+1", "a"), ("Ctrl+2", "b")])
     ok(mgr.bound == {"ctrl+1", "ctrl+2"}, "accepted accelerators are recorded")
     ok(mgr.handles("Ctrl+1") is False, "no listener running -> the window handles the key")
     mgr.available = True
@@ -1643,6 +1632,52 @@ def test_readme_points_at_files_that_exist():
     ok(len(mentioned) >= 8, f"README вообще ссылается на файлы репозитория ({mentioned})")
     missing = sorted(p for p in mentioned if not os.path.exists(os.path.join(_ROOT, p)))
     ok(not missing, f"README ссылается на несуществующее: {missing}")
+
+
+def test_global_hotkeys_avoid_the_keylogger_signature():
+    """Никаких хуков клавиатуры и pynput — только RegisterHotKey.
+
+    `SetWindowsHookEx(WH_KEYBOARD_LL)` (а это и есть pynput.GlobalHotKeys)
+    получает каждое нажатие в системе — по этому признаку эвристики
+    антивирусов опознают кейлоггер, и неподписанный Centurio ловил детект.
+    Глобальные клавиши берутся документированным `RegisterHotKey`, которому
+    ОС отдаёт только зарегистрированные сочетания. Тест не даёт хуку
+    вернуться незамеченным.
+    """
+    import io
+    import re
+    import tokenize
+
+    def _code_only(src: str) -> str:
+        # Отбрасываем комментарии и строковые литералы, чтобы объяснение
+        # в docstring, где эти имена и должны звучать, не считалось нарушением.
+        out = []
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+                if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+                    out.append(tok.string)
+        except tokenize.TokenError:
+            return src
+        return "\n".join(out)
+
+    offenders = []
+    for path in sorted((Path(_ROOT) / "app").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        code = _code_only(path.read_text(encoding="utf-8"))
+        rel = str(path.relative_to(_ROOT))
+        if re.search(r"\bpynput\b", code):
+            offenders.append(f"{rel}: references pynput")
+        if "GlobalHotKeys" in code:
+            offenders.append(f"{rel}: uses pynput GlobalHotKeys")
+        if re.search(r"SetWindowsHookEx|WH_KEYBOARD", code):
+            offenders.append(f"{rel}: installs a keyboard hook")
+    ok(not offenders, "keyboard-hook signatures crept back in: " + "; ".join(offenders))
+
+    pyproject = _read("pyproject.toml")
+    requirements = _read("requirements.txt")
+    ok("pynput" not in pyproject, "pynput is gone from pyproject dependencies")
+    ok("pynput" not in requirements, "pynput is gone from requirements.txt")
 
 
 def test_single_entry_point():
@@ -2008,11 +2043,21 @@ def test_discovery():
 
 
 def test_hotkeys():
-    from app.core.hotkeys import app_for_accel, quick_accels, quick_bindings, to_pynput
-    ok(to_pynput("Ctrl+Shift+1") == "<ctrl>+<shift>+1", "hotkey -> pynput format")
-    ok(to_pynput("Alt+G") == "<alt>+g", "hotkey letter")
-    ok(to_pynput("F5") == "<f5>", "hotkey F-key")
-    ok(to_pynput("Ctrl+Space") == "<ctrl>+<space>", "named key wrapped for pynput")
+    from app.core.hotkeys import (
+        MOD_ALT,
+        MOD_CONTROL,
+        MOD_SHIFT,
+        app_for_accel,
+        quick_accels,
+        quick_bindings,
+        to_win_hotkey,
+    )
+    ok(to_win_hotkey("Ctrl+Shift+1") == (MOD_CONTROL | MOD_SHIFT, ord("1")),
+       "hotkey -> Win32 (modifiers, vk)")
+    ok(to_win_hotkey("Alt+G") == (MOD_ALT, ord("G")), "hotkey letter")
+    ok(to_win_hotkey("F5") == (0, 0x74), "hotkey F-key")
+    ok(to_win_hotkey("Ctrl+Space") == (MOD_CONTROL, 0x20), "named key mapped to its VK")
+    ok(to_win_hotkey("Ctrl+Пробел") is None, "an unmappable key yields no binding")
     apps = [{"id": "a", "quick": True, "hotkey": None},
             {"id": "b", "quick": True, "hotkey": "Ctrl+Shift+X"},
             {"id": "c", "quick": True, "hotkey": None}]
@@ -4269,7 +4314,7 @@ def test_ui_keyboard():
         # Flet сообщает пробел как буквальный " ", а не именем "Space", как
         # остальные именованные клавиши (Enter, Tab, Escape). Без нормализации
         # это " " схлопывалось до пустой строки везде ниже по цепочке (и
-        # format_accel, и to_pynput отбрасывают пустые токены), так что
+        # format_accel, и to_win_hotkey отбрасывают пустые токены), так что
         # «Ctrl+Пробел» на экране превращался просто в «Ctrl».
         ui.view.select_one(ids[1])
         ui._begin_capture()

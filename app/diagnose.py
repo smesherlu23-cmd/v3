@@ -27,7 +27,7 @@ def run(search: str | None = None) -> None:
     print(f"процесс: {'64-bit' if sys.maxsize > 2**32 else '32-bit'} "
           f"(sys.maxsize={sys.maxsize})")
     print("Зависимости:")
-    for m in ("flet", "pystray", "PIL", "pynput", "psutil"):
+    for m in ("flet", "pystray", "PIL", "psutil"):
         print(f"  {m:10}: {_mod(m)}")
 
     from app.core.store import default_data_path
