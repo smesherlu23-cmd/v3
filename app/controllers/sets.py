@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from ..core import layout as L
 from ..core import queries
@@ -9,9 +10,12 @@ from ..core.text import plu_programs, plu_windows
 from ..infra import log
 from ..platform import windows as W
 
+if TYPE_CHECKING:
+    from .host import UIHost
+
 
 class SetsController:
-    def __init__(self, ui):
+    def __init__(self, ui: UIHost):
         self.ui = ui
         self.store = ui.store
         self.launcher = ui.launcher
@@ -23,7 +27,7 @@ class SetsController:
             return
         if from_palette:
             self.ui.view.close_palette()
-            self.ui.search_field.value = ""
+            self.ui.clear_search()
         count = len(rec["items"])
         self.notify.show(f"Открываю «{rec['name']}» · {count} {plu_programs(count)}",
                            icon="layers")

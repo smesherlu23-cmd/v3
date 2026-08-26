@@ -397,16 +397,79 @@ def test_window_helpers():
        == [{"exe": "a.exe"}], "and a snapshot can be filtered without touching the OS")
 
 
+def test_native_registry_and_localapps_discovery():
+    """Реестр и папку Programs Centurio обходит сам, без PowerShell.
+
+    Перебор Uninstall/App Paths и подбор exe в каталоге установки перенесены
+    из скрытого PowerShell-скрипта в Python (winreg + файловая система):
+    перечисление установленного — recon-признак, по которому эвристики
+    антивирусов придираются к процессу powershell.exe. Логика — чистая, так
+    что проверяется на любой платформе, без реального реестра Windows.
+    """
+    from app.platform.discovery import windows as win
+
+    with tempfile.TemporaryDirectory() as d:
+        app_dir = os.path.join(d, "Cool Editor")
+        os.makedirs(app_dir)
+        # Крупнейший .exe — деинсталлятор; выбрать надо совпадающий по имени.
+        with open(os.path.join(app_dir, "editor.exe"), "wb") as fh:
+            fh.write(b"x" * 4000)
+        with open(os.path.join(app_dir, "unins000.exe"), "wb") as fh:
+            fh.write(b"x" * 9000)
+        picked = win._best_exe(app_dir, "Cool Editor")
+        ok(picked and os.path.basename(picked) == "editor.exe",
+           "the exe whose name echoes the program wins over a larger unrelated one")
+        ok(win._best_exe(app_dir, "Nothing Matches").endswith("unins000.exe"),
+           "with no name match, the largest exe is the fallback")
+        ok(win._best_exe("C:\\Program Files", "Anything") is None,
+           "a root-ish directory is refused — no scanning all of Program Files")
+        ok(win._best_exe(os.path.join(d, "missing"), "x") is None,
+           "a directory that isn't there yields nothing, not an error")
+
+        prev = os.environ.get("LOCALAPPDATA")
+        os.environ["LOCALAPPDATA"] = d
+        try:
+            # _localapps_entries смотрит в подпапку Programs.
+            ok(win._localapps_entries() == [], "no Programs subfolder means nothing found")
+            programs = os.path.join(d, "Programs", "My App")
+            os.makedirs(programs)
+            with open(os.path.join(programs, "myapp.exe"), "wb") as fh:
+                fh.write(b"x" * 100)
+            found = win._localapps_entries()
+            ok(len(found) == 1 and found[0]["name"] == "My App"
+               and found[0]["source" if "source" in found[0] else "src"] == "localapps",
+               "an app under %LocalAppData%\\Programs is found and tagged localapps")
+        finally:
+            if prev is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = prev
+
+    # Форма записи реестра решается без обращения к системе.
+    ok(win._registry_app("", None, None) is None, "an entry without a name is dropped")
+    ok(win._registry_app("Thing", "notepad", None) is None,
+       "a DisplayIcon that isn't an existing .exe doesn't invent a path")
+    ok(win._under_windows("C:/Windows/System32/x.exe") is True
+       and win._under_windows("D:/Games/x.exe") is False,
+       "system-directory exes are recognised so they can be filtered out")
+
+
 def test_discovery_sources():
     """Найденное помечается источником и умеет докладывать об ошибках."""
     from app.platform import discovery
 
     source = "\n".join(text for _label, text in _sources("platform/discovery"))
     ok("'startmenu'" in source, "the Start Menu pass tags what it finds")
-    ok("'registry'" in source, "and so do the uninstall and App Paths passes")
-    ok("'localapps'" in source,
+    ok('"registry"' in source or "'registry'" in source,
+       "and so do the uninstall and App Paths passes")
+    ok('"localapps"' in source or "'localapps'" in source,
        "and a %LocalAppData%\\Programs fallback catches apps neither of those sees")
-    ok("LOCALAPPDATA" in discovery._WIN_PS, "that fallback actually scans the real folder")
+    # Реестр и папку Programs теперь обходит Python (winreg + os), а не
+    # скрытый PowerShell: перебор Uninstall/App Paths — recon-признак для AV.
+    ok("LOCALAPPDATA" in source, "the Programs-folder fallback scans the real folder")
+    ok("HKLM:" not in discovery._WIN_PS and "HKCU:" not in discovery._WIN_PS
+       and "Get-ItemProperty" not in discovery._WIN_PS,
+       "the registry recon no longer runs inside PowerShell")
     ok(".EndsWith('.lnk')" in discovery._WIN_PS and ".EndsWith('.exe')" in discovery._WIN_PS,
        "Get-StartApps entries without a Store-style '!' id are resolved too, not dropped")
 
@@ -1225,41 +1288,35 @@ def test_posters_off_means_no_network():
 def test_hotkey_rejection():
     """A single bad accelerator must not take the other hotkeys down with it.
 
-    Exercises the mapping builder directly: starting a real GlobalHotKeys
-    listener would need a display and could hang a headless run.
+    Exercises the mapping builder directly: it is a pure function over the
+    binding list, so no window, message loop or RegisterHotKey call is
+    involved and a headless run can never hang.
     """
-    from app.core.hotkeys import HotkeyManager
-
-    class FakeHotKey:
-        @staticmethod
-        def parse(combo):
-            for part in combo.split("+"):
-                if part.startswith("<") and part.endswith(">"):
-                    name = part[1:-1]
-                    if not (name in {"ctrl", "alt", "shift", "cmd", "space", "enter"}
-                            or (name.startswith("f") and name[1:].isdigit())):
-                        raise ValueError(combo)
-                elif len(part) != 1:
-                    raise ValueError(combo)
-            return combo
-
-    class FakeKeyboard:
-        HotKey = FakeHotKey
+    from app.core.hotkeys import (
+        MOD_CONTROL,
+        MOD_SHIFT,
+        HotkeyManager,
+        normalize_accel,
+    )
 
     mgr = HotkeyManager(on_trigger=lambda _aid: None)
-    kb = FakeKeyboard()
 
     mapping, rejected = mgr._build_mapping(
-        kb, [("Ctrl+Shift+G", "good"), ("Ctrl+Пробел", "bad"), ("F8", "also-good")])
-    ok(rejected == ["Ctrl+Пробел"], "only the unparseable accelerator is rejected")
+        [("Ctrl+Shift+G", "good"), ("Ctrl+Пробел", "bad"), ("F8", "also-good")])
+    ok(rejected == ["Ctrl+Пробел"], "only the unbindable accelerator is rejected")
     ok(len(mapping) == 2, "the surviving hotkeys are still registered")
-    ok("<ctrl>+<shift>+g" in mapping and "<f8>" in mapping, "good combos keep their pynput spelling")
+    by_accel = {normalize_accel(b.accel): b for b in mapping.values()}
+    ok(by_accel["ctrl+shift+g"].flags == (MOD_CONTROL | MOD_SHIFT)
+       and by_accel["ctrl+shift+g"].vk == ord("G"),
+       "good combos carry the right Win32 modifiers and virtual key")
+    ok(by_accel["f8"].flags == 0 and by_accel["f8"].vk == 0x77,
+       "a bare F-key needs no modifier and maps to its VK code")
 
-    mapping, rejected = mgr._build_mapping(kb, [("Ctrl+G", "one"), ("ctrl+g", "two")])
+    mapping, rejected = mgr._build_mapping([("Ctrl+G", "one"), ("ctrl+g", "two")])
     ok(rejected == ["ctrl+g"], "a duplicate accelerator is rejected, not silently overwritten")
     ok(len(mapping) == 1, "the first binding of a duplicated combo wins")
 
-    mapping, rejected = mgr._build_mapping(kb, [(None, "x"), ("", "y")])
+    mapping, rejected = mgr._build_mapping([(None, "x"), ("", "y")])
     ok(not mapping and not rejected, "empty accelerators are skipped quietly")
 
 
@@ -1296,19 +1353,14 @@ def test_ci_skip_escalation():
 def test_hotkey_no_double_launch():
     """A globally registered combo must be ignored by the in-window handler.
 
-    pynput doesn't swallow the keystroke, so a focused window sees it too —
-    both handlers firing used to launch two apps on one Ctrl+N.
+    A global hotkey and the in-window Ctrl+N handler could both fire on one
+    press; `handles()` is what tells the window handler to stand down for a
+    combo the global manager owns.
     """
     from app.core.hotkeys import HotkeyManager
 
-    class FakeKeyboard:
-        class HotKey:
-            @staticmethod
-            def parse(combo):
-                return combo
-
     mgr = HotkeyManager(on_trigger=lambda _aid: None)
-    mgr._build_mapping(FakeKeyboard(), [("Ctrl+1", "a"), ("Ctrl+2", "b")])
+    mgr._build_mapping([("Ctrl+1", "a"), ("Ctrl+2", "b")])
     ok(mgr.bound == {"ctrl+1", "ctrl+2"}, "accepted accelerators are recorded")
     ok(mgr.handles("Ctrl+1") is False, "no listener running -> the window handles the key")
     mgr.available = True
@@ -1454,6 +1506,14 @@ def test_autostart_cannot_switch_itself_back_on():
     try:
         autostart.set_autostart(True)
         ok(autostart.is_enabled() is True, "автозапуск включается")
+        # Предпочтение — ярлыку в «Автозагрузке», а не записи в HKCU\Run:
+        # она формально подпадает под MITRE T1547.001, и антивирусы к ней
+        # придирчивее. Ключ остаётся только запасным путём, если COM не смог
+        # создать ярлык, — иначе его быть не должно.
+        link = autostart.startup_shortcut()
+        if link is not None and link.exists():
+            ok(autostart._run_key_set() is False,
+               "при живом ярлыке ключ реестра не создаётся")
         ok(autostart.sync(False) is False and autostart.is_enabled() is False,
            "чужой ключ в HKCU\\Run не переигрывает выключенную настройку")
         ok(autostart.sync(True) is True and autostart.is_enabled() is True,
@@ -1577,6 +1637,88 @@ def test_admin_argument_quoting():
             sys.modules["ctypes"] = real_ctypes
 
 
+def test_controllers_depend_only_on_the_public_ui_surface():
+    """Контроллеры знают об интерфейсе лишь его публичную поверхность — UIHost.
+
+    `CenturioUI` — объект-бог (132 метода, 62 поля), и контроллеры получают
+    его целиком. Чтобы связь не расползалась (С-1/С-2 в ATTESTATION.md), она
+    сужена до протокола `UIHost`: контроллеры не лезут в приватные `ui._…` и
+    не зовут ничего, чего в протоколе нет. Обход AST держит обе границы.
+    """
+    import ast
+
+    from app.controllers.host import UIHost
+
+    allowed = set(UIHost.__annotations__) | {
+        n for n, v in vars(UIHost).items() if not n.startswith("_") and callable(v)}
+
+    private: list[str] = []
+    unknown: list[str] = []
+    for label, src in _sources("controllers"):
+        if label.endswith("controllers/host.py"):
+            continue
+        for node in ast.walk(ast.parse(src)):
+            # Обращения вида `self.ui.<member>` или `ui.<member>`.
+            if not isinstance(node, ast.Attribute):
+                continue
+            base = node.value
+            is_ui = (isinstance(base, ast.Name) and base.id == "ui") or (
+                isinstance(base, ast.Attribute) and base.attr == "ui"
+                and isinstance(base.value, ast.Name) and base.value.id == "self")
+            if not is_ui:
+                continue
+            if node.attr.startswith("_"):
+                private.append(f"{label}: ui.{node.attr}")
+            elif node.attr not in allowed:
+                unknown.append(f"{label}: ui.{node.attr}")
+
+    ok(not private, "controllers reach into UI privates: " + "; ".join(private))
+    ok(not unknown,
+       "controllers use UI members missing from UIHost (add them to the protocol): "
+       + "; ".join(sorted(set(unknown))))
+
+
+def test_domain_types_match_runtime_shapes():
+    """TypedDict-схема домена не расходится с тем, что реально кладётся в dict.
+
+    `app/core/types.py` — единственное авторитетное определение формы записей.
+    Толку от него ноль, если оно тихо отстанет от `Store`/`sanitize`, поэтому
+    ключи сверяются с настоящими записями: добавил поле в запись, забыл в тип
+    (или наоборот) — тест красный.
+    """
+    from app.core import types
+    from app.core.store import sanitize
+
+    def keys(td) -> set:
+        return set(td.__annotations__)
+
+    ok(keys(types.Settings) == set(sanitize.DEFAULT_SETTINGS),
+       "Settings covers exactly the default settings keys")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        rec = store.add_app({"name": "X", "path": "C:/x.exe"})
+        ok(set(rec) == keys(types.App),
+           f"App matches a stored record (diff: {set(rec) ^ keys(types.App)})")
+
+    cat = sanitize.clean_category(
+        {"id": "c", "name": "n", "icon": "i", "color": "#fff", "order": 0}, 0)
+    ok(set(cat) == keys(types.Category), "Category matches clean_category output")
+
+    layout = sanitize.clean_layout({})
+    ok(set(layout) == keys(types.SetLayout), "SetLayout matches clean_layout output")
+
+    item = sanitize.clean_item({"app_id": "a"}, "half", 0)
+    ok(set(item) == keys(types.SetItem), "SetItem matches clean_item output")
+
+    aset = sanitize.clean_set({"id": "s", "name": "n", "items": [{"app_id": "a"}]}, 0)
+    ok(set(aset) == keys(types.AppSet),
+       f"AppSet matches clean_set output (diff: {set(aset) ^ keys(types.AppSet)})")
+
+    inbox = sanitize.clean_inbox({"path": "C:/p.exe", "name": "n"}, 0)
+    ok(set(inbox) == keys(types.InboxItem), "InboxItem matches clean_inbox output")
+
+
 def test_packaging_metadata():
     """The version and the dependency list live in files that can't import
     each other, so the check that they agree belongs here."""
@@ -1643,6 +1785,52 @@ def test_readme_points_at_files_that_exist():
     ok(len(mentioned) >= 8, f"README вообще ссылается на файлы репозитория ({mentioned})")
     missing = sorted(p for p in mentioned if not os.path.exists(os.path.join(_ROOT, p)))
     ok(not missing, f"README ссылается на несуществующее: {missing}")
+
+
+def test_global_hotkeys_avoid_the_keylogger_signature():
+    """Никаких хуков клавиатуры и pynput — только RegisterHotKey.
+
+    `SetWindowsHookEx(WH_KEYBOARD_LL)` (а это и есть pynput.GlobalHotKeys)
+    получает каждое нажатие в системе — по этому признаку эвристики
+    антивирусов опознают кейлоггер, и неподписанный Centurio ловил детект.
+    Глобальные клавиши берутся документированным `RegisterHotKey`, которому
+    ОС отдаёт только зарегистрированные сочетания. Тест не даёт хуку
+    вернуться незамеченным.
+    """
+    import io
+    import re
+    import tokenize
+
+    def _code_only(src: str) -> str:
+        # Отбрасываем комментарии и строковые литералы, чтобы объяснение
+        # в docstring, где эти имена и должны звучать, не считалось нарушением.
+        out = []
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+                if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+                    out.append(tok.string)
+        except tokenize.TokenError:
+            return src
+        return "\n".join(out)
+
+    offenders = []
+    for path in sorted((Path(_ROOT) / "app").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        code = _code_only(path.read_text(encoding="utf-8"))
+        rel = str(path.relative_to(_ROOT))
+        if re.search(r"\bpynput\b", code):
+            offenders.append(f"{rel}: references pynput")
+        if "GlobalHotKeys" in code:
+            offenders.append(f"{rel}: uses pynput GlobalHotKeys")
+        if re.search(r"SetWindowsHookEx|WH_KEYBOARD", code):
+            offenders.append(f"{rel}: installs a keyboard hook")
+    ok(not offenders, "keyboard-hook signatures crept back in: " + "; ".join(offenders))
+
+    pyproject = _read("pyproject.toml")
+    requirements = _read("requirements.txt")
+    ok("pynput" not in pyproject, "pynput is gone from pyproject dependencies")
+    ok("pynput" not in requirements, "pynput is gone from requirements.txt")
 
 
 def test_single_entry_point():
@@ -1876,9 +2064,14 @@ def test_discovery():
                     if k in s]
         ok(not remaining, f"{name}: all placeholders substituted")
 
-    for fn in ("Best-Exe", "Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
+    for fn in ("Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
               "Get-LogoAttr", "Get-Pkg"):
         ok(fn in discovery._WIN_PS, f"_WIN_PS defines/calls {fn}")
+    # Реестр и localapps ушли из PowerShell в Python — скрипт больше не
+    # перебирает Uninstall/App Paths и не подбирает exe в каталоге установки.
+    ok("Best-Exe" not in discovery._WIN_PS, "_WIN_PS no longer guesses exes in install dirs")
+    for fn in ("_registry_entries", "_localapps_entries", "_best_exe"):
+        ok(hasattr(discovery.windows, fn), f"discovery.windows exposes native {fn}")
 
     # Скрытый PowerShell, внутри которого `Add-Type -TypeDefinition` компилирует
     # C# с `DllImport`, — классика offensive tooling, попадающая под AMSI, и
@@ -2008,11 +2201,21 @@ def test_discovery():
 
 
 def test_hotkeys():
-    from app.core.hotkeys import app_for_accel, quick_accels, quick_bindings, to_pynput
-    ok(to_pynput("Ctrl+Shift+1") == "<ctrl>+<shift>+1", "hotkey -> pynput format")
-    ok(to_pynput("Alt+G") == "<alt>+g", "hotkey letter")
-    ok(to_pynput("F5") == "<f5>", "hotkey F-key")
-    ok(to_pynput("Ctrl+Space") == "<ctrl>+<space>", "named key wrapped for pynput")
+    from app.core.hotkeys import (
+        MOD_ALT,
+        MOD_CONTROL,
+        MOD_SHIFT,
+        app_for_accel,
+        quick_accels,
+        quick_bindings,
+        to_win_hotkey,
+    )
+    ok(to_win_hotkey("Ctrl+Shift+1") == (MOD_CONTROL | MOD_SHIFT, ord("1")),
+       "hotkey -> Win32 (modifiers, vk)")
+    ok(to_win_hotkey("Alt+G") == (MOD_ALT, ord("G")), "hotkey letter")
+    ok(to_win_hotkey("F5") == (0, 0x74), "hotkey F-key")
+    ok(to_win_hotkey("Ctrl+Space") == (MOD_CONTROL, 0x20), "named key mapped to its VK")
+    ok(to_win_hotkey("Ctrl+Пробел") is None, "an unmappable key yields no binding")
     apps = [{"id": "a", "quick": True, "hotkey": None},
             {"id": "b", "quick": True, "hotkey": "Ctrl+Shift+X"},
             {"id": "c", "quick": True, "hotkey": None}]
@@ -4269,7 +4472,7 @@ def test_ui_keyboard():
         # Flet сообщает пробел как буквальный " ", а не именем "Space", как
         # остальные именованные клавиши (Enter, Tab, Escape). Без нормализации
         # это " " схлопывалось до пустой строки везде ниже по цепочке (и
-        # format_accel, и to_pynput отбрасывают пустые токены), так что
+        # format_accel, и to_win_hotkey отбрасывают пустые токены), так что
         # «Ctrl+Пробел» на экране превращался просто в «Ctrl».
         ui.view.select_one(ids[1])
         ui._begin_capture()
@@ -4787,10 +4990,12 @@ def test_shutdown_releases_resources():
              launcher=types_ns(stop_monitor=Recorder("monitor")),
              hotkeys=types_ns(stop=Recorder("hotkeys")),
              geometry_flush=types_ns(cancel=Recorder("geometry")),
-             toast=types_ns(stop=Recorder("toast")))
-    ok(set(calls) == {"flush", "geometry", "hotkeys", "monitor", "tray", "toast"},
+             toast=types_ns(stop=Recorder("toast")),
+             stop_event=types_ns(set=Recorder("bg")))
+    ok(set(calls) == {"flush", "bg", "geometry", "hotkeys", "monitor", "tray", "toast"},
        f"every resource is released ({calls})")
     ok(calls[0] == "flush", "the store is flushed before anything is torn down")
+    ok("bg" in calls, "the background-jobs loop is signalled to stop, not left running")
 
     calls.clear()
     shutdown(store=types_ns(flush=Recorder("flush", boom=True)),

@@ -27,7 +27,7 @@ def run(search: str | None = None) -> None:
     print(f"процесс: {'64-bit' if sys.maxsize > 2**32 else '32-bit'} "
           f"(sys.maxsize={sys.maxsize})")
     print("Зависимости:")
-    for m in ("flet", "pystray", "PIL", "pynput", "psutil"):
+    for m in ("flet", "pystray", "PIL", "psutil"):
         print(f"  {m:10}: {_mod(m)}")
 
     from app.core.store import default_data_path
@@ -42,12 +42,18 @@ def run(search: str | None = None) -> None:
                  "процесса)" if "sysnative" in exe.lower() else ""))
 
         t0 = time.time()
-        raw, stderr, code = discovery.raw_windows_entries(icon_cache)
+        ps_raw, stderr, code = discovery.raw_windows_entries(icon_cache)
         dt = time.time() - t0
-        print(f"PowerShell (Меню «Пуск» + реестр + Store): {len(raw)} записей "
+        print(f"PowerShell (Меню «Пуск» + Store): {len(ps_raw)} записей "
               f"за {dt:.1f}s, код={code}")
         if stderr:
             print(f"  stderr: {stderr[:2000]}")
+        # Реестр и папку Programs теперь обходит Python, не PowerShell.
+        reg = discovery.windows._registry_entries()
+        local = discovery.windows._localapps_entries()
+        print(f"Реестр (winreg): {len(reg)} записей; "
+              f"%LocalAppData%\\Programs: {len(local)} записей")
+        raw = list(ps_raw) + reg + local
 
         by_src = {}
         for x in raw:
@@ -70,7 +76,7 @@ def run(search: str | None = None) -> None:
                 print(f"    · нет иконки {x.get('name', '')[:40]} — {x.get('icon_err', '?')}")
 
         if search:
-            print(f"\n  поиск «{search}» в сыром выводе PowerShell (до фильтрации):")
+            print(f"\n  поиск «{search}» в сыром выводе (до фильтрации):")
             hits = [x for x in raw if _matches(x.get("name"), x.get("path"), search)]
             if hits:
                 for x in hits:
@@ -78,7 +84,7 @@ def run(search: str | None = None) -> None:
                     print(f"    НАЙДЕН [{x.get('src')}] {x.get('name')} — "
                           f"{x.get('path')}" + ("  (отфильтрован как мусор!)" if junk else ""))
             else:
-                print(f"    НЕ НАЙДЕН вообще — PowerShell не увидел «{search}» "
+                print(f"    НЕ НАЙДЕН вообще — «{search}» не видно "
                       "ни в меню «Пуск», ни в реестре, ни в Store. "
                       "Проблема на уровне поиска, не фильтра.")
 

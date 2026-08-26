@@ -476,6 +476,16 @@ class CenturioUI:
         self._focus_search()
         return True
 
+    def clear_search(self):
+        """Опустошить поле поиска.
+
+        Публичная точка для контроллеров: раньше `SetsController` лез прямо в
+        виджет — `ui.search_field.value = ""`, — то есть слой сценариев
+        дёргал контрол Flet. Теперь он зовёт этот метод, а поле остаётся
+        деталью интерфейса.
+        """
+        self.search_field.value = ""
+
     def _open_palette(self):
         if self.view.palette_open:
             return

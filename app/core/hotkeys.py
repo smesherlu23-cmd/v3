@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import os
+import threading
+from typing import NamedTuple
+
 from ..infra import log
 
-_MODS = {
-    "ctrl": "<ctrl>", "control": "<ctrl>",
-    "alt": "<alt>", "option": "<alt>",
-    "shift": "<shift>",
-    "win": "<cmd>", "cmd": "<cmd>", "super": "<cmd>", "meta": "<cmd>",
-}
+# Модификаторы для RegisterHotKey (winuser.h). Раньше здесь были строки
+# формата pynput («<ctrl>»); теперь горячие клавиши регистрируются
+# документированным Win32-вызовом, а не глобальным низкоуровневым хуком, —
+# см. комментарий у HotkeyManager.
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+MOD_NOREPEAT = 0x4000
+
+WM_HOTKEY = 0x0312
+_WM_STOP = 0x0400 + 1  # WM_USER+1 — сигнал потоку завершить цикл сообщений
+
+_MOD_FLAGS = {"ctrl": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT, "win": MOD_WIN}
 
 _KEY_ALIASES = {
     "arrow up": "up", "arrow down": "down",
@@ -20,19 +32,28 @@ _KEY_ALIASES = {
     "break": "pause",
 }
 
-_PYNPUT_KEYS = {
-    "backspace", "caps_lock", "delete", "down", "end", "enter", "esc", "home",
-    "insert", "left", "menu", "num_lock", "page_down", "page_up", "pause",
-    "print_screen", "right", "scroll_lock", "space", "tab", "up",
-    "media_next", "media_previous", "media_play_pause",
-    "media_volume_up", "media_volume_down", "media_volume_mute",
-} | {f"f{n}" for n in range(1, 21)}
+# Имя клавиши → виртуальный код Windows (winuser.h). Буквы и цифры кода не
+# требуют — их даёт ord() в _key_vk. Всё остальное перечислено здесь.
+_VK = {
+    "space": 0x20, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
+    "backspace": 0x08, "delete": 0x2E, "insert": 0x2D,
+    "home": 0x24, "end": 0x23, "page_up": 0x21, "page_down": 0x22,
+    "left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28,
+    "pause": 0x13, "print_screen": 0x2C, "scroll_lock": 0x91,
+    "caps_lock": 0x14, "num_lock": 0x90, "menu": 0x5D,
+    "media_next": 0xB0, "media_previous": 0xB1, "media_play_pause": 0xB3,
+    "media_volume_mute": 0xAD, "media_volume_down": 0xAE, "media_volume_up": 0xAF,
+}
+_VK.update({f"f{n}": 0x6F + n for n in range(1, 25)})  # F1=0x70 … F24=0x87
 
+# Клавиши, которые можно назначить без модификатора: их VK нельзя спутать
+# с обычным набором текста.
+_NAMED_KEYS = frozenset(_VK)
 _STANDALONE_KEYS = {
     "pause", "print_screen", "scroll_lock",
     "media_next", "media_previous", "media_play_pause",
     "media_volume_up", "media_volume_down", "media_volume_mute",
-} | {f"f{n}" for n in range(1, 21)}
+} | {f"f{n}" for n in range(1, 25)}
 
 
 def canonical_key(token: str) -> str:
@@ -40,18 +61,37 @@ def canonical_key(token: str) -> str:
     return _KEY_ALIASES.get(key, key)
 
 
-def to_pynput(accel: str) -> str:
-    out = []
-    for raw in str(accel).split("+"):
-        p = raw.strip().lower()
-        if not p:
-            continue
-        if p in _MODS:
-            out.append(_MODS[p])
-            continue
-        key = canonical_key(p)
-        out.append(key if len(key) == 1 else f"<{key}>")
-    return "+".join(out)
+def _key_vk(key: str) -> int | None:
+    vk = _VK.get(key)
+    if vk is not None:
+        return vk
+    if len(key) == 1:
+        ch = key.upper()
+        if "A" <= ch <= "Z" or "0" <= ch <= "9":
+            return ord(ch)
+    return None
+
+
+def to_win_hotkey(accel: str) -> tuple[int, int] | None:
+    """(битовая маска модификаторов, виртуальный код) для RegisterHotKey.
+
+    None — если комбинацию нельзя выразить: неизвестная клавиша или
+    неизвестный модификатор. Возвращённую пару можно передавать в
+    `RegisterHotKey(hwnd, id, mods, vk)` напрямую.
+    """
+    mods, key = split_accel(accel)
+    if not key:
+        return None
+    vk = _key_vk(key)
+    if vk is None:
+        return None
+    flags = 0
+    for m in mods:
+        f = _MOD_FLAGS.get(m)
+        if f is None:
+            return None
+        flags |= f
+    return flags, vk
 
 
 _MOD_ORDER = ("ctrl", "alt", "shift", "win")
@@ -77,7 +117,7 @@ def is_bindable(accel: str) -> tuple[bool, str]:
     mods, key = split_accel(accel)
     if not key:
         return False, "Не разобрал комбинацию"
-    if len(key) != 1 and key not in _PYNPUT_KEYS:
+    if len(key) != 1 and key not in _NAMED_KEYS:
         return False, "Эту клавишу назначить нельзя"
     if not mods and key not in _STANDALONE_KEYS:
         return False, "Нужен модификатор — Ctrl, Alt, Shift или Win"
@@ -119,83 +159,165 @@ TOGGLE_LAUNCH = "__centurio_toggle_launch__"
 SET_PREFIX = "set:"
 
 
+class _Binding(NamedTuple):
+    target: str
+    accel: str
+    flags: int
+    vk: int
+
+
 class HotkeyManager:
+    """Глобальные горячие клавиши через `RegisterHotKey`, а не хук клавиатуры.
+
+    Прежняя реализация поднимала `pynput.keyboard.GlobalHotKeys`, а это на
+    Windows — `SetWindowsHookEx(WH_KEYBOARD_LL)`: низкоуровневый хук, которому
+    ОС отдаёт *каждое* нажатие в системе. Ровно по этому признаку эвристики
+    антивирусов опознают кейлоггер, и неподписанный Centurio ловил детект.
+
+    `RegisterHotKey` — документированный путь для глобальных комбинаций: ОС
+    присылает `WM_HOTKEY` только для тех сочетаний, что мы зарегистрировали,
+    и ни к каким другим нажатиям доступа у процесса нет. Функция требует
+    поток с циклом сообщений; он поднимается в `_run` и живёт, пока
+    `register` не сменит набор или `stop` не завершит его.
+    """
+
     def __init__(self, on_trigger):
         self.on_trigger = on_trigger
-        self._listener = None
         self.available = False
         self.rejected: list[str] = []
         self.bound: set[str] = set()
+        self._thread: threading.Thread | None = None
+        self._thread_id = 0
+        self._lock = threading.Lock()
 
-    def _build_mapping(self, keyboard, bindings):
-        parse = getattr(keyboard.HotKey, "parse", None)
-        mapping = {}
-        rejected = []
+    def _build_mapping(self, bindings):
+        """id горячей клавиши → _Binding. Отсеивает нераспознанные и дубли.
+
+        Чистая функция без обращения к системе, поэтому проверяется
+        напрямую, без реального цикла сообщений. Наполняет `self.bound`
+        всеми разобранными комбинациями; после регистрации `register`
+        оставляет в нём только те, что система действительно приняла.
+        """
+        mapping: dict[int, _Binding] = {}
+        seen: dict[tuple[int, int], int] = {}
+        rejected: list[str] = []
         self.bound = set()
-        for accel, app_id in bindings:
+        next_id = 1
+        for accel, target in bindings:
             if not accel:
                 continue
-            combo = to_pynput(accel)
-            if not combo:
+            combo = to_win_hotkey(accel)
+            if combo is None:
+                rejected.append(accel)
+                log.warning("ignoring unbindable hotkey %r", accel)
                 continue
-            if parse is not None:
-                try:
-                    parse(combo)
-                except Exception:
-                    rejected.append(accel)
-                    log.warning("ignoring unparseable hotkey %r (as %r)", accel, combo)
-                    continue
-            if combo in mapping:
+            if combo in seen:
                 rejected.append(accel)
                 log.warning("ignoring duplicate hotkey %r", accel)
                 continue
-            mapping[combo] = (lambda aid=app_id: self._fire(aid))
+            flags, vk = combo
+            hid = next_id
+            next_id += 1
+            seen[combo] = hid
+            mapping[hid] = _Binding(target, accel, flags, vk)
             self.bound.add(normalize_accel(accel))
         return mapping, rejected
 
     def register(self, bindings) -> bool:
         self.stop()
-        self.rejected = []
-        self.bound = set()
-        try:
-            from pynput import keyboard
-        except Exception:
+        mapping, self.rejected = self._build_mapping(bindings)
+        if not mapping or os.name != "nt":
+            # На не-Windows глобальных клавиш нет: их берёт на себя
+            # внутренний обработчик окна (см. `handles`).
             self.available = False
+            self.bound = set()
             return False
 
-        mapping, self.rejected = self._build_mapping(keyboard, bindings)
-        if not mapping:
-            self.available = False
-            self.bound = set()
-            return False
+        started = threading.Event()
+        os_rejected: list[str] = []
+        registered: set[str] = set()
+        thread = threading.Thread(
+            target=self._run, name="centurio-hotkeys", daemon=True,
+            args=(mapping, started, os_rejected, registered))
+        with self._lock:
+            self._thread = thread
+        thread.start()
+        started.wait(2.0)
+        if os_rejected:
+            self.rejected = self.rejected + os_rejected
+        self.bound = registered
+        self.available = bool(registered)
+        return self.available
+
+    def _run(self, mapping, started, os_rejected, registered):
         try:
-            self._listener = keyboard.GlobalHotKeys(mapping)
-            self._listener.daemon = True
-            self._listener.start()
-            self.available = True
-            return True
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
         except Exception:
-            log.exception("failed to start the global hotkey listener")
-            self.available = False
-            self.bound = set()
-            return False
+            log.exception("ctypes unavailable for global hotkeys")
+            started.set()
+            return
+
+        active: list[int] = []
+        try:
+            with self._lock:
+                self._thread_id = kernel32.GetCurrentThreadId()
+            for hid, b in mapping.items():
+                if user32.RegisterHotKey(None, hid, b.flags | MOD_NOREPEAT, b.vk):
+                    active.append(hid)
+                    registered.add(normalize_accel(b.accel))
+                else:
+                    os_rejected.append(b.accel)
+                    log.warning("RegisterHotKey refused %r — taken by the "
+                                "system or another app", b.accel)
+        finally:
+            started.set()
+
+        try:
+            msg = wintypes.MSG()
+            while True:
+                got = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if got in (0, -1):
+                    break
+                if msg.message == _WM_STOP:
+                    break
+                if msg.message == WM_HOTKEY:
+                    b = mapping.get(msg.wParam)
+                    if b is not None:
+                        self._fire(b.target)
+        except Exception:
+            log.exception("global hotkey message loop crashed")
+        finally:
+            for hid in active:
+                try:
+                    user32.UnregisterHotKey(None, hid)
+                except Exception:
+                    pass
 
     def handles(self, accel: str) -> bool:
         return self.available and normalize_accel(accel) in self.bound
 
-    def _fire(self, app_id):
+    def _fire(self, target):
         try:
-            self.on_trigger(app_id)
+            self.on_trigger(target)
         except Exception:
-            log.exception("global hotkey handler for %s failed", app_id)
+            log.exception("global hotkey handler for %s failed", target)
 
     def stop(self):
-        if self._listener:
+        with self._lock:
+            thread = self._thread
+            thread_id = self._thread_id
+            self._thread = None
+            self._thread_id = 0
+        if thread is not None and thread_id:
             try:
-                self._listener.stop()
+                import ctypes
+                ctypes.windll.user32.PostThreadMessageW(thread_id, _WM_STOP, 0, 0)
             except Exception:
-                pass
-            self._listener = None
+                log.exception("failed to signal the hotkey thread to stop")
+            thread.join(2.0)
         self.available = False
         self.bound = set()
 

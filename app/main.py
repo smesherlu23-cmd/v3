@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 
 import flet as ft
@@ -34,8 +33,9 @@ AUTO_RESCAN_INTERVAL = 900
 
 
 def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=None,
-             toast=None):
+             toast=None, stop_event=None):
     for label, step in (("flushing the store", getattr(store, "flush", None)),
+                        ("stopping background jobs", getattr(stop_event, "set", None)),
                         ("cancelling the geometry flush",
                          getattr(geometry_flush, "cancel", None)),
                         ("stopping the toast timer", getattr(toast, "stop", None)),
@@ -93,11 +93,13 @@ def main(page: ft.Page):
     hotkeys = None
     geometry_flush = None
     ui_holder = {}
+    bg_stop = threading.Event()
 
     def quit_app():
         ui = ui_holder.get("ui")
         shutdown(store=store, tray=tray, launcher=launcher, hotkeys=hotkeys,
-                 geometry_flush=geometry_flush, toast=getattr(ui, "toast", None))
+                 geometry_flush=geometry_flush, toast=getattr(ui, "toast", None),
+                 stop_event=bg_stop)
         _quit(page)
 
     def apply_window():
@@ -349,8 +351,11 @@ def main(page: ft.Page):
     launcher.start_monitor()
 
     def _auto_rescan_loop():
-        while True:
-            time.sleep(AUTO_RESCAN_INTERVAL)
+        # wait() вместо sleep(): на выходе `bg_stop` будит поток сразу, а не
+        # держит его в спячке до конца интервала. Раньше цикл был `while True`
+        # и shutdown его не знал — поток жил до самого os._exit и мог запустить
+        # пересканирование уже во время закрытия.
+        while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
             try:
                 if store.state()["settings"].get("auto_rescan"):
                     ui.scan.rescan(silent=True)
