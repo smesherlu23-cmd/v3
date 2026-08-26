@@ -1443,6 +1443,14 @@ def test_autostart_cannot_switch_itself_back_on():
     try:
         autostart.set_autostart(True)
         ok(autostart.is_enabled() is True, "автозапуск включается")
+        # Предпочтение — ярлыку в «Автозагрузке», а не записи в HKCU\Run:
+        # она формально подпадает под MITRE T1547.001, и антивирусы к ней
+        # придирчивее. Ключ остаётся только запасным путём, если COM не смог
+        # создать ярлык, — иначе его быть не должно.
+        link = autostart.startup_shortcut()
+        if link is not None and link.exists():
+            ok(autostart._run_key_set() is False,
+               "при живом ярлыке ключ реестра не создаётся")
         ok(autostart.sync(False) is False and autostart.is_enabled() is False,
            "чужой ключ в HKCU\\Run не переигрывает выключенную настройку")
         ok(autostart.sync(True) is True and autostart.is_enabled() is True,
