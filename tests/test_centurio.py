@@ -4949,10 +4949,12 @@ def test_shutdown_releases_resources():
              launcher=types_ns(stop_monitor=Recorder("monitor")),
              hotkeys=types_ns(stop=Recorder("hotkeys")),
              geometry_flush=types_ns(cancel=Recorder("geometry")),
-             toast=types_ns(stop=Recorder("toast")))
-    ok(set(calls) == {"flush", "geometry", "hotkeys", "monitor", "tray", "toast"},
+             toast=types_ns(stop=Recorder("toast")),
+             stop_event=types_ns(set=Recorder("bg")))
+    ok(set(calls) == {"flush", "bg", "geometry", "hotkeys", "monitor", "tray", "toast"},
        f"every resource is released ({calls})")
     ok(calls[0] == "flush", "the store is flushed before anything is torn down")
+    ok("bg" in calls, "the background-jobs loop is signalled to stop, not left running")
 
     calls.clear()
     shutdown(store=types_ns(flush=Recorder("flush", boom=True)),
