@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .host import UIHost
 
 
 class TriageController:
-    def __init__(self, ui):
+    def __init__(self, ui: UIHost):
         self.ui = ui
         self.store = ui.store
         self.notify = ui.notify

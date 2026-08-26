@@ -4,18 +4,22 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..core import queries
 from ..core.text import plu_apps
 from ..infra import log
 from ..platform import discovery
 
+if TYPE_CHECKING:
+    from .host import UIHost
+
 DISCOVERY_TTL = 120.0
 
 
 class ScanController:
 
-    def __init__(self, ui):
+    def __init__(self, ui: UIHost):
         self.ui = ui
         self.store = ui.store
         self.notify = ui.notify

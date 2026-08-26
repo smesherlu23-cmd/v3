@@ -1637,6 +1637,47 @@ def test_admin_argument_quoting():
             sys.modules["ctypes"] = real_ctypes
 
 
+def test_controllers_depend_only_on_the_public_ui_surface():
+    """Контроллеры знают об интерфейсе лишь его публичную поверхность — UIHost.
+
+    `CenturioUI` — объект-бог (132 метода, 62 поля), и контроллеры получают
+    его целиком. Чтобы связь не расползалась (С-1/С-2 в ATTESTATION.md), она
+    сужена до протокола `UIHost`: контроллеры не лезут в приватные `ui._…` и
+    не зовут ничего, чего в протоколе нет. Обход AST держит обе границы.
+    """
+    import ast
+
+    from app.controllers.host import UIHost
+
+    allowed = set(UIHost.__annotations__) | {
+        n for n, v in vars(UIHost).items() if not n.startswith("_") and callable(v)}
+
+    private: list[str] = []
+    unknown: list[str] = []
+    for label, src in _sources("controllers"):
+        if label.endswith("controllers/host.py"):
+            continue
+        for node in ast.walk(ast.parse(src)):
+            # Обращения вида `self.ui.<member>` или `ui.<member>`.
+            if not isinstance(node, ast.Attribute):
+                continue
+            base = node.value
+            is_ui = (isinstance(base, ast.Name) and base.id == "ui") or (
+                isinstance(base, ast.Attribute) and base.attr == "ui"
+                and isinstance(base.value, ast.Name) and base.value.id == "self")
+            if not is_ui:
+                continue
+            if node.attr.startswith("_"):
+                private.append(f"{label}: ui.{node.attr}")
+            elif node.attr not in allowed:
+                unknown.append(f"{label}: ui.{node.attr}")
+
+    ok(not private, "controllers reach into UI privates: " + "; ".join(private))
+    ok(not unknown,
+       "controllers use UI members missing from UIHost (add them to the protocol): "
+       + "; ".join(sorted(set(unknown))))
+
+
 def test_domain_types_match_runtime_shapes():
     """TypedDict-схема домена не расходится с тем, что реально кладётся в dict.
 
