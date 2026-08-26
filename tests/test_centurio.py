@@ -397,16 +397,79 @@ def test_window_helpers():
        == [{"exe": "a.exe"}], "and a snapshot can be filtered without touching the OS")
 
 
+def test_native_registry_and_localapps_discovery():
+    """Реестр и папку Programs Centurio обходит сам, без PowerShell.
+
+    Перебор Uninstall/App Paths и подбор exe в каталоге установки перенесены
+    из скрытого PowerShell-скрипта в Python (winreg + файловая система):
+    перечисление установленного — recon-признак, по которому эвристики
+    антивирусов придираются к процессу powershell.exe. Логика — чистая, так
+    что проверяется на любой платформе, без реального реестра Windows.
+    """
+    from app.platform.discovery import windows as win
+
+    with tempfile.TemporaryDirectory() as d:
+        app_dir = os.path.join(d, "Cool Editor")
+        os.makedirs(app_dir)
+        # Крупнейший .exe — деинсталлятор; выбрать надо совпадающий по имени.
+        with open(os.path.join(app_dir, "editor.exe"), "wb") as fh:
+            fh.write(b"x" * 4000)
+        with open(os.path.join(app_dir, "unins000.exe"), "wb") as fh:
+            fh.write(b"x" * 9000)
+        picked = win._best_exe(app_dir, "Cool Editor")
+        ok(picked and os.path.basename(picked) == "editor.exe",
+           "the exe whose name echoes the program wins over a larger unrelated one")
+        ok(win._best_exe(app_dir, "Nothing Matches").endswith("unins000.exe"),
+           "with no name match, the largest exe is the fallback")
+        ok(win._best_exe("C:\\Program Files", "Anything") is None,
+           "a root-ish directory is refused — no scanning all of Program Files")
+        ok(win._best_exe(os.path.join(d, "missing"), "x") is None,
+           "a directory that isn't there yields nothing, not an error")
+
+        prev = os.environ.get("LOCALAPPDATA")
+        os.environ["LOCALAPPDATA"] = d
+        try:
+            # _localapps_entries смотрит в подпапку Programs.
+            ok(win._localapps_entries() == [], "no Programs subfolder means nothing found")
+            programs = os.path.join(d, "Programs", "My App")
+            os.makedirs(programs)
+            with open(os.path.join(programs, "myapp.exe"), "wb") as fh:
+                fh.write(b"x" * 100)
+            found = win._localapps_entries()
+            ok(len(found) == 1 and found[0]["name"] == "My App"
+               and found[0]["source" if "source" in found[0] else "src"] == "localapps",
+               "an app under %LocalAppData%\\Programs is found and tagged localapps")
+        finally:
+            if prev is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = prev
+
+    # Форма записи реестра решается без обращения к системе.
+    ok(win._registry_app("", None, None) is None, "an entry without a name is dropped")
+    ok(win._registry_app("Thing", "notepad", None) is None,
+       "a DisplayIcon that isn't an existing .exe doesn't invent a path")
+    ok(win._under_windows("C:/Windows/System32/x.exe") is True
+       and win._under_windows("D:/Games/x.exe") is False,
+       "system-directory exes are recognised so they can be filtered out")
+
+
 def test_discovery_sources():
     """Найденное помечается источником и умеет докладывать об ошибках."""
     from app.platform import discovery
 
     source = "\n".join(text for _label, text in _sources("platform/discovery"))
     ok("'startmenu'" in source, "the Start Menu pass tags what it finds")
-    ok("'registry'" in source, "and so do the uninstall and App Paths passes")
-    ok("'localapps'" in source,
+    ok('"registry"' in source or "'registry'" in source,
+       "and so do the uninstall and App Paths passes")
+    ok('"localapps"' in source or "'localapps'" in source,
        "and a %LocalAppData%\\Programs fallback catches apps neither of those sees")
-    ok("LOCALAPPDATA" in discovery._WIN_PS, "that fallback actually scans the real folder")
+    # Реестр и папку Programs теперь обходит Python (winreg + os), а не
+    # скрытый PowerShell: перебор Uninstall/App Paths — recon-признак для AV.
+    ok("LOCALAPPDATA" in source, "the Programs-folder fallback scans the real folder")
+    ok("HKLM:" not in discovery._WIN_PS and "HKCU:" not in discovery._WIN_PS
+       and "Get-ItemProperty" not in discovery._WIN_PS,
+       "the registry recon no longer runs inside PowerShell")
     ok(".EndsWith('.lnk')" in discovery._WIN_PS and ".EndsWith('.exe')" in discovery._WIN_PS,
        "Get-StartApps entries without a Store-style '!' id are resolved too, not dropped")
 
@@ -1919,9 +1982,14 @@ def test_discovery():
                     if k in s]
         ok(not remaining, f"{name}: all placeholders substituted")
 
-    for fn in ("Best-Exe", "Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
+    for fn in ("Get-StartApps", "Save-StoreIcon", "Resolve-StoreAsset", "Add-Store",
               "Get-LogoAttr", "Get-Pkg"):
         ok(fn in discovery._WIN_PS, f"_WIN_PS defines/calls {fn}")
+    # Реестр и localapps ушли из PowerShell в Python — скрипт больше не
+    # перебирает Uninstall/App Paths и не подбирает exe в каталоге установки.
+    ok("Best-Exe" not in discovery._WIN_PS, "_WIN_PS no longer guesses exes in install dirs")
+    for fn in ("_registry_entries", "_localapps_entries", "_best_exe"):
+        ok(hasattr(discovery.windows, fn), f"discovery.windows exposes native {fn}")
 
     # Скрытый PowerShell, внутри которого `Add-Type -TypeDefinition` компилирует
     # C# с `DllImport`, — классика offensive tooling, попадающая под AMSI, и

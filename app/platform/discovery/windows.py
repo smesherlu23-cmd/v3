@@ -88,6 +88,199 @@ def _is_windows_system(name: str, path: str) -> bool:
         return True
     return False
 
+
+# Каталоги, которые для Best-Exe не каталоги установки: искать в них .exe
+# бессмысленно и опасно (весь Program Files, весь Windows).
+_ROOTISH = frozenset((
+    "", "\\", "c:\\", "c:\\program files", "c:\\program files (x86)",
+    "c:\\windows", "c:\\users",
+))
+
+
+def _under_windows(exe: str) -> bool:
+    return "\\windows\\" in ("\\" + (exe or "").lower().replace("/", "\\"))
+
+
+def _exes_in(directory: str, depth: int) -> list[str]:
+    found: list[str] = []
+    try:
+        with os.scandir(directory) as it:
+            for entry in it:
+                try:
+                    if entry.is_file() and entry.name.lower().endswith(".exe"):
+                        found.append(entry.path)
+                    elif depth > 0 and entry.is_dir():
+                        found.extend(_exes_in(entry.path, depth - 1))
+                except OSError:
+                    continue
+    except OSError:
+        return []
+    return found
+
+
+def _best_exe(directory: str | None, name: str) -> str | None:
+    """Самый подходящий .exe в каталоге установки под именем программы.
+
+    Портирует функцию Best-Exe из прежнего PowerShell-скрипта: у записи в
+    реестре обычно есть каталог, но не путь к исполняемому файлу. Крупнейший
+    .exe, чьё имя перекликается с названием программы; если совпадений нет —
+    просто крупнейший. Реестр и localapps теперь обходятся здесь, на Python,
+    а не в скрытом процессе PowerShell — перебор Uninstall/App Paths это один
+    из recon-признаков, по которым антивирусы придираются к Centurio.
+    """
+    if not directory:
+        return None
+    d = directory.strip().strip('"').rstrip("\\")
+    if d.lower() in _ROOTISH or not os.path.isdir(d):
+        return None
+    exes = _exes_in(d, 0) or _exes_in(d, 1)
+    if not exes:
+        return None
+
+    def _size(path: str) -> int:
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return 0
+
+    ranked = sorted(exes, key=_size, reverse=True)
+    toks = [t for t in re.findall(r"[a-z0-9]+", (name or "").lower()) if len(t) >= 3]
+    for exe in ranked:
+        stem = os.path.splitext(os.path.basename(exe))[0].lower()
+        if any(t in stem for t in toks):
+            return exe
+    return ranked[0]
+
+
+def _registry_app(display_name, display_icon, install_location) -> dict | None:
+    """Запись реестра → карточка программы (или None, если exe не нашёлся)."""
+    name = (display_name or "").strip()
+    if not name:
+        return None
+    exe = None
+    if display_icon:
+        cand = str(display_icon).split(",")[0].strip().strip('"')
+        if cand.lower().endswith(".exe") and os.path.isfile(cand):
+            exe = cand
+    if not exe:
+        exe = _best_exe(install_location, name)
+    if not exe or _under_windows(exe):
+        return None
+    return {"name": name, "path": exe, "icon": None, "src": "registry"}
+
+
+_UNINSTALL_KEYS = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+)
+_APP_PATHS_KEYS = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths",
+)
+
+
+def _registry_entries() -> list[dict]:
+    """Программы из Uninstall и App Paths — напрямую через winreg.
+
+    То же, что делал раздел `$uks`/`$aps` старого PowerShell-скрипта, только
+    без запуска powershell.exe. `winreg` уже используется в `autostart.py` и
+    `steam_paths.py`, так что это штатный путь, а не новая зависимость.
+    """
+    try:
+        import winreg
+    except Exception:
+        return []
+
+    hives = ((winreg.HKEY_LOCAL_MACHINE, _UNINSTALL_KEYS),
+             (winreg.HKEY_CURRENT_USER, (_UNINSTALL_KEYS[0],)))
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(rec: dict | None) -> None:
+        if rec and rec["path"].lower() not in seen:
+            seen.add(rec["path"].lower())
+            out.append(rec)
+
+    def _val(key, name):
+        try:
+            return winreg.QueryValueEx(key, name)[0]
+        except OSError:
+            return None
+
+    for hive, subkeys in hives:
+        for subkey in subkeys:
+            try:
+                root = winreg.OpenKey(hive, subkey)
+            except OSError:
+                continue
+            with root:
+                for i in range(_subkey_count(winreg, root)):
+                    try:
+                        child = winreg.OpenKey(root, winreg.EnumKey(root, i))
+                    except OSError:
+                        continue
+                    with child:
+                        if _val(child, "SystemComponent") == 1:
+                            continue
+                        _add(_registry_app(_val(child, "DisplayName"),
+                                           _val(child, "DisplayIcon"),
+                                           _val(child, "InstallLocation")))
+
+    app_hives = ((winreg.HKEY_LOCAL_MACHINE, _APP_PATHS_KEYS),
+                 (winreg.HKEY_CURRENT_USER, (_APP_PATHS_KEYS[0],)))
+    for hive, subkeys in app_hives:
+        for subkey in subkeys:
+            try:
+                root = winreg.OpenKey(hive, subkey)
+            except OSError:
+                continue
+            with root:
+                for i in range(_subkey_count(winreg, root)):
+                    try:
+                        child = winreg.OpenKey(root, winreg.EnumKey(root, i))
+                    except OSError:
+                        continue
+                    with child:
+                        exe = _val(child, "")  # значение по умолчанию — путь к exe
+                    if not isinstance(exe, str):
+                        continue
+                    exe = exe.strip().strip('"')
+                    if (exe.lower().endswith(".exe") and os.path.isfile(exe)
+                            and not _under_windows(exe)):
+                        _add({"name": os.path.splitext(os.path.basename(exe))[0],
+                              "path": exe, "icon": None, "src": "registry"})
+    return out
+
+
+def _subkey_count(winreg, key) -> int:
+    try:
+        return winreg.QueryInfoKey(key)[0]
+    except OSError:
+        return 0
+
+
+def _localapps_entries() -> list[dict]:
+    """Программы из %LOCALAPPDATA%\\Programs — обход папок, без PowerShell."""
+    local = os.environ.get("LOCALAPPDATA")
+    base = os.path.join(local, "Programs") if local else ""
+    if not base or not os.path.isdir(base):
+        return []
+    out: list[dict] = []
+    try:
+        entries = list(os.scandir(base))
+    except OSError:
+        return []
+    for entry in entries:
+        try:
+            if not entry.is_dir():
+                continue
+        except OSError:
+            continue
+        exe = _best_exe(entry.path, entry.name)
+        if exe and not _under_windows(exe):
+            out.append({"name": entry.name, "path": exe, "icon": None, "src": "localapps"})
+    return out
+
 # Здесь больше нет ни `Add-Type -TypeDefinition`, ни `DllImport`: значки из
 # exe достаёт `platform/win_icons.py` тем же `PrivateExtractIcons`, только из
 # Python через ctypes. Компиляция C# в рантайме с P/Invoke — классика
@@ -208,57 +401,14 @@ function Add-Store($n,$id){
   [void]$out.Add([PSCustomObject]@{name="$n";path="shell:AppsFolder\$id";icon=$r.icon;src='store';icon_err=$r.err})
 }
 
-$rootish=@('','\','c:\','c:\program files','c:\program files (x86)','c:\windows','c:\users')
-function Best-Exe($dir,$name){
-  if(-not $dir){ return $null }
-  $dir=$dir.Trim('"').TrimEnd('\')
-  if($rootish -contains $dir.ToLower()){ return $null }
-  if(-not (Test-Path -LiteralPath $dir)){ return $null }
-  $files=@(Get-ChildItem -LiteralPath $dir -Filter *.exe -File 2>$null)
-  if($files.Count -eq 0){ $files=@(Get-ChildItem -LiteralPath $dir -Filter *.exe -File -Recurse -Depth 1 2>$null) }
-  if($files.Count -eq 0){ return $null }
-  $ranked=@($files | Sort-Object Length -Descending)
-  $toks=@([regex]::Matches($name.ToLower(),'[a-z0-9]+') | ForEach-Object { $_.Value } | Where-Object { $_.Length -ge 3 })
-  foreach($f in $ranked){
-    $stem=[System.IO.Path]::GetFileNameWithoutExtension($f.Name).ToLower()
-    foreach($t in $toks){ if($stem.Contains($t)){ return $f.FullName } }
-  }
-  return $ranked[0].FullName
-}
-
+# Реестр (Uninstall, App Paths) и %LOCALAPPDATA%\Programs обходит Python —
+# см. _registry_entries/_localapps_entries. Здесь остаётся только то, чему
+# нет чистого нативного пути: ярлыки меню «Пуск» и Store через Get-StartApps.
 $menus=@(__DIRS__)
 foreach($d in $menus){
   Get-ChildItem -LiteralPath $d -Recurse -Filter *.lnk 2>$null | ForEach-Object {
     $t=$sh.CreateShortcut($_.FullName); $p=$t.TargetPath
     if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App $_.BaseName $p 'startmenu' }
-  }
-}
-$uks=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall')
-foreach($k in $uks){
-  Get-ChildItem -LiteralPath $k 2>$null | ForEach-Object {
-    $pr=Get-ItemProperty -LiteralPath $_.PSPath 2>$null
-    if(-not $pr.DisplayName){ return }
-    if($pr.SystemComponent -eq 1){ return }
-    $exe=$null
-    $icon=$pr.DisplayIcon
-    if($icon){ $c=($icon -split ',')[0].Trim('"'); if($c -and $c.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $c)){ $exe=$c } }
-    if(-not $exe){ $exe=Best-Exe $pr.InstallLocation $pr.DisplayName }
-    if($exe){ Add-App $pr.DisplayName $exe 'registry' }
-  }
-}
-$aps=@('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths')
-foreach($k in $aps){
-  Get-ChildItem -LiteralPath $k 2>$null | ForEach-Object {
-    $p=(Get-Item -LiteralPath $_.PSPath).GetValue(''); if($p){ $p=$p.Trim('"') }
-    if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App ([System.IO.Path]::GetFileNameWithoutExtension($p)) $p 'registry' }
-  }
-}
-
-$lp=Join-Path $env:LOCALAPPDATA 'Programs'
-if(Test-Path -LiteralPath $lp){
-  Get-ChildItem -LiteralPath $lp -Directory 2>$null | ForEach-Object {
-    $exe=Best-Exe $_.FullName $_.Name
-    if($exe){ Add-App $_.Name $exe 'localapps' }
   }
 }
 
@@ -386,11 +536,18 @@ def trim_transparent_padding(path: str, min_content_ratio: float = 0.85) -> None
 
 def _discover_windows(icon_cache: str | None) -> list[dict]:
     data, stderr, code = raw_windows_entries(icon_cache)
-    if not data:
-        if code != 0 or stderr:
-            log.warning("обнаружение программ Windows: пустой вывод PowerShell "
-                       "(код %s): %s", code, stderr[:2000])
-        return []
+    if not data and (code != 0 or stderr):
+        log.warning("обнаружение программ Windows: пустой вывод PowerShell "
+                   "(код %s): %s", code, stderr[:2000])
+
+    # Реестр и папку Programs обходим на Python (winreg + файловая система),
+    # а не внутри PowerShell: перебор Uninstall/App Paths — recon-признак,
+    # по которому эвристики антивирусов придираются к скрытому процессу. За
+    # PowerShell осталось лишь то, чему нет чистого нативного пути: ярлыки
+    # меню «Пуск» и Store-приложения (Get-StartApps/Get-AppxPackage). Всё
+    # сливается и дедуплицируется по пути в discovery.__init__._dedupe.
+    if os.name == "nt":
+        data = list(data) + _registry_entries() + _localapps_entries()
 
     apps = []
     for x in data:
