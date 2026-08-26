@@ -1637,6 +1637,47 @@ def test_admin_argument_quoting():
             sys.modules["ctypes"] = real_ctypes
 
 
+def test_domain_types_match_runtime_shapes():
+    """TypedDict-схема домена не расходится с тем, что реально кладётся в dict.
+
+    `app/core/types.py` — единственное авторитетное определение формы записей.
+    Толку от него ноль, если оно тихо отстанет от `Store`/`sanitize`, поэтому
+    ключи сверяются с настоящими записями: добавил поле в запись, забыл в тип
+    (или наоборот) — тест красный.
+    """
+    from app.core import types
+    from app.core.store import sanitize
+
+    def keys(td) -> set:
+        return set(td.__annotations__)
+
+    ok(keys(types.Settings) == set(sanitize.DEFAULT_SETTINGS),
+       "Settings covers exactly the default settings keys")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        rec = store.add_app({"name": "X", "path": "C:/x.exe"})
+        ok(set(rec) == keys(types.App),
+           f"App matches a stored record (diff: {set(rec) ^ keys(types.App)})")
+
+    cat = sanitize.clean_category(
+        {"id": "c", "name": "n", "icon": "i", "color": "#fff", "order": 0}, 0)
+    ok(set(cat) == keys(types.Category), "Category matches clean_category output")
+
+    layout = sanitize.clean_layout({})
+    ok(set(layout) == keys(types.SetLayout), "SetLayout matches clean_layout output")
+
+    item = sanitize.clean_item({"app_id": "a"}, "half", 0)
+    ok(set(item) == keys(types.SetItem), "SetItem matches clean_item output")
+
+    aset = sanitize.clean_set({"id": "s", "name": "n", "items": [{"app_id": "a"}]}, 0)
+    ok(set(aset) == keys(types.AppSet),
+       f"AppSet matches clean_set output (diff: {set(aset) ^ keys(types.AppSet)})")
+
+    inbox = sanitize.clean_inbox({"path": "C:/p.exe", "name": "n"}, 0)
+    ok(set(inbox) == keys(types.InboxItem), "InboxItem matches clean_inbox output")
+
+
 def test_packaging_metadata():
     """The version and the dependency list live in files that can't import
     each other, so the check that they agree belongs here."""

@@ -6,11 +6,15 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...infra import log, paths
 from ...infra.debounce import Debounce
 from .. import layout as L
 from . import sanitize
+
+if TYPE_CHECKING:
+    from ..types import App, AppSet, Settings, StoreState
 
 DATA_FILENAME = "centurio-data.json"
 PERSIST_DEBOUNCE_DELAY = 1.5
@@ -193,15 +197,15 @@ class Store:
             except Exception:
                 log.exception("сбой в обратном вызове ошибки хранилища")
 
-    def state(self) -> dict:
+    def state(self) -> StoreState:
         with self._lock:
             return _clone(self.data)
 
-    def settings(self) -> dict:
+    def settings(self) -> Settings:
         with self._lock:
             return dict(self.data["settings"])
 
-    def _new_app_record(self, app: dict) -> dict:
+    def _new_app_record(self, app: App) -> App:
         cats = self.data["categories"]
         return {
             "id": str(uuid.uuid4()),
@@ -227,7 +231,7 @@ class Store:
             "added_at": int(time.time() * 1000),
         }
 
-    def add_app(self, app: dict) -> dict:
+    def add_app(self, app: App) -> App:
         with self._lock:
             record = self._new_app_record(app)
             self.data["apps"].append(record)
@@ -249,7 +253,7 @@ class Store:
     def _app_ref(self, app_id: str) -> dict | None:
         return next((a for a in self.data["apps"] if a["id"] == app_id), None)
 
-    def get_app(self, app_id: str) -> dict | None:
+    def get_app(self, app_id: str) -> App | None:
         with self._lock:
             app = self._app_ref(app_id)
             return _clone(app) if app is not None else None
@@ -484,7 +488,7 @@ class Store:
             self._persist()
             return _clone(rec)
 
-    def get_set(self, set_id: str) -> dict | None:
+    def get_set(self, set_id: str) -> AppSet | None:
         with self._lock:
             found = next((s for s in self.data["sets"] if s["id"] == set_id), None)
             return _clone(found) if found else None
