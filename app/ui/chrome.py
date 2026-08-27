@@ -72,6 +72,7 @@ class Chrome:
             alignment=ft.alignment.center, tooltip=tooltip,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             animate=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT),
+            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
         )
 
         def on_hover(e):
@@ -80,6 +81,7 @@ class Chrome:
             highlight = e.data == "true"
             inner.bgcolor = C.PANEL_ACTIVE if highlight else C.RAIL_BTN_BG
             inner.border_radius = square_r if highlight else round_r
+            inner.scale = C.HOVER_SCALE if highlight else 1.0
             if fixed_color is None and isinstance(inner.content, ft.Icon):
                 inner.content.color = C.TEXT if highlight else C.MUTED
             Wg.safe_update(inner)
@@ -222,6 +224,7 @@ class Chrome:
             padding=ft.padding.symmetric(7, 10), border_radius=9,
             bgcolor=C.SET_SLOT_BG if active else None,
             border=ft.border.all(1, C.CONTROL) if active else None,
+            animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             on_click=lambda e: self.ui._set_filter(key),
         )
         if not active:
