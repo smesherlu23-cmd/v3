@@ -353,6 +353,8 @@ class GridView:
             width=width, bgcolor=C.SELECTED_BG if selected else C.PANEL,
             border=ft.border.all(2, self.ui._accent()) if selected else ft.border.all(1, C.LINE),
             border_radius=14, clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
+            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
         )
         if box is not None:
             box["tile"] = tile
@@ -364,6 +366,7 @@ class GridView:
             hot = e.data == "true"
             tile.border = ft.border.all(1, C.LINE_4 if hot else C.LINE)
             tile.bgcolor = C.SELECTED_BG if hot else C.PANEL
+            tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
             Wg.safe_update(tile)
         tile.on_hover = on_hover
         return self._tile_gestures(tile, a, ids_box)
@@ -385,7 +388,9 @@ class GridView:
         tile = ft.Container(
             ft.Stack(children), width=width, height=height, bgcolor=C.PANEL,
             border=ft.border.all(2, self.ui._accent()) if selected else ft.border.all(1, C.LINE),
-            border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE)
+            border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
+            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT))
         if box is not None:
             box["tile"] = tile
             box["border"] = tile.border
@@ -393,7 +398,9 @@ class GridView:
         def on_hover(e):
             if selected:
                 return
-            tile.border = ft.border.all(1, C.LINE_4 if e.data == "true" else C.LINE)
+            hot = e.data == "true"
+            tile.border = ft.border.all(1, C.LINE_4 if hot else C.LINE)
+            tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
             Wg.safe_update(tile)
         tile.on_hover = on_hover
         return self._tile_gestures(tile, a, ids_box)

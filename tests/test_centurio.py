@@ -1461,6 +1461,19 @@ def test_autostart():
             link.write_text("shortcut")
             ok(autostart.remove_startup_shortcut() is True and not link.exists(),
                "the installer's startup shortcut is removed")
+
+            if os.name == "nt":
+                # На настоящей Windows проверяем именно COM-путь (IShellLink),
+                # а не откат на реестр: APPDATA изолирован во временную папку,
+                # так что реальную «Автозагрузку» тест не трогает. Если бы
+                # индексы vtable или Save были неверны, ярлык не появился бы —
+                # и это упало бы на windows-раннере, а не пряталось за
+                # молчаливым откатом на HKCU\Run.
+                ok(autostart.create_startup_shortcut() is True,
+                   "create_startup_shortcut writes a .lnk via IShellLink")
+                ok(link.exists() and link.stat().st_size > 0,
+                   "the shortcut file is really on disk and non-empty")
+                autostart.remove_startup_shortcut()
         finally:
             if prev is None:
                 os.environ.pop("APPDATA", None)
@@ -1676,6 +1689,46 @@ def test_controllers_depend_only_on_the_public_ui_surface():
     ok(not unknown,
        "controllers use UI members missing from UIHost (add them to the protocol): "
        + "; ".join(sorted(set(unknown))))
+
+
+def test_ui_accent_is_fully_customisable():
+    """Акцент — любой цвет, а не только пресеты: ползунки тона/яркости и HEX.
+
+    Раньше выбор был из четырёх готовых образцов. Теперь тот же способ, что и
+    у категорий (тон + яркость + поле HEX), пишет в настройку `accent`, а
+    `_accent()` всегда возвращает валидный `#rrggbb`, даже если в настройке
+    оказался мусор, — иначе битый акцент уронил бы отрисовку border/bgcolor.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI accent test", exc)
+        return
+
+    import flet as ft
+
+    ok(len(C.ACCENT_CHOICES) > 4, "there are more than the old four presets")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+        ui._open_settings()
+        ui.set_settings_tab("view")
+
+        pane = ft.Column(ui.content_col.controls)
+        sliders = _find_all(pane, lambda c: isinstance(c, ft.Slider))
+        ok(len(sliders) >= 2 and any(s.max == 359 for s in sliders),
+           f"the accent has hue + lightness sliders like categories ({len(sliders)})")
+
+        ui.set_setting("accent", C.hsl_to_hex(300, 0.55))
+        stored = store.state()["settings"]["accent"]
+        ok(stored not in C.ACCENT_CHOICES and C.parse_hex(stored) == stored,
+           "a colour off the preset list is accepted and stored as clean hex")
+
+        store.set_setting("accent", "garbage")
+        ui.refresh()
+        ok(ui._accent().startswith("#") and len(ui._accent()) == 7,
+           "a broken accent value falls back to a real colour, never reaches bgcolor")
 
 
 def test_domain_types_match_runtime_shapes():

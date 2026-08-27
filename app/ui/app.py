@@ -161,7 +161,10 @@ class CenturioUI:
         return self.setting("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
 
     def _accent(self):
-        return self._settings.get("accent", C.ACCENT)
+        # Акцент задаётся произвольным цветом (ползунки/HEX), поэтому на входе
+        # он может оказаться чем угодно — прогоняем через parse_hex, чтобы в
+        # bgcolor/border никогда не ушла мусорная строка.
+        return C.parse_hex(self._settings.get("accent")) or C.ACCENT
 
     def rail(self) -> dict:
         return C.rail_metrics(self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE))
