@@ -49,6 +49,27 @@ def hoverable(container: ft.Container, normal, hover) -> ft.Container:
     return container
 
 
+def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE,
+                anim: int = C.ANIM_HOVER) -> ft.Container:
+    """Слегка приподнять контрол под курсором — тонкий отклик, не прыжок.
+
+    Композируется с уже назначенным `on_hover` (у кнопок он меняет цвет),
+    поэтому порядок навешивания не важен: сначала цвет через `hoverable`,
+    потом масштаб — или наоборот.
+    """
+    container.animate_scale = ft.Animation(anim, ft.AnimationCurve.EASE_OUT)
+    prior = container.on_hover
+
+    def on_hover(e):
+        container.scale = scale if e.data == "true" else 1.0
+        safe_update(container)
+        if prior:
+            prior(e)
+
+    container.on_hover = on_hover
+    return container
+
+
 def caps(text):
     return T(text, size=10.5, weight=ft.FontWeight.W_600, color=C.MUTED_2,
              style=ft.TextStyle(letter_spacing=0.85))
@@ -84,8 +105,9 @@ def primary_btn(label, on_click, accent, icon=None, height=36, expand=False):
         ft.Row(row, spacing=7, tight=True, alignment=ft.MainAxisAlignment.CENTER),
         height=height, padding=ft.padding.symmetric(0, 14), bgcolor=accent,
         border_radius=9, alignment=ft.alignment.center, expand=expand,
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: on_click())
-    return hoverable(btn, accent, C.WHITE)
+    return hover_scale(hoverable(btn, accent, C.WHITE))
 
 
 def outline_btn(label, on_click, icon=None, danger=False, height=34,
@@ -105,8 +127,9 @@ def outline_btn(label, on_click, icon=None, danger=False, height=34,
         border=ft.border.all(1, C.ERR_BORDER if danger
                              else (C.LINE_5 if active else C.CONTROL)),
         border_radius=9, alignment=ft.alignment.center,
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: on_click())
-    return btn if active else hoverable(btn, None, C.SELECTED_BG)
+    return btn if active else hover_scale(hoverable(btn, None, C.SELECTED_BG))
 
 
 def link_btn(label, on_click):

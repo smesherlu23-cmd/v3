@@ -7,9 +7,13 @@ from ...core.hotkeys import format_accel
 from .. import colors as C
 from .. import widgets as Wg
 from ..format import T
-from .common import _caps, _screen_header
+from .common import _caps, _field, _screen_header
 
-ACCENT_NAMES = dict(zip(C.ACCENT_CHOICES, ("Белый", "Синий", "Бирюзовый", "Оранжевый")))
+# Порядок ровно как в C.ACCENT_CHOICES — имена без хекс-литералов, иначе
+# цвет утёк бы из colors.py (это сторожит test_colours_come_from_one_file).
+ACCENT_NAMES = dict(zip(C.ACCENT_CHOICES, (
+    "Белый", "Синий", "Бирюзовый", "Зелёный",
+    "Оранжевый", "Коралловый", "Красный", "Фиолетовый")))
 
 
 SETTINGS_TABS = (
@@ -51,6 +55,7 @@ def _settings_nav_row(ui, key, label, icon, active):
                   weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400)],
                spacing=11, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         height=38, border_radius=9, padding=ft.padding.symmetric(0, 11),
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: ui.set_settings_tab(key))
     if active:
         row.bgcolor = C.PANEL_ACTIVE
@@ -73,16 +78,73 @@ def _settings_pane(ui, tab):
     return _settings_view(ui)
 
 
+def _accent_swatch(ui, col, current):
+    selected = col.lower() == current.lower()
+    swatch = ft.Container(
+        width=30, height=30, border_radius=9, bgcolor=col,
+        border=ft.border.all(2, C.ACCENT) if selected else ft.border.all(1, C.LINE_4),
+        tooltip=ACCENT_NAMES.get(col),
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+        on_click=lambda e, c=col: ui.set_setting("accent", c))
+    return Wg.hover_scale(swatch)
+
+
+def _accent_picker(ui):
+    """Готовые акценты плюс произвольный цвет — ползунки тона/яркости и HEX.
+
+    Тот же способ выбора цвета, что и у категорий, только пишет в настройку
+    `accent`. Значение всегда прогоняется через parse_hex/hsl_to_hex, так что
+    на диск и в bgcolor уходит корректный `#rrggbb`.
+    """
+    current = ui._accent()
+    hue, light, _sat = C.hex_to_hsl(current)
+
+    swatches = ft.Row([_accent_swatch(ui, col, current) for col in C.ACCENT_CHOICES],
+                      spacing=9, wrap=True, run_spacing=9, tight=True)
+
+    hex_box = ft.Container(
+        ft.Row([ft.Container(width=14, height=14, border_radius=4, bgcolor=current),
+                _field(ui.view, "accent_color", current.upper(), "#RRGGBB",
+                       mono=True, size=12,
+                       on_submit=lambda e: ui.set_setting(
+                           "accent", C.parse_hex(e.control.value) or current))],
+               spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        width=116, height=32, bgcolor=C.BG_1, border=ft.border.all(1, C.SLOT_BORDER),
+        border_radius=8, padding=ft.padding.symmetric(0, 9))
+
+    def slider_row(label, value, maximum, gradient, on_change):
+        return ft.Row([
+            T(label, size=10.5, color=C.TEXT_DIM, width=26),
+            ft.Container(
+                ft.Slider(min=0, max=maximum, value=value, on_change_end=on_change,
+                          active_color=C.ACCENT, inactive_color=C.TRANSPARENT,
+                          thumb_color=current, height=18, expand=True),
+                gradient=ft.LinearGradient(begin=ft.alignment.center_left,
+                                           end=ft.alignment.center_right,
+                                           colors=list(gradient)),
+                border_radius=3, height=18, expand=True),
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    sliders = ft.Column([
+        slider_row("тон", hue, 359, C.HUE_STRIP,
+                   lambda e: ui.set_setting("accent",
+                                            C.hsl_to_hex(float(e.control.value), light))),
+        slider_row("ярк.", light * 100, 100, (C.BG_1, current, C.WHITE),
+                   lambda e: ui.set_setting("accent",
+                                            C.hsl_to_hex(hue, float(e.control.value) / 100))),
+    ], spacing=5, tight=True, expand=True)
+
+    return ft.Column([
+        swatches,
+        ft.Container(ft.Row([hex_box, sliders], spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                     width=380),
+    ], spacing=12, tight=True)
+
+
 def _settings_view(ui):
-    swatches = ft.Row([
-        ft.Container(width=30, height=30, border_radius=9, bgcolor=col,
-                     border=ft.border.all(2, C.ACCENT) if col == ui._accent()
-                     else ft.border.all(1, C.LINE_4),
-                     tooltip=ACCENT_NAMES.get(col),
-                     on_click=lambda e, c=col: ui.set_setting("accent", c))
-        for col in C.ACCENT_CHOICES], spacing=9, tight=True)
     return [
-        _group("АКЦЕНТ", swatches),
+        ft.Column([_caps("АКЦЕНТ"), _accent_picker(ui)], spacing=10, tight=True),
         _group("ПЛОТНОСТЬ", _tile_segments(ui)),
         _group("ПОЛОСА КАТЕГОРИЙ", _rail_segments(ui)),
         ft.Container(height=1, bgcolor=C.LINE_2),
@@ -172,6 +234,7 @@ def _segments(ui, key, default, options):
               color=C.TEXT if active else C.MUTED),
             height=26, padding=ft.padding.symmetric(0, 12), border_radius=6,
             bgcolor=C.PANEL_ACTIVE if active else None, alignment=ft.alignment.center,
+            animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             on_click=lambda e, v=value: ui.set_setting(key, v))
     return ft.Container(ft.Row([segment(label, value) for label, value in options], spacing=0),
                         bgcolor=C.PANEL, border=ft.border.all(1, C.SEGMENT_BORDER),

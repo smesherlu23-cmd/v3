@@ -106,7 +106,10 @@ SHADOW_TOAST = "#99000000"
 CAT_PALETTE = ("#e6e6e8", "#f5c518", "#f0a020", "#e34f4f",
                "#b06cf0", "#4f7dff", "#3ecfaf", "#7a8290",
                "#b98cff", "#ff9f6e")
-ACCENT_CHOICES = ("#f5f5f7", "#4f7dff", "#3ecfaf", "#f0a020")
+# Готовые акценты — восемь удобных значений; произвольный цвет задаётся тут же
+# ползунками тона и яркости или полем HEX, так что выбор ими не ограничен.
+ACCENT_CHOICES = ("#f5f5f7", "#4f7dff", "#3ecfaf", "#4ade80",
+                  "#f0a020", "#ff9f6e", "#e34f4f", "#b06cf0")
 
 TILE_GRADIENT = ("#191920", "#111116")
 TILE_GRADIENT_SEL = ("#1d1d26", "#141419")
@@ -163,6 +166,12 @@ NARROW_SIDEBAR = 1000
 ANIM_FAST = 120
 ANIM_HOVER = 80
 ANIM_BAR = 140
+ANIM_TILE = 150
+# Плитки и кнопки чуть приподнимаются под курсором — тонко, чтобы читалось как
+# отклик, а не как прыжок. Держим здесь, чтобы масштаб был единым по всему UI.
+HOVER_SCALE = 1.03
+HOVER_SCALE_SUBTLE = 1.02
+PRESS_SCALE = 0.97
 
 
 def _hex(rgb) -> str:
