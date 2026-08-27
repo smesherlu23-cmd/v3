@@ -1461,6 +1461,19 @@ def test_autostart():
             link.write_text("shortcut")
             ok(autostart.remove_startup_shortcut() is True and not link.exists(),
                "the installer's startup shortcut is removed")
+
+            if os.name == "nt":
+                # На настоящей Windows проверяем именно COM-путь (IShellLink),
+                # а не откат на реестр: APPDATA изолирован во временную папку,
+                # так что реальную «Автозагрузку» тест не трогает. Если бы
+                # индексы vtable или Save были неверны, ярлык не появился бы —
+                # и это упало бы на windows-раннере, а не пряталось за
+                # молчаливым откатом на HKCU\Run.
+                ok(autostart.create_startup_shortcut() is True,
+                   "create_startup_shortcut writes a .lnk via IShellLink")
+                ok(link.exists() and link.stat().st_size > 0,
+                   "the shortcut file is really on disk and non-empty")
+                autostart.remove_startup_shortcut()
         finally:
             if prev is None:
                 os.environ.pop("APPDATA", None)
