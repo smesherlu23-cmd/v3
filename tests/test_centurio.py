@@ -1285,6 +1285,394 @@ def test_posters_off_means_no_network():
         discovery.reset_cdn_state()
 
 
+def test_epic_poster_prefers_portrait_key_image():
+    """Из `keyImages` каталога Epic берётся вертикальная обложка, если она есть.
+
+    У Steam портретная обложка — отдельный, всегда вертикальный файл. У Epic
+    это один из вариантов в списке `keyImages` вперемешку с горизонтальными
+    баннерами витрины; неверный порядок перебора даёт растянутый постер.
+    """
+    from app.platform.discovery import epic_art
+
+    wide_only = {"keyImages": [{"type": "OfferImageWide", "url": "https://x/wide.jpg"},
+                               {"type": "Thumbnail", "url": "https://x/thumb.jpg"}]}
+    ok(epic_art._best_key_image(wide_only) == "https://x/thumb.jpg",
+       "без портретных вариантов берётся Thumbnail, а не первый попавшийся")
+
+    with_tall = {"keyImages": [{"type": "DieselStoreFrontWide", "url": "https://x/wide.jpg"},
+                               {"type": "OfferImageTall", "url": "https://x/tall.jpg"}]}
+    ok(epic_art._best_key_image(with_tall) == "https://x/tall.jpg",
+       "портретная OfferImageTall предпочитается широкой обложке")
+
+    ok(epic_art._best_key_image({"keyImages": []}) is None,
+       "пустой список keyImages -> нет обложки, а не исключение")
+    ok(epic_art._best_key_image({}) is None, "запись без keyImages тоже не падает")
+
+
+def test_epic_poster_downloads_via_catalog_api():
+    """`poster_for_ids` идёт в каталог Epic за метаданными, потом — за картинкой.
+
+    До этого коммита Epic-игры вообще не получали `poster`: `poster_for` из
+    `steam_art` матчит только `steam://rungameid/...` и на URI Epic молча
+    отвечает `None`. Обложки грузились только через Steam CDN.
+    """
+    from app.platform.discovery import epic_art
+
+    calls = []
+    catalog_json = ('{"item123": {"keyImages": ['
+                    '{"type": "OfferImageWide", "url": "https://cdn.example/wide.jpg"},'
+                    '{"type": "OfferImageTall", "url": "https://cdn.example/tall.jpg"}]}}')
+
+    def fake_get(url, timeout=None, max_bytes=None):
+        calls.append(url)
+        if "catalog-public-service" in url:
+            ok("namespace123" in url and "item123" in url,
+               f"запрос каталога содержит namespace и id ({url})")
+            return catalog_json.encode("utf-8")
+        if url == "https://cdn.example/tall.jpg":
+            return b"\xff\xd8" + b"0" * 2000  # достаточно байт, чтобы не счесть заглушкой
+        raise AssertionError(f"неожиданный URL: {url}")
+
+    original = epic_art._http_get
+    epic_art._http_get = fake_get
+    epic_art.reset_epic_cdn_state()
+    try:
+        with tempfile.TemporaryDirectory() as cache:
+            out = epic_art.poster_for_ids("namespace123", "item123", cache, posters=True)
+            ok(out is not None and os.path.exists(out), "обложка сохранена на диск")
+            ok(out.endswith("epic_item123_portrait.jpg"), f"имя файла узнаваемо ({out})")
+            with open(out, "rb") as fh:
+                ok(fh.read().startswith(b"\xff\xd8"), "на диске оказались именно скачанные байты")
+            ok(any("catalog-public-service" in u for u in calls), "каталог был опрошен")
+            ok("https://cdn.example/tall.jpg" in calls, "скачан именно портретный вариант")
+
+            calls.clear()
+            out2 = epic_art.poster_for_ids("namespace123", "item123", cache, posters=True)
+            ok(out2 == out, "повторный вызов отдаёт тот же путь")
+            ok(calls == [], "а в сеть уже не ходит — обложка на диске")
+    finally:
+        epic_art._http_get = original
+        epic_art.reset_epic_cdn_state()
+
+
+def test_epic_cdn_circuit_breaker():
+    """Каталог Epic и CDN Steam переключаются независимо друг от друга."""
+    from app.platform import discovery
+    from app.platform.discovery import epic_art
+
+    discovery.reset_cdn_state()
+    ok(epic_art._cdn_available() is True, "загрузки Epic начинаются включёнными")
+
+    calls = {"n": 0}
+    original = epic_art._http_get
+
+    def offline(url, timeout=None, max_bytes=None):
+        calls["n"] += 1
+        epic_art._cdn_record(False)
+        return None
+
+    epic_art._http_get = offline
+    try:
+        with tempfile.TemporaryDirectory() as cache:
+            # Один вызов poster_for_ids делает один запрос к каталогу (в отличие
+            # от Steam, где на один appid перебираются несколько CDN-хостов) —
+            # автомат срабатывает после нескольких разных игр подряд.
+            for i in range(epic_art._CDN_MAX_FAILURES):
+                ok(epic_art.poster_for_ids("ns", f"id-{i}", cache) is None,
+                   "поиск обложки не удаётся, пока каталог недоступен")
+            ok(epic_art._cdn_available() is False, "повторные ошибки сети выключают загрузки")
+            ok(discovery.steam_art._cdn_available() is True,
+               "а выключатель Steam при этом не тронут")
+
+            tripped_after = calls["n"]
+            epic_art.poster_for_ids("ns", "id-next", cache)
+            ok(calls["n"] == tripped_after, "выключенный автомат не шлёт новых запросов")
+
+            discovery.reset_cdn_state()
+            ok(epic_art._cdn_available() is True,
+               "общий сброс (`discovery.reset_cdn_state`) включает и Epic")
+    finally:
+        epic_art._http_get = original
+        discovery.reset_cdn_state()
+
+
+def test_epic_posters_off_means_no_network():
+    """Выключенные «Постеры для игр» действительно не трогают сеть и для Epic."""
+    from app.platform import discovery
+    from app.platform.discovery import epic_art
+
+    urls = []
+    original = epic_art._http_get
+
+    def spy(url, timeout=None, max_bytes=None):
+        urls.append(url)
+        return None
+
+    epic_art._http_get = spy
+    discovery.reset_cdn_state()
+    try:
+        with tempfile.TemporaryDirectory() as cache:
+            epic_art.poster_for_ids("ns", "id", cache, posters=False)
+            ok(urls == [], "выключенные постеры не ходят в сеть даже за метаданными")
+
+            epic_art.poster_for_ids("ns", "id", cache, posters=True)
+            ok(urls, "а включённые — ходят, то есть проверка не пустая")
+    finally:
+        epic_art._http_get = original
+        discovery.reset_cdn_state()
+
+
+def test_epic_poster_resolves_ids_from_manifest():
+    """`poster_for(path)` находит `CatalogNamespace`/`CatalogItemId` по манифесту.
+
+    В launch-URI Epic (`com.epicgames.launcher://apps/{AppName}...`) этих
+    полей нет — в отличие от Steam, где appid прямо в `steam://rungameid/...`.
+    Без этого шага `backfill_icons` не мог бы дозаполнить постер для игры,
+    уже добавленной в библиотеку.
+    """
+    from app.platform.discovery import epic_art
+
+    with tempfile.TemporaryDirectory() as root:
+        mani = os.path.join(root, "Epic", "EpicGamesLauncher", "Data", "Manifests")
+        os.makedirs(mani)
+        import json as _json
+        with open(os.path.join(mani, "Game.item"), "w", encoding="utf-8") as fh:
+            _json.dump({"DisplayName": "Some Game", "AppName": "abc123",
+                       "CatalogNamespace": "ns-xyz", "CatalogItemId": "item-xyz"}, fh)
+
+        old_pd = os.environ.get("ProgramData")
+        os.environ["ProgramData"] = root
+        try:
+            ns, item = epic_art._catalog_ids_for_app("abc123")
+            ok(ns == "ns-xyz" and item == "item-xyz",
+               f"ids найдены по совпадению AppName ({ns}, {item})")
+            ok(epic_art._catalog_ids_for_app("no-such-app") == (None, None),
+               "несуществующий AppName -> пусто, а не исключение")
+
+            calls = []
+            original = epic_art._http_get
+            epic_art._http_get = lambda *a, **kw: (calls.append(a[0]) or None)
+            epic_art.reset_epic_cdn_state()
+            try:
+                path = "com.epicgames.launcher://apps/abc123?action=launch&silent=true"
+                with tempfile.TemporaryDirectory() as cache:
+                    epic_art.poster_for(path, cache, posters=True)
+                    ok(any("ns-xyz" in u and "item-xyz" in u for u in calls),
+                       "poster_for(path) дошёл до каталога с правильными ids")
+                    ok(epic_art.poster_for("C:/x/app.exe", cache) is None,
+                       "не-Epic путь -> None, без похода в манифесты")
+            finally:
+                epic_art._http_get = original
+                epic_art.reset_epic_cdn_state()
+        finally:
+            if old_pd is None:
+                os.environ.pop("ProgramData", None)
+            else:
+                os.environ["ProgramData"] = old_pd
+
+
+def test_epic_backfill_fills_missing_poster():
+    """`backfill_icons` дозаполняет постер уже добавленной Epic-игре."""
+    from app.platform import discovery
+    from app.platform.discovery import epic_art
+
+    with tempfile.TemporaryDirectory() as root:
+        mani = os.path.join(root, "Epic", "EpicGamesLauncher", "Data", "Manifests")
+        os.makedirs(mani)
+        import json as _json
+        with open(os.path.join(mani, "Game.item"), "w", encoding="utf-8") as fh:
+            _json.dump({"DisplayName": "Some Game", "AppName": "abc123",
+                       "CatalogNamespace": "ns-xyz", "CatalogItemId": "item-xyz"}, fh)
+
+        old_pd = os.environ.get("ProgramData")
+        os.environ["ProgramData"] = root
+        original = epic_art._http_get
+
+        def fake_get(url, timeout=None, max_bytes=None):
+            if "catalog-public-service" in url:
+                return (b'{"item-xyz": {"keyImages": '
+                        b'[{"type": "OfferImageTall", "url": "https://cdn.example/tall.jpg"}]}}')
+            return b"\xff\xd8" + b"0" * 2000
+
+        epic_art._http_get = fake_get
+        epic_art.reset_epic_cdn_state()
+        try:
+            with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+                store = Store(os.path.join(d, "data.json"))
+                path = "com.epicgames.launcher://apps/abc123?action=launch&silent=true"
+                store.add_app({"name": "Some Game", "path": path, "category_id": "work"})
+                ok(store.state()["apps"][0].get("poster") is None,
+                   "изначально постера нет — ровно то, из-за чего эта правка нужна")
+
+                changed = discovery.backfill_icons(store, cache)
+                ok(changed is True, "backfill_icons сообщает об изменении")
+                poster = store.state()["apps"][0].get("poster")
+                ok(poster is not None and os.path.exists(poster),
+                   f"после дозаполнения обложка появилась и лежит на диске ({poster})")
+        finally:
+            epic_art._http_get = original
+            epic_art.reset_epic_cdn_state()
+            if old_pd is None:
+                os.environ.pop("ProgramData", None)
+            else:
+                os.environ["ProgramData"] = old_pd
+
+
+def test_appid_for_exe_matches_installdir_boundaries():
+    """`appid_for_exe` не путает `Game` с `GameExtra` по случайному префиксу.
+
+    Наивная проверка `path.startswith(game_root)` без разделителя в конце
+    считает вложенным всё, что начинается с той же строки символов — папка
+    `GameExtra` тоже «начинается» с `Game`. Тест ловит именно эту ошибку
+    границы, а не просто «нашёл/не нашёл».
+    """
+    from app.platform.discovery import steam_paths
+
+    real_steam_roots = steam_paths._steam_roots
+    try:
+        with tempfile.TemporaryDirectory() as root:
+            common = os.path.join(root, "steamapps", "common")
+            game_exe = os.path.join(common, "Game", "game.exe")
+            extra_exe = os.path.join(common, "GameExtra", "extra.exe")
+            os.makedirs(os.path.dirname(game_exe))
+            os.makedirs(os.path.dirname(extra_exe))
+            open(game_exe, "wb").close()
+            open(extra_exe, "wb").close()
+
+            lib = os.path.join(root, "steamapps")
+            with open(os.path.join(lib, "appmanifest_100.acf"), "w") as fh:
+                fh.write('"AppState"{ "appid" "100" "installdir" "Game" "name" "Game" }')
+            with open(os.path.join(lib, "appmanifest_200.acf"), "w") as fh:
+                fh.write('"AppState"{ "appid" "200" "installdir" "GameExtra" "name" "Extra" }')
+            steam_paths._steam_roots = lambda: [root]
+
+            ok(steam_paths.appid_for_exe(game_exe) == "100", "exe в Game -> appid 100")
+            ok(steam_paths.appid_for_exe(extra_exe) == "200",
+               "exe в GameExtra -> appid 200, а не 100 по совпадению префикса")
+            ok(steam_paths.appid_for_exe(os.path.join(common, "Unrelated", "x.exe")) is None,
+               "exe вне библиотеки -> None")
+            ok(steam_paths.appid_for_exe("") is None, "пустой путь -> None, без исключений")
+    finally:
+        steam_paths._steam_roots = real_steam_roots
+
+
+class _FakeNotify:
+    def __init__(self):
+        self.messages: list[str] = []
+
+    def show(self, msg, **kw):
+        self.messages.append(msg)
+
+    def error(self, msg, **kw):
+        self.messages.append(msg)
+
+
+class _FakeView:
+    def __init__(self):
+        self.manual_path = ""
+        self.add_sel: set[str] = set()
+        self.add_query = ""
+        self.only_new = False
+
+
+class _FakeScanUI:
+    """Минимальная реализация `UIHost`-протокола для теста `ScanController`."""
+
+    def __init__(self, store, cache_dir, posters=True):
+        self.store = store
+        self.notify = _FakeNotify()
+        self.view = _FakeView()
+        self.relocating = None
+        self.running: set[str] = set()
+        self.launcher = None
+        self._cache_dir = cache_dir
+        self._settings = {"game_posters": posters}
+
+    def icon_cache_dir(self):
+        return self._cache_dir
+
+    def setting(self, key, default=None):
+        return self._settings.get(key, default)
+
+    def categories(self):
+        return []
+
+    def apps(self):
+        return self.store.state()["apps"]
+
+    def on_library_changed(self):
+        pass
+
+    def refresh(self, content_only=False):
+        pass
+
+    def select_one(self, app_id):
+        pass
+
+
+def test_manual_add_redirects_steam_exe_to_launch_via_steam():
+    """Ручное добавление exe из библиотеки Steam запускается потом через Steam.
+
+    До этой правки поле «Или вставьте путь…» и кнопка «Обзор» сохраняли
+    такой exe как есть, и он запускался в обход клиента Steam. Само окно
+    игры открывается, но у VAC-защищённых игр (CS2 и подобных) сервер не
+    видит сессии, которую Steam выдаёт только при запуске через себя, —
+    матчмейкинг отвечает «не удаётся подключиться к серверу».
+    """
+    from app.controllers.scan import ScanController
+    from app.platform.discovery import steam_paths
+
+    real_steam_roots = steam_paths._steam_roots
+    try:
+        with tempfile.TemporaryDirectory() as steam_root:
+            installdir = "Counter-Strike Global Offensive"
+            game_dir = os.path.join(steam_root, "steamapps", "common", installdir,
+                                    "game", "bin", "win64")
+            os.makedirs(game_dir)
+            exe = os.path.join(game_dir, "cs2.exe")
+            with open(exe, "wb") as fh:
+                fh.write(b"MZ")
+            lib = os.path.join(steam_root, "steamapps")
+            with open(os.path.join(lib, "appmanifest_730.acf"), "w") as fh:
+                fh.write(f'"AppState"{{ "appid" "730" "installdir" "{installdir}" '
+                        '"name" "Counter-Strike 2" }')
+            steam_paths._steam_roots = lambda: [steam_root]
+
+            with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as cache:
+                store = Store(os.path.join(d, "data.json"))
+                ui = _FakeScanUI(store, cache)
+                scan = ScanController(ui)
+                scan.set_manual_path(exe)
+                scan.add_manual_path()
+
+                ok(len(scan._manual_found) == 1, "запись попала в список найденного")
+                item = scan._manual_found[0]
+                ok(item["path"] == "steam://rungameid/730",
+                   f"путь подменён на launch-URI Steam ({item['path']})")
+                ok(item["source"] == "steam", "источник помечен как steam")
+                ok(item["track_exe"] == "cs2.exe",
+                   "исходный exe остаётся в track_exe для отслеживания процесса")
+                ok(any("Steam" in m for m in ui.notify.messages),
+                   f"пользователю сказали, что это игра Steam ({ui.notify.messages})")
+
+            # exe вне какой-либо библиотеки Steam — путь остаётся как есть.
+            with tempfile.TemporaryDirectory() as other, \
+                 tempfile.TemporaryDirectory() as d2, tempfile.TemporaryDirectory() as cache2:
+                plain = os.path.join(other, "notepad.exe")
+                with open(plain, "wb") as fh:
+                    fh.write(b"MZ")
+                store2 = Store(os.path.join(d2, "data.json"))
+                ui2 = _FakeScanUI(store2, cache2)
+                scan2 = ScanController(ui2)
+                scan2.set_manual_path(plain)
+                scan2.add_manual_path()
+                ok(scan2._manual_found[0]["path"] == plain,
+                   "обычная программа не переписывается в steam://")
+                ok(scan2._manual_found[0]["source"] == "manual", "и остаётся source=manual")
+    finally:
+        steam_paths._steam_roots = real_steam_roots
+
+
 def test_hotkey_rejection():
     """A single bad accelerator must not take the other hotkeys down with it.
 

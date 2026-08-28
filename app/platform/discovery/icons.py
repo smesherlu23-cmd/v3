@@ -5,7 +5,7 @@ import re
 import time
 
 from ...infra import log
-from . import steam_art, steam_paths, windows
+from . import epic_art, steam_art, steam_paths, windows
 
 
 def extract_icon(path: str, icon_cache: str | None) -> str | None:
@@ -127,6 +127,10 @@ def backfill_icons(store, icon_cache: str | None = None, refresh: bool = False) 
                 patch["track_exe"] = exe
         if path.startswith("steam://") and (refresh or not app.get("poster")):
             poster = steam_art.poster_for(path, icon_cache, posters)
+            if poster and poster != app.get("poster"):
+                patch["poster"] = poster
+        if path.startswith("com.epicgames.launcher://") and (refresh or not app.get("poster")):
+            poster = epic_art.poster_for(path, icon_cache, posters)
             if poster and poster != app.get("poster"):
                 patch["poster"] = poster
         if patch:

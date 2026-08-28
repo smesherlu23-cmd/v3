@@ -34,6 +34,28 @@ class ScanController:
         """Настройка «Постеры для игр» — она же выключает походы в CDN Valve."""
         return bool(self.ui.setting("game_posters", True))
 
+    def _steam_redirect(self, raw: str) -> dict | None:
+        """Данные для запуска через Steam, если `raw` — exe внутри его библиотеки.
+
+        Ручное добавление пути (поле «Или вставьте путь…», кнопка «Обзор»,
+        перепривязка сломанного пути) раньше сохраняло такой exe как есть и
+        запускало его напрямую, в обход клиента Steam. Само окно игры при
+        этом открывается, но для VAC-защищённых игр (CS2 и подобных)
+        сервер не видит сессии, которую Steam выдаёт только при запуске
+        через себя, — матчмейкинг отвечает «не удаётся подключиться к
+        серверу». `steam://rungameid/{appid}` — тот же путь, что даёт
+        автосканирование.
+        """
+        appid = discovery.appid_for_exe(raw)
+        if not appid:
+            return None
+        path = f"steam://rungameid/{appid}"
+        cache = self.ui.icon_cache_dir()
+        icon, fit = discovery.resolve_icon_for(path, cache)
+        return {"path": path, "source": "steam", "sub": "Steam",
+                "track_exe": os.path.basename(raw), "icon": icon, "icon_fit": fit,
+                "poster": discovery.poster_for(path, cache, self._posters())}
+
     def cached_discovery(self):
         if self._discovered is None:
             return None
@@ -118,15 +140,22 @@ class ScanController:
         item = {"name": (name[:1].upper() + name[1:]) if name else "Программа",
                 "path": raw, "source": "manual",
                 "icon": discovery.extract_icon(raw, self.ui.icon_cache_dir())}
+        steam = self._steam_redirect(raw)
+        if steam:
+            item.update(steam)
         found = list(self._manual_found)
-        if any((f.get("path") or "").lower() == raw.lower() for f in found):
+        if any((f.get("path") or "").lower() == item["path"].lower() for f in found):
             self.notify.show("Этот путь уже в списке", icon="check_circle", tone="muted")
             return
         found.append(item)
         self._manual_found = found
         self.ui.view.manual_path = ""
-        self.ui.view.add_sel.add(raw.lower())
-        self.notify.show(f"{item['name']} добавлен в список", icon="link", tone="muted")
+        self.ui.view.add_sel.add(item["path"].lower())
+        if steam:
+            self.notify.show(f"{item['name']} — игра Steam, запустится через клиент",
+                               icon="link", tone="muted")
+        else:
+            self.notify.show(f"{item['name']} добавлен в список", icon="link", tone="muted")
         self.ui.refresh()
 
     def toggle_add_row(self, row):
@@ -208,8 +237,11 @@ class ScanController:
         target = self.ui.relocating
         if target:
             self.ui.relocating = None
-            self.store.update_app(target, {"path": path, "icon": None, "poster": None})
-            self.notify.show("Путь обновлён", icon="check")
+            steam = self._steam_redirect(path)
+            patch = steam or {"path": path, "icon": None, "poster": None}
+            self.store.update_app(target, patch)
+            self.notify.show("Путь обновлён — это игра Steam, запустится через клиент"
+                              if steam else "Путь обновлён", icon="check")
             self.ui.on_library_changed()
             self.backfill_icons_async()
             return
@@ -218,14 +250,19 @@ class ScanController:
             return
         base = Path(path).stem.replace("-", " ").replace("_", " ").strip()
         name = (base[:1].upper() + base[1:]) if base else "Программа"
-        item = {"name": name, "path": path, "source": "manual"}
+        steam = self._steam_redirect(path)
+        item = {"name": name, "path": path, "source": (steam or {}).get("source", "manual")}
         cat_id = queries.suggest_category(item, self.ui.categories())
         cat = next((c for c in self.ui.categories() if c["id"] == cat_id), None)
-        icon = discovery.extract_icon(path, self.ui.icon_cache_dir()) if path else None
-        record = self.store.add_app({"name": name, "path": path, "icon": icon,
-                                     "category_id": cat_id})
+        icon = (steam or {}).get("icon") or discovery.extract_icon(path, self.ui.icon_cache_dir())
+        payload = {"name": name, "path": path, "icon": icon, "category_id": cat_id}
+        if steam:
+            payload.update(steam)
+            payload["icon"] = icon
+        record = self.store.add_app(payload)
         self.ui.view.select_one(record["id"])
-        self.notify.show(f"{name} добавлен в «{cat['name']}»" if cat else f"{name} добавлен",
+        self.notify.show(f"{name} — игра Steam, запустится через клиент" if steam
+                          else (f"{name} добавлен в «{cat['name']}»" if cat else f"{name} добавлен"),
                            icon="magic", tone="muted",
                            action=lambda: self._cycle_category(record["id"]),
                            action_label="Другая")

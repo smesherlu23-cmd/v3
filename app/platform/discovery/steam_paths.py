@@ -220,6 +220,46 @@ def _vdf_val(text: str, key: str) -> str | None:
     m = re.search(rf'"{re.escape(key)}"\s*"([^"]*)"', text, re.IGNORECASE)
     return m.group(1) if m else None
 
+def _norm(path: str) -> str:
+    try:
+        return os.path.normcase(os.path.abspath(path))
+    except (OSError, ValueError):
+        return ""
+
+def appid_for_exe(path: str) -> str | None:
+    """Steam appid, если `path` — исполняемый файл внутри библиотеки Steam.
+
+    Ручное добавление по пути (поле «Или вставьте путь…», кнопка «Обзор»,
+    перепривязка сломанного пути) сохраняло такой exe как есть и запускало
+    его напрямую — в обход клиента Steam. Игра стартует, но для
+    VAC-защищённых игр (CS2 и подобных) сервер не видит сессии, которую
+    Steam выдаёт только при запуске через себя, — матчмейкинг отвечает
+    «не удаётся подключиться к серверу», хотя само окно игры открывается
+    нормально. Найденный appid позволяет подменить путь на
+    `steam://rungameid/{appid}`, как это уже делает автосканирование.
+    """
+    exe = _norm(path)
+    if not exe:
+        return None
+    for root in _steam_roots():
+        for lib in _steam_libraries(root):
+            for acf in glob.glob(os.path.join(lib, "steamapps", "appmanifest_*.acf")):
+                try:
+                    with open(acf, encoding="utf-8", errors="ignore") as fh:
+                        text = fh.read()
+                except OSError:
+                    continue
+                installdir = _vdf_val(text, "installdir")
+                appid = _vdf_val(text, "appid")
+                if not installdir or not appid:
+                    continue
+                game_root = _norm(os.path.join(lib, "steamapps", "common", installdir))
+                if not game_root:
+                    continue
+                if exe == game_root or exe.startswith(game_root + os.sep):
+                    return appid
+    return None
+
 def _extract_exe_icon(exe_full: str, icon_cache: str) -> str | None:
     try:
         return windows._win_extract_one(exe_full, icon_cache)

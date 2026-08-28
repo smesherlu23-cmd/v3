@@ -4,10 +4,10 @@ import glob
 import json
 import os
 
-from . import windows
+from . import epic_art, windows
 
 
-def _epic_games(icon_cache: str | None) -> list[dict]:
+def _epic_games(icon_cache: str | None, posters: bool = True) -> list[dict]:
     if os.name != "nt":
         return []
     mani = os.path.join(os.environ.get("ProgramData", r"C:\ProgramData"),
@@ -42,7 +42,10 @@ def _epic_games(icon_cache: str | None) -> list[dict]:
             full = os.path.join(loc, exe)
             if os.path.exists(full):
                 icon = windows._win_extract_one(full, icon_cache)
+        namespace = d.get("CatalogNamespace") or d.get("MainGameCatalogNamespace")
+        item_id = d.get("CatalogItemId") or d.get("MainGameCatalogItemId")
+        poster = epic_art.poster_for_ids(namespace, item_id, icon_cache, posters)
         games.append({"name": name, "path": path, "icon": icon,
                       "icon_fit": "contain", "source": "epic", "sub": "Epic Games",
-                      "track_exe": track})
+                      "track_exe": track, "poster": poster})
     return games

@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 
 from ...infra import log
-from . import steam_art, steam_paths, windows  # noqa: F401
+from . import epic_art, steam_art, steam_paths, windows  # noqa: F401
 from .epic import _epic_games
 from .icons import (  # noqa: F401
     ICON_SCHEMA,
@@ -31,7 +31,6 @@ from .steam_art import (  # noqa: F401
     _steam_cdn_art,
     _steam_portrait,
     poster_for,
-    reset_cdn_state,
 )
 from .steam_paths import (  # noqa: F401
     _STEAM_SKIP_ID,
@@ -39,6 +38,7 @@ from .steam_paths import (  # noqa: F401
     _steam_games,
     _steam_roots,
     _vdf_val,
+    appid_for_exe,
     reset_steam_exe_cache,
     steam_exe_for,
 )
@@ -59,6 +59,7 @@ from .windows import (  # noqa: F401
 __all__ = [
     "ICON_SCHEMA",
     "_steam_roots",
+    "appid_for_exe",
     "autostart_names",
     "backfill_icons",
     "desktop_names",
@@ -73,6 +74,17 @@ __all__ = [
     "suggest_first_run",
     "trim_transparent_padding",
 ]
+
+
+def reset_cdn_state() -> None:
+    """Сбросить оба выключателя: и Steam CDN, и каталог Epic.
+
+    Раньше обложки были только у Steam, и сброс был чисто его функцией.
+    Теперь источников два — вызывающий код (диагностика, тесты, повторное
+    сканирование) не должен помнить, что их стало больше.
+    """
+    steam_art.reset_cdn_state()
+    epic_art.reset_epic_cdn_state()
 
 
 def discover_apps(icon_cache: str | None = None, on_progress=None,
@@ -93,7 +105,7 @@ def discover_apps(icon_cache: str | None = None, on_progress=None,
     if os.name == "nt":
         steps.append(("windows", "Меню «Пуск» и реестр", _discover_windows))
     steps += [("steam", "Steam", lambda cache: _steam_games(cache, posters)),
-              ("epic", "Epic Games", _epic_games)]
+              ("epic", "Epic Games", lambda cache: _epic_games(cache, posters))]
 
     apps: list[dict] = []
     errors = []
