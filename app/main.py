@@ -27,7 +27,15 @@ from app.ui import images
 from app.ui.app import CenturioUI
 from app.ui.iconify import ensure_icons, tray_icon_path
 
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+# В собранном `flet build windows` .exe исходники запакованы не как обычные
+# файлы на диске (Flutter-приложение с внедрённым интерпретатором), и
+# `__file__`-путь до реальной папки assets внутри установленного приложения
+# не ведёт — вместо неё Flet сам публикует переменную окружения
+# `FLET_ASSETS_DIR` с абсолютным путём до распакованных ассетов именно для
+# такого кода. Без этого при первом же обращении к иконкам (`ensure_icons`)
+# приложение падало сразу при запуске, до появления окна.
+_DEV_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+ASSETS_DIR = Path(os.environ.get("FLET_ASSETS_DIR") or _DEV_ASSETS_DIR).resolve()
 GEOMETRY_FLUSH_DELAY = 0.5
 AUTO_RESCAN_INTERVAL = 900
 
@@ -62,7 +70,14 @@ def main(page: ft.Page):
     log.set_debug(bool(store.state()["settings"].get("debug_log")))
     log.debug("Centurio starting (argv=%s)", sys.argv)
 
-    ensure_icons(ASSETS_DIR)
+    try:
+        ensure_icons(ASSETS_DIR)
+    except OSError:
+        # Иконки уже лежат в собранном приложении — сюда попадают только при
+        # первом запуске из исходников без них. Если писать в ASSETS_DIR
+        # всё же нельзя (неожиданно доступная только на чтение сборка),
+        # это не повод не запускаться — просто останемся без иконки трея.
+        log.exception("не удалось подготовить иконки")
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
     # Картинки отдаются клиенту путём, а не строкой base64. В браузере такого
     # пути нет — страница не может открыть файл на диске, — поэтому там
