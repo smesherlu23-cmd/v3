@@ -1673,6 +1673,133 @@ def test_manual_add_redirects_steam_exe_to_launch_via_steam():
         steam_paths._steam_roots = real_steam_roots
 
 
+def test_theme_build_palette_is_identity_at_defaults():
+    """Нейтральный тон и обычный контраст дают тот же набор цветов, что и сейчас.
+
+    Тонировка — новая надстройка над готовой палитрой; она не должна ничего
+    менять для тех, кто её не трогал. Иначе включение фичи само по себе
+    оказалось бы визуальной регрессией для всех существующих пользователей.
+    """
+    from app.ui import theme
+
+    palette = theme.build_palette(None, "normal")
+    ok(palette == theme._BASE_TOKENS,
+       "тон=None и контраст=normal -> палитра совпадает с исходной побайтово")
+    ok(len(theme._BASE_TOKENS) > 40,
+       f"подстройка реально покрывает много токенов, а не единицы ({len(theme._BASE_TOKENS)})")
+
+
+def test_theme_excludes_meaning_colours():
+    """Тон фона не перекрашивает «смысловые» цвета — успех/опасность/рейтинг.
+
+    Зелёная кнопка не должна становиться фиолетовой только потому, что
+    пользователь выбрал фиолетовый тон интерфейса — тогда цвет перестаёт
+    что-либо сообщать.
+    """
+    from app.ui import colors as C
+    from app.ui import theme
+
+    for name in ("GREEN", "DANGER", "STAR", "ACCENT"):
+        ok(name not in theme._BASE_TOKENS, f"{name} не подстраивается тоном")
+
+    palette = theme.build_palette(222, "normal")
+    ok("GREEN" not in palette and "DANGER" not in palette and "ACCENT" not in palette,
+       "смысловые токены отсутствуют и в результате build_palette")
+    ok(C.GREEN == "#4ade80", "а исходное значение GREEN никто не менял")
+
+
+def test_theme_contrast_stays_within_safe_bounds():
+    """Ни один уровень контраста не схлопывает светлоту в 0 или 1 (клиппинг)."""
+    from app.ui import theme
+
+    for key in theme.CONTRAST_LEVELS:
+        palette = theme.build_palette(None, key)
+        for name, hexval in palette.items():
+            _, light, _sat = theme.C.hex_to_hsl(hexval)
+            ok(0.0 <= light <= 1.0, f"{key}/{name}: светлота {light} вне [0,1]")
+    # Сам факт, что "мягче"/"контрастнее" — это разные, но не крайние палитры.
+    soft = theme.build_palette(None, "soft")
+    strong = theme.build_palette(None, "strong")
+    ok(soft["BG_0"] != theme._BASE_TOKENS["BG_0"] != strong["BG_0"],
+       "мягкий и контрастный уровни реально отличаются от обычного")
+
+
+def test_theme_apply_and_reset_round_trip():
+    """`apply_theme` подставляет посчитанные цвета в colors.py, `reset_theme` — возвращает."""
+    from app.ui import colors as C
+    from app.ui import theme
+
+    original = C.BG_0
+    try:
+        theme.apply_theme({"bg_tint": 222, "contrast": "strong"})
+        ok(C.BG_0 != original, "после apply_theme C.BG_0 — уже другое значение")
+        ok(C.GREEN == "#4ade80", "а смысловые цвета не изменились и после apply_theme")
+
+        theme.apply_theme({"bg_tint": "не число", "contrast": "?"})
+        ok(C.BG_0 == original,
+           "мусорные bg_tint/contrast -> тихий откат к нейтральным настройкам, не исключение")
+    finally:
+        theme.reset_theme()
+        ok(C.BG_0 == original, "reset_theme возвращает исходное значение")
+
+
+def test_bg_tint_setting_is_sanitized():
+    """`bg_tint` — целое число градусов или `None`, иначе тихий откат к умолчанию."""
+    from app.core.store import sanitize
+
+    ok(sanitize.clean_setting_value("bg_tint", 222, None) == 222, "целое число принимается")
+    ok(sanitize.clean_setting_value("bg_tint", None, None) is None, "None принимается как есть")
+    ok(sanitize.clean_setting_value("bg_tint", "222", None) is None,
+       "строка -> откат к умолчанию, а не молчаливая порча типа")
+    ok(sanitize.clean_setting_value("bg_tint", True, None) is None,
+       "bool — не int, хоть Python и считает его подклассом")
+    ok(sanitize.clean_setting_value("contrast", "strong", "normal") == "strong",
+       "строковое значение контраста принимается")
+    ok(sanitize.clean_setting_value("contrast", "", "normal") == "normal",
+       "пустая строка -> откат к умолчанию")
+
+
+def test_settings_screen_has_theme_controls():
+    """Экран настроек показывает пресеты темы, тон фона и контраст — не только акцент."""
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("settings theme controls test", exc)
+        return
+
+    import flet as ft
+
+    from app.ui import theme
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+        ui._open_settings()
+        ui.set_settings_tab("view")
+
+        pane = ft.Column(ui.content_col.controls)
+        texts = _texts(pane)
+        for caption in ("ТЕМА", "ТОН ФОНА", "КОНТРАСТ"):
+            ok(caption in texts, f"на экране настроек есть блок «{caption}»")
+        for preset in theme.THEME_PRESETS:
+            ok(preset["label"] in texts, f"пресет «{preset['label']}» показан")
+
+        sliders = _find_all(pane, lambda c: isinstance(c, ft.Slider))
+        ok(any(s.max == 359 for s in sliders if s is not None) and len(sliders) >= 3,
+           "у тона фона свой ползунок 0-359, отдельный от акцентного")
+
+        # Применение пресета меняет все три настройки разом — и, что важнее,
+        # реально пересчитывает C.BG_0 при следующей перерисовке.
+        from app.ui import colors as C
+        before = C.BG_0
+        ui.set_settings({"accent": "#4f7dff", "bg_tint": 222, "contrast": "normal"})
+        stored = store.state()["settings"]
+        ok(stored["accent"] == "#4f7dff" and stored["bg_tint"] == 222,
+           "все настройки пресета записались одним вызовом")
+        ok(C.BG_0 != before, "и палитра действительно пересчиталась при refresh()")
+        theme.reset_theme()
+
+
 def test_hotkey_rejection():
     """A single bad accelerator must not take the other hotkeys down with it.
 

@@ -18,7 +18,7 @@ from ..core.view_state import SEARCH_FIELD, ViewState
 from ..infra import log
 from ..platform import windows as W
 from . import colors as C
-from . import menus, screens
+from . import menus, screens, theme
 from . import widgets as Wg
 from .chrome import Chrome
 from .context_menus import ContextMenus
@@ -262,6 +262,7 @@ class CenturioUI:
         with self._refresh_lock:
             self._snapshot = self.store.state()
             self._settings = self._snapshot["settings"]
+            theme.apply_theme(self._settings)
             self._accels, self._set_accels = resolve_accels(
                 self._snapshot["apps"], self.sets(),
                 self._settings.get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY)
@@ -269,6 +270,8 @@ class CenturioUI:
             self._tile_epoch = (
                 self._settings.get("tile_size"),
                 self._settings.get("accent", C.ACCENT),
+                self._settings.get("bg_tint"),
+                self._settings.get("contrast", theme.DEFAULT_CONTRAST),
                 bool(self._settings.get("game_posters", True)),
                 self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE),
                 self.view.select_mode,
@@ -1019,6 +1022,21 @@ class CenturioUI:
         cb = self.controllers.get("on_setting")
         if cb:
             cb(key, value)
+        self.refresh()
+
+    def set_settings(self, pairs: dict) -> None:
+        """Записать несколько настроек разом — один файл на диск, один refresh().
+
+        Нужно пресетам темы: акцент, тон фона и контраст меняются одним
+        кликом, и через `set_setting` по одной это было бы три записи на
+        диск и три перестройки экрана подряд.
+        """
+        items = list(pairs.items())
+        for i, (key, value) in enumerate(items):
+            self.store.set_setting(key, value, persist=(i == len(items) - 1))
+            cb = self.controllers.get("on_setting")
+            if cb:
+                cb(key, value)
         self.refresh()
 
     def _set_launch_hotkey(self, accel):

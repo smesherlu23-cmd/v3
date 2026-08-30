@@ -23,6 +23,8 @@ class Settings(TypedDict, total=False):
     minimize_to_tray: bool
     close_to_tray: bool
     accent: str
+    bg_tint: int | None
+    contrast: str
     tile_size: str
     rail_size: str
     show_quick_row: bool

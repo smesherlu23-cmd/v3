@@ -24,6 +24,8 @@ DEFAULT_SETTINGS = {
     "minimize_to_tray": True,
     "close_to_tray": True,
     "accent": "#f5f5f7",
+    "bg_tint": None,
+    "contrast": "normal",
     "tile_size": "large",
     "rail_size": "normal",
     "show_quick_row": True,
@@ -224,10 +226,13 @@ _BOOL_SETTINGS = {
     "triage", "debug_log",
 }
 
-_STR_SETTINGS = {"accent", "tile_size", "rail_size", "view_filter", "view_sort",
+_STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
                  "view_mode", "launch_hotkey"}
 
-_INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y"}
+_INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y", "bg_tint"}
+# `bg_tint` — тон фона в градусах (0-359); значение вне диапазона не портит
+# картинку, потому что theme.py всё равно приводит его через `% 360`, так
+# что отдельная проверка границ здесь не нужна — как и у прочих int-or-None.
 
 
 def clean_setting_value(key: str, value, default):

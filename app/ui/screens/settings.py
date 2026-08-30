@@ -5,6 +5,7 @@ import flet as ft
 from ... import __version__
 from ...core.hotkeys import format_accel
 from .. import colors as C
+from .. import theme
 from .. import widgets as Wg
 from ..format import T
 from .common import _caps, _field, _screen_header
@@ -14,6 +15,12 @@ from .common import _caps, _field, _screen_header
 ACCENT_NAMES = dict(zip(C.ACCENT_CHOICES, (
     "Белый", "Синий", "Бирюзовый", "Зелёный",
     "Оранжевый", "Коралловый", "Красный", "Фиолетовый")))
+
+# Тон фона — только градусы, без «нейтрального» серого как отдельного цвета:
+# им управляет `None` (см. theme.py). Порядок — под ряд свотчей в интерфейсе.
+BG_TINT_CHOICES = (None, 222, 268, 165, 340, 28)
+BG_TINT_NAMES = {None: "Нейтральный", 222: "Синий", 268: "Фиолетовый",
+                 165: "Зелёный", 340: "Розовый", 28: "Тёплый"}
 
 
 SETTINGS_TABS = (
@@ -142,9 +149,103 @@ def _accent_picker(ui):
     ], spacing=12, tight=True)
 
 
+def _theme_preset_chip(ui, preset):
+    accent_hex = C.ACCENT_CHOICES[preset["accent"]]
+    active = (ui.setting("bg_tint") == preset["bg_tint"]
+             and ui.setting("contrast", theme.DEFAULT_CONTRAST) == preset["contrast"]
+             and ui._accent().lower() == accent_hex.lower())
+    swatch_color = (accent_hex if preset["bg_tint"] is None
+                    else C.hsl_to_hex(preset["bg_tint"], 0.5, 0.55))
+
+    def apply(e):
+        ui.set_settings({"accent": accent_hex, "bg_tint": preset["bg_tint"],
+                         "contrast": preset["contrast"]})
+
+    chip = ft.Container(
+        ft.Column([
+            ft.Container(width=46, height=30, border_radius=8, bgcolor=swatch_color,
+                        border=ft.border.all(1.5, accent_hex)),
+            T(preset["label"], size=10.5, color=C.TEXT if active else C.MUTED),
+        ], spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
+        padding=ft.padding.all(7), border_radius=11,
+        border=ft.border.all(2, ui._accent()) if active else ft.border.all(1, C.TRANSPARENT),
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+        on_click=apply, tooltip=preset["label"])
+    return Wg.hover_scale(chip)
+
+
+def _theme_presets(ui):
+    """Быстрый набор акцент + тон фона + контраст одним кликом.
+
+    Дальше это можно тонко подстроить свотчами и ползунками ниже — пресет
+    лишь задаёт стартовую точку, а не отдельно хранимый режим.
+    """
+    return ft.Row([_theme_preset_chip(ui, p) for p in theme.THEME_PRESETS],
+                 spacing=10, wrap=True, run_spacing=10, tight=True)
+
+
+def _bg_tint_swatch(ui, hue, current):
+    selected = hue == current
+    if hue is None:
+        content = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=C.MUTED_2)
+        color = C.BG_1
+    else:
+        content = None
+        color = C.hsl_to_hex(hue, 0.5, 0.55)
+    swatch = ft.Container(
+        width=30, height=30, border_radius=9, bgcolor=color, content=content,
+        alignment=ft.alignment.center,
+        border=ft.border.all(2, ui._accent()) if selected else ft.border.all(1, C.LINE_4),
+        tooltip=BG_TINT_NAMES.get(hue),
+        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+        on_click=lambda e, h=hue: ui.set_setting("bg_tint", h))
+    return Wg.hover_scale(swatch)
+
+
+def _bg_tint_picker(ui):
+    """Едва заметная подкраска фона, панелей и линий под один оттенок.
+
+    В отличие от акцента (кнопки, выделение) это про сам корпус интерфейса —
+    та же идея, что подсветка рабочего стола под цвет обоев. `None` —
+    нейтральный серый, как было раньше и остаётся по умолчанию.
+    """
+    current = ui.setting("bg_tint")
+    hue = current if isinstance(current, int) else 0
+
+    swatches = ft.Row([_bg_tint_swatch(ui, h, current) for h in BG_TINT_CHOICES],
+                      spacing=9, wrap=True, run_spacing=9, tight=True)
+
+    thumb = C.hsl_to_hex(hue, 0.5, 0.55) if current is not None else C.MUTED_2
+    slider = ft.Container(
+        ft.Row([
+            T("тон", size=10.5, color=C.TEXT_DIM, width=26),
+            ft.Container(
+                ft.Slider(min=0, max=359, value=hue,
+                          on_change_end=lambda e: ui.set_setting(
+                              "bg_tint", int(float(e.control.value))),
+                          active_color=C.ACCENT, inactive_color=C.TRANSPARENT,
+                          thumb_color=thumb, height=18, expand=True),
+                gradient=ft.LinearGradient(begin=ft.alignment.center_left,
+                                           end=ft.alignment.center_right,
+                                           colors=list(C.HUE_STRIP)),
+                border_radius=3, height=18, expand=True),
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        width=260)
+
+    return ft.Column([swatches, slider], spacing=12, tight=True)
+
+
+def _contrast_segments(ui):
+    return _segments(ui, "contrast", theme.DEFAULT_CONTRAST,
+                     (("Мягче", "soft"), ("Обычная", "normal"), ("Контрастнее", "strong")))
+
+
 def _settings_view(ui):
     return [
+        _group("ТЕМА", _theme_presets(ui)),
         ft.Column([_caps("АКЦЕНТ"), _accent_picker(ui)], spacing=10, tight=True),
+        ft.Column([_caps("ТОН ФОНА"), _bg_tint_picker(ui)], spacing=10, tight=True),
+        _group("КОНТРАСТ", _contrast_segments(ui)),
         _group("ПЛОТНОСТЬ", _tile_segments(ui)),
         _group("ПОЛОСА КАТЕГОРИЙ", _rail_segments(ui)),
         ft.Container(height=1, bgcolor=C.LINE_2),
