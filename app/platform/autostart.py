@@ -66,7 +66,7 @@ def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
     initialized = False
     try:
         hr = ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-        initialized = hr in (0, 1)  
+        initialized = hr in (0, 1)
     except OSError:
         pass
     try:
@@ -74,23 +74,23 @@ def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
         ole32.CoCreateInstance(byref(CLSID_ShellLink), None, CLSCTX_INPROC_SERVER,
                                byref(IID_IShellLinkW), byref(link))
         try:
-            call(link, 20, target, argtypes=(c_wchar_p,))              
+            call(link, 20, target, argtypes=(c_wchar_p,))
             if arguments:
-                call(link, 11, arguments, argtypes=(c_wchar_p,))       
+                call(link, 11, arguments, argtypes=(c_wchar_p,))
             if workdir:
-                call(link, 9, workdir, argtypes=(c_wchar_p,))         
+                call(link, 9, workdir, argtypes=(c_wchar_p,))
             if description:
-                call(link, 7, description, argtypes=(c_wchar_p,))      
+                call(link, 7, description, argtypes=(c_wchar_p,))
             persist = c_void_p()
-            call(link, 0, byref(IID_IPersistFile), byref(persist),     
+            call(link, 0, byref(IID_IPersistFile), byref(persist),
                  argtypes=(POINTER(GUID), POINTER(c_void_p)))
             try:
-                call(persist, 6, str(path), True,                       
+                call(persist, 6, str(path), True,
                      argtypes=(c_wchar_p, wintypes.BOOL))
             finally:
-                call(persist, 2)                                        
+                call(persist, 2)
         finally:
-            call(link, 2)                                              
+            call(link, 2)
         return path.exists()
     except Exception:
         log.exception("не удалось создать ярлык автозапуска %s", path)
@@ -175,7 +175,7 @@ def _delete_run_key() -> None:
                             winreg.KEY_SET_VALUE) as key:
             winreg.DeleteValue(key, APP_NAME)
     except FileNotFoundError:
-        pass          
+        pass
     except Exception:
         log.exception("не удалось удалить ключ автозапуска из реестра")
 
@@ -187,7 +187,7 @@ def set_autostart(enabled: bool) -> bool:
         remove_startup_shortcut()
         _delete_run_key()
         return True
-    
+
     if create_startup_shortcut():
         _delete_run_key()
         return True

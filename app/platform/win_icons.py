@@ -97,7 +97,7 @@ def _header(size: int) -> _BITMAPINFO:
     info = _BITMAPINFO()
     info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
     info.bmiHeader.biWidth = size
-    info.bmiHeader.biHeight = -size   
+    info.bmiHeader.biHeight = -size
     info.bmiHeader.biPlanes = 1
     info.bmiHeader.biBitCount = 32
     info.bmiHeader.biCompression = _BI_RGB

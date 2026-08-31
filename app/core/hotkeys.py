@@ -6,7 +6,6 @@ from typing import NamedTuple
 
 from ..infra import log
 
-
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
@@ -14,7 +13,7 @@ MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 
 WM_HOTKEY = 0x0312
-_WM_STOP = 0x0400 + 1  
+_WM_STOP = 0x0400 + 1
 
 _MOD_FLAGS = {"ctrl": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT, "win": MOD_WIN}
 
@@ -39,7 +38,7 @@ _VK = {
     "media_next": 0xB0, "media_previous": 0xB1, "media_play_pause": 0xB3,
     "media_volume_mute": 0xAD, "media_volume_down": 0xAE, "media_volume_up": 0xAF,
 }
-_VK.update({f"f{n}": 0x6F + n for n in range(1, 25)})  
+_VK.update({f"f{n}": 0x6F + n for n in range(1, 25)})
 
 _NAMED_KEYS = frozenset(_VK)
 _STANDALONE_KEYS = {

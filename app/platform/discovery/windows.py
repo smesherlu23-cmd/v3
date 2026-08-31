@@ -223,7 +223,7 @@ def _registry_entries() -> list[dict]:
                     except OSError:
                         continue
                     with child:
-                        exe = _val(child, "")  
+                        exe = _val(child, "")
                     if not isinstance(exe, str):
                         continue
                     exe = exe.strip().strip('"')

@@ -27,7 +27,6 @@ from app.ui import images
 from app.ui.app import CenturioUI
 from app.ui.iconify import ensure_icons, tray_icon_path
 
-
 _DEV_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 ASSETS_DIR = Path(os.environ.get("FLET_ASSETS_DIR") or _DEV_ASSETS_DIR).resolve()
 GEOMETRY_FLUSH_DELAY = 0.5
