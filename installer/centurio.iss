@@ -10,7 +10,7 @@
 ; сверяя версии и подписывая результат.
 
 #define MyAppName "Centurio"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Centurio"
 #define MyAppExeName "Centurio.exe"
 #define MyAppDescription "Панель запуска приложений, всегда доступная из трея"
