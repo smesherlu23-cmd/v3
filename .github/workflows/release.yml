@@ -80,6 +80,15 @@ jobs:
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
+      - name: Download the VC++ Redistributable
+        shell: pwsh
+        run: |
+          # Зашивается прямо в CenturioSetup.exe (см. installer/centurio.iss)
+          # и ставится тихо, только если её ещё нет на машине пользователя —
+          # без неё Flutter-приложение на чистой Windows не запускается.
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "installer\vc_redist.x64.exe"
+
       - name: Build the installer
         shell: pwsh
         run: |

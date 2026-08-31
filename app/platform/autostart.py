@@ -11,12 +11,6 @@ _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 def _launch_parts() -> tuple[str, str]:
-    """(что запускать, аргументы) — для ярлыка и для ключа реестра.
-
-    Из исходников это интерпретатор + путь к `main.py`; у собранного
-    `Centurio.exe` (`sys.frozen`) — сам exe. Флаг `--hidden` уводит запуск
-    сразу в трей, чтобы автозапуск не выкидывал окно при каждом входе.
-    """
     exe = sys.executable
     if getattr(sys, "frozen", False):
         return exe, "--hidden"
@@ -41,20 +35,6 @@ def startup_shortcut() -> Path | None:
 
 def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
                     description: str) -> bool:
-    """Создать .lnk через оболочку Windows (IShellLink), без сторонних процессов.
-
-    Ярлык в «Автозагрузке» — тот же путь автозапуска, что использует
-    инсталлятор, и эвристики антивирусов относятся к нему заметно спокойнее,
-    чем к записи в `HKCU\\Run` (та формально подпадает под MITRE T1547.001 —
-    признак персистентности). Создаём его документированным COM-вызовом
-    `CoCreateInstance(CLSID_ShellLink)` — так же, как это делает проводник, —
-    а не запуском PowerShell с `WScript.Shell`, чтобы не плодить ещё один
-    подозрительный для AV скрытый процесс.
-
-    Возвращает True, только если файл действительно появился. Любой сбой COM
-    гасится в False — вызывающий откатывается на ключ реестра, чтобы
-    автозапуск не сломался молча.
-    """
     import ctypes
     import uuid
     from ctypes import POINTER, byref, c_void_p, c_wchar_p, wintypes
@@ -79,8 +59,6 @@ def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
     ole32 = ctypes.oledll.ole32
 
     def call(ptr, index, *args, argtypes=()):
-        # COM-указатель — это указатель на таблицу указателей на функции;
-        # первый аргумент каждого метода — сам интерфейс (this).
         vtable = ctypes.cast(ptr, POINTER(POINTER(c_void_p)))[0]
         proto = ctypes.WINFUNCTYPE(ctypes.c_long, c_void_p, *argtypes)
         return proto(vtable[index])(ptr, *args)
@@ -88,32 +66,31 @@ def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
     initialized = False
     try:
         hr = ole32.CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-        initialized = hr in (0, 1)  # S_OK или S_FALSE — оба надо уравновесить
+        initialized = hr in (0, 1)  
     except OSError:
-        # RPC_E_CHANGED_MODE — COM уже поднят с другой моделью; работаем как есть.
         pass
     try:
         link = c_void_p()
         ole32.CoCreateInstance(byref(CLSID_ShellLink), None, CLSCTX_INPROC_SERVER,
                                byref(IID_IShellLinkW), byref(link))
         try:
-            call(link, 20, target, argtypes=(c_wchar_p,))               # SetPath
+            call(link, 20, target, argtypes=(c_wchar_p,))              
             if arguments:
-                call(link, 11, arguments, argtypes=(c_wchar_p,))        # SetArguments
+                call(link, 11, arguments, argtypes=(c_wchar_p,))       
             if workdir:
-                call(link, 9, workdir, argtypes=(c_wchar_p,))           # SetWorkingDirectory
+                call(link, 9, workdir, argtypes=(c_wchar_p,))         
             if description:
-                call(link, 7, description, argtypes=(c_wchar_p,))       # SetDescription
+                call(link, 7, description, argtypes=(c_wchar_p,))      
             persist = c_void_p()
-            call(link, 0, byref(IID_IPersistFile), byref(persist),      # QueryInterface
+            call(link, 0, byref(IID_IPersistFile), byref(persist),     
                  argtypes=(POINTER(GUID), POINTER(c_void_p)))
             try:
-                call(persist, 6, str(path), True,                       # IPersistFile::Save
+                call(persist, 6, str(path), True,                       
                      argtypes=(c_wchar_p, wintypes.BOOL))
             finally:
-                call(persist, 2)                                        # Release
+                call(persist, 2)                                        
         finally:
-            call(link, 2)                                              # Release
+            call(link, 2)                                              
         return path.exists()
     except Exception:
         log.exception("не удалось создать ярлык автозапуска %s", path)
@@ -181,11 +158,6 @@ def is_enabled() -> bool:
 def _set_run_key() -> bool:
     try:
         import winreg
-
-        # CreateKeyEx, а не OpenKey: на свежем профиле Windows ветки
-        # `...\CurrentVersion\Run` может не быть вовсе, и OpenKey падает
-        # с FileNotFoundError — переключатель «Запускать с Windows» тихо
-        # не срабатывал. Существующую ветку CreateKeyEx просто открывает.
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
                                 winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, _launch_command())
@@ -203,7 +175,7 @@ def _delete_run_key() -> None:
                             winreg.KEY_SET_VALUE) as key:
             winreg.DeleteValue(key, APP_NAME)
     except FileNotFoundError:
-        pass          # нет ветки или нет значения — удалять уже нечего
+        pass          
     except Exception:
         log.exception("не удалось удалить ключ автозапуска из реестра")
 
@@ -212,16 +184,10 @@ def set_autostart(enabled: bool) -> bool:
     if os.name != "nt":
         return False
     if not enabled:
-        # Гасим оба возможных источника: и ярлык, и ключ реестра, оставшийся
-        # от прежних версий, — иначе выключить автозапуск не получится.
         remove_startup_shortcut()
         _delete_run_key()
         return True
-
-    # Предпочитаем ярлык в «Автозагрузке»: тот же путь, что у инсталлятора, и
-    # он не выглядит для антивирусов персистентностью, как запись в HKCU\Run.
-    # Ключ реестра — запасной путь на случай, если COM почему-то не отработал:
-    # автозапуск важнее его AV-профиля, ломаться молча он не должен.
+    
     if create_startup_shortcut():
         _delete_run_key()
         return True
@@ -231,44 +197,14 @@ def set_autostart(enabled: bool) -> bool:
 
 
 def adopt_installer_choice() -> bool:
-    """Разовый подхват галочки инсталлятора — что стоит в системе сейчас.
-
-    `installer/centurio.iss` создаёт `{userstartup}\\Centurio.lnk`, если при
-    установке отмечена галочка «Запускать при входе в Windows». Другого
-    способа узнать её нет, поэтому первый запуск читает состояние системы и
-    записывает его в настройки. Вызывать это можно ровно один раз — за
-    однократностью следит `autostart_adopted` (см. `app/main.py`).
-    """
     return is_enabled()
 
 
 def needs_write(preference: bool, enabled: bool) -> bool:
-    """Трогать систему нужно только там, где она расходится с настройкой.
-
-    | настройка | автозапуск стоит | пишем |
-    |-----------|------------------|-------|
-    | True      | True             | нет   |
-    | True      | False            | True  |
-    | False     | True             | False |
-    | False     | False            | нет   |
-
-    Третья строка и есть починенный дефект: раньше вместо неё писалось `True`.
-    Первая и четвёртая важны отдельно — `set_autostart` при включении
-    пересоздаёт ярлык, а при выключении сносит и ярлык, и ключ реестра;
-    лишний вызов на каждом запуске трогал бы «Автозагрузку» впустую.
-    """
     return bool(preference) != bool(enabled)
 
 
 def sync(preference: bool) -> bool:
-    """Привести систему в соответствие с настройкой — и только с ней.
-
-    Раньше здесь стояло `preference or is_enabled()`, то есть любой ключ
-    `Centurio` в `HKCU\\Run` — оставшийся от прежней установки, от другой
-    сборки, от чего угодно — молча включал автозапуск обратно, а `app/main.py`
-    следом переписывал этим настройку пользователя. Выключить автозапуск было
-    нельзя в принципе.
-    """
     if os.name != "nt":
         return bool(preference)
     preference = bool(preference)

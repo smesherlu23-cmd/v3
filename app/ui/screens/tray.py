@@ -5,9 +5,6 @@ from ...core.text import plu_apps
 
 
 def tray_items(store) -> list[dict]:
-    # Ровно та же раскладка, что и биндится: `resolve_accels` резервирует
-    # клавишу вызова Centurio, и без неё меню трея показывало приложениям
-    # клавиши на одну позицию раньше, чем они срабатывали на самом деле.
     from ...core.hotkeys import resolve_accels
     from ...core.store import DEFAULT_LAUNCH_HOTKEY
     state = store.state()

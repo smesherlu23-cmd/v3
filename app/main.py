@@ -27,13 +27,7 @@ from app.ui import images
 from app.ui.app import CenturioUI
 from app.ui.iconify import ensure_icons, tray_icon_path
 
-# В собранном `flet build windows` .exe исходники запакованы не как обычные
-# файлы на диске (Flutter-приложение с внедрённым интерпретатором), и
-# `__file__`-путь до реальной папки assets внутри установленного приложения
-# не ведёт — вместо неё Flet сам публикует переменную окружения
-# `FLET_ASSETS_DIR` с абсолютным путём до распакованных ассетов именно для
-# такого кода. Без этого при первом же обращении к иконкам (`ensure_icons`)
-# приложение падало сразу при запуске, до появления окна.
+
 _DEV_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 ASSETS_DIR = Path(os.environ.get("FLET_ASSETS_DIR") or _DEV_ASSETS_DIR).resolve()
 GEOMETRY_FLUSH_DELAY = 0.5
@@ -61,10 +55,6 @@ def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=
 
 
 def main(page: ft.Page):
-    # Лог поднимается до Store: карантин битого файла данных и отказ читать
-    # более новую схему случаются внутри Store.__init__, и до этой перестановки
-    # уходили в NullHandler — ровно те сообщения, ради которых лог и нужен.
-    # Каталог берётся из paths.data_dir() и от Store не зависит.
     log.setup(log_dir=paths.data_dir())
     store = Store()
     log.set_debug(bool(store.state()["settings"].get("debug_log")))
@@ -73,15 +63,8 @@ def main(page: ft.Page):
     try:
         ensure_icons(ASSETS_DIR)
     except OSError:
-        # Иконки уже лежат в собранном приложении — сюда попадают только при
-        # первом запуске из исходников без них. Если писать в ASSETS_DIR
-        # всё же нельзя (неожиданно доступная только на чтение сборка),
-        # это не повод не запускаться — просто останемся без иконки трея.
         log.exception("не удалось подготовить иконки")
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
-    # Картинки отдаются клиенту путём, а не строкой base64. В браузере такого
-    # пути нет — страница не может открыть файл на диске, — поэтому там
-    # включается кодирование.
     images.embed_images(is_web)
     start_hidden = "--hidden" in sys.argv
 
@@ -352,11 +335,6 @@ def main(page: ft.Page):
                 ui.refresh()
             if refresh:
                 store.set_setting("icon_schema", discovery.ICON_SCHEMA)
-            # Прибираться нужно и тому, кто добавил программы один раз и больше
-            # не сканирует: раньше `prune_icon_cache` звался только из «Проверить
-            # снова», то есть у такого пользователя значки, постеры и steam_*.jpg
-            # копились вечно. Удаляются только осиротевшие файлы старше двух
-            # недель, так что делать это на старте безопасно.
             discovery.prune_icon_cache(store, cache)
             ui.forget_icon_cache_size()
         except Exception:
@@ -366,10 +344,6 @@ def main(page: ft.Page):
     launcher.start_monitor()
 
     def _auto_rescan_loop():
-        # wait() вместо sleep(): на выходе `bg_stop` будит поток сразу, а не
-        # держит его в спячке до конца интервала. Раньше цикл был `while True`
-        # и shutdown его не знал — поток жил до самого os._exit и мог запустить
-        # пересканирование уже во время закрытия.
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
             try:
                 if store.state()["settings"].get("auto_rescan"):
@@ -381,9 +355,6 @@ def main(page: ft.Page):
     if not is_web:
         settings = store.state()["settings"]
         if not settings.get("autostart_adopted"):
-            # Первый запуск после установки: галочка инсталлятора живёт только
-            # как ярлык в «Автозагрузке», перенести её в настройки можно
-            # единственный раз. Дальше настройка — единственный источник правды.
             adopted = bool(settings.get("autostart")) or autostart.adopt_installer_choice()
             store.set_setting("autostart", adopted)
             store.set_setting("autostart_adopted", True)

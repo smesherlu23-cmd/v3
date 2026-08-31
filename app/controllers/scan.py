@@ -31,21 +31,9 @@ class ScanController:
         self._manual_found: list[dict] = []
 
     def _posters(self) -> bool:
-        """Настройка «Постеры для игр» — она же выключает походы в CDN Valve."""
         return bool(self.ui.setting("game_posters", True))
 
     def _steam_redirect(self, raw: str) -> dict | None:
-        """Данные для запуска через Steam, если `raw` — exe внутри его библиотеки.
-
-        Ручное добавление пути (поле «Или вставьте путь…», кнопка «Обзор»,
-        перепривязка сломанного пути) раньше сохраняло такой exe как есть и
-        запускало его напрямую, в обход клиента Steam. Само окно игры при
-        этом открывается, но для VAC-защищённых игр (CS2 и подобных)
-        сервер не видит сессии, которую Steam выдаёт только при запуске
-        через себя, — матчмейкинг отвечает «не удаётся подключиться к
-        серверу». `steam://rungameid/{appid}` — тот же путь, что даёт
-        автосканирование.
-        """
         appid = discovery.appid_for_exe(raw)
         if not appid:
             return None

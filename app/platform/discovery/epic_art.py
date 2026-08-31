@@ -8,9 +8,6 @@ import threading
 
 from ...infra import log
 
-# Публичный (без авторизации) каталог-сервис Epic — тот же, которым пользуются
-# Legendary и Heroic, раз собственного «магазина» у Centurio нет и обёрткой
-# над официальным лаунчером быть не выйдет.
 _CATALOG_HOST = "catalog-public-service-prod06.ol.epicgames.com"
 
 _CATALOG_TIMEOUT = 4
@@ -23,8 +20,6 @@ _ART_MAX_BYTES = 8 * 1024 * 1024
 
 _CDN_MAX_FAILURES = 3
 
-# Порядок предпочтения обложек в keyImages каталога: сперва вертикальные —
-# они ближе всего по пропорциям к плитке постера, — потом что найдётся.
 _PORTRAIT_TYPES = ("OfferImageTall", "DieselStoreFrontTall", "DieselGameBoxTall",
                    "Thumbnail", "OfferImageWide", "DieselStoreFrontWide")
 
@@ -112,7 +107,6 @@ _SAFE_ID = re.compile(r"[^A-Za-z0-9_-]+")
 
 def poster_for_ids(namespace: str | None, item_id: str | None,
                    icon_cache: str | None = None, posters: bool = True) -> str | None:
-    """Обложка по паре `CatalogNamespace`/`CatalogItemId` из манифеста Epic."""
     if not namespace or not item_id or not icon_cache:
         return None
     safe_id = _SAFE_ID.sub("_", item_id)
@@ -170,12 +164,6 @@ def _catalog_ids_for_app(app_name: str) -> tuple[str | None, str | None]:
 _APP_URI_RE = re.compile(r"com\.epicgames\.launcher://apps/([^?]+)")
 
 def poster_for(path: str, icon_cache: str | None = None, posters: bool = True) -> str | None:
-    """Обложка по launch-URI Epic — та же форма вызова, что у `steam_art.poster_for`.
-
-    В отличие от Steam, `AppName` в URI не несёт `CatalogNamespace`/`CatalogItemId`
-    напрямую, поэтому при отсутствии кэша на диске манифест перечитывается заново.
-    Для дозаполнения (`backfill_icons`), которое вызывается нечасто, это приемлемо.
-    """
     m = _APP_URI_RE.match(path or "")
     if not m:
         return None

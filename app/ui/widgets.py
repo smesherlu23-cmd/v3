@@ -17,13 +17,6 @@ def safe_update(control) -> None:
 
 
 def track_typing(field: ft.TextField, view, key: str) -> ft.TextField:
-    """Отметить поле как «здесь курсор», чтобы клавиши библиотеки молчали.
-
-    Обработчик клавиатуры в Flet висит на странице целиком и не знает, где
-    фокус, поэтому признак приходится вести вручную. Свои `on_focus`/`on_blur`
-    у поля сохраняются: инспектор и переименование набора сохраняют значение
-    именно по `on_blur`, и подменить его здесь означало бы потерять правку.
-    """
     prior_focus, prior_blur = field.on_focus, field.on_blur
 
     def on_focus(e):
@@ -51,12 +44,6 @@ def hoverable(container: ft.Container, normal, hover) -> ft.Container:
 
 def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE,
                 anim: int = C.ANIM_HOVER) -> ft.Container:
-    """Слегка приподнять контрол под курсором — тонкий отклик, не прыжок.
-
-    Композируется с уже назначенным `on_hover` (у кнопок он меняет цвет),
-    поэтому порядок навешивания не важен: сначала цвет через `hoverable`,
-    потом масштаб — или наоборот.
-    """
     container.animate_scale = ft.Animation(anim, ft.AnimationCurve.EASE_OUT)
     prior = container.on_hover
 
@@ -213,9 +200,6 @@ def icon_slot(app, size: int, radius: int, glyph: int | None = None,
     placeholder = ft.Icon(cat_icon(name), size=glyph or round(size * 0.46),
                           color=glyph_color or C.SLOT_GLYPH)
     inner = icon_image(app.get("icon"), width=size - 8, height=size - 8, fit=fit,
-                       # Файл существует, но не читается или битый — показываем
-                       # тот же значок-заглушку, что и при отсутствии иконки,
-                       # вместо пустого места в плитке.
                        error_content=placeholder)
     if inner is None:
         inner = placeholder

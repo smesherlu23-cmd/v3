@@ -48,7 +48,6 @@ def run(search: str | None = None) -> None:
               f"за {dt:.1f}s, код={code}")
         if stderr:
             print(f"  stderr: {stderr[:2000]}")
-        # Реестр и папку Programs теперь обходит Python, не PowerShell.
         reg = discovery.windows._registry_entries()
         local = discovery.windows._localapps_entries()
         print(f"Реестр (winreg): {len(reg)} записей; "

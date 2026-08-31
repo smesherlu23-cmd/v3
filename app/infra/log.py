@@ -60,14 +60,6 @@ def setup(debug: bool | None = None, log_dir: str | Path | None = None) -> loggi
 
 
 def set_debug(enabled: bool) -> None:
-    """Поднять подробность лога после того, как прочитаны настройки.
-
-    `setup()` вызывается до создания `Store`, иначе сообщения о карантине
-    битого файла данных и о несовместимой версии схемы уходят в `NullHandler`.
-    Но флаг `debug_log` лежит внутри этого же файла, поэтому уровень
-    приходится повышать вторым шагом. Понижать нечего: `--debug` и
-    `CENTURIO_DEBUG` уже учтены в `setup()`.
-    """
     if not enabled or _LOGGER.level == logging.DEBUG:
         return
     _LOGGER.setLevel(logging.DEBUG)

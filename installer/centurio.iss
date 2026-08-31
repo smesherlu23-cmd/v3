@@ -56,6 +56,11 @@ Name: "startup"; Description: "Запускать Centurio при входе в 
 
 [Files]
 Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Зашита прямо в CenturioSetup.exe, чтобы пользователю не пришлось отдельно
+; искать и ставить её самому — extract на диск (в {tmp}) только если её ещё
+; нет. skipifsourcedoesntexist — чтобы локальная сборка без интернета
+; (когда файл рядом не скачался) не ломала компиляцию .iss.
+Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: not VCRedistInstalled
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -63,4 +68,27 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--hidden"; Tasks: startup
 
 [Run]
+Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Устанавливаем компоненты Microsoft Visual C++..."; Check: ShouldRunVCRedist; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function VCRedistInstalled: Boolean;
+var
+  Installed: Cardinal;
+begin
+  // Ключ реестра общий для всей линейки VC++ 2015-2022 (ABI-совместимы,
+  // отсюда единая версия "14.0") — тот же, что проверяют официальные
+  // бутстрапперы Microsoft. Если он уже есть, ставить второй раз незачем
+  // и небезопасно: у пользователя может стоять версия новее той, что
+  // зашита в этот установщик, а /install её бы откатил назад.
+  Result := RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64',
+    'Installed', Installed) and (Installed = 1);
+end;
+
+function ShouldRunVCRedist: Boolean;
+begin
+  // Двойная проверка: не только «нужен ли редистрибутив», но и правда ли
+  // он лежит в {tmp} — Check у [Files] мог его туда не положить (сборка
+  // без интернета, см. skipifsourcedoesntexist выше).
+  Result := (not VCRedistInstalled) and FileExists(ExpandConstant('{tmp}\vc_redist.x64.exe'));
+end;

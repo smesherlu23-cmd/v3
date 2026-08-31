@@ -109,12 +109,6 @@ _STEAM_PORTRAIT_NAMES = ("library_600x900_2x.jpg", "library_600x900.jpg")
 
 def _steam_portrait(root: str, appid: str, icon_cache: str | None = None,
                     posters: bool = True) -> str | None:
-    """Обложка игры: сначала кэш самого Steam, потом — сеть.
-
-    `posters` отключает только поход в CDN. Файл, который Steam уже положил
-    на диск, бесплатен, и запомнить путь к нему стоит: пользователь может
-    включить постеры обратно, и они появятся без пересканирования.
-    """
     cache = os.path.join(root, "appcache", "librarycache")
     sub = os.path.join(cache, str(appid))
     for name in _STEAM_PORTRAIT_NAMES:

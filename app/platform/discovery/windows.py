@@ -89,8 +89,6 @@ def _is_windows_system(name: str, path: str) -> bool:
     return False
 
 
-# Каталоги, которые для Best-Exe не каталоги установки: искать в них .exe
-# бессмысленно и опасно (весь Program Files, весь Windows).
 _ROOTISH = frozenset((
     "", "\\", "c:\\", "c:\\program files", "c:\\program files (x86)",
     "c:\\windows", "c:\\users",
@@ -119,15 +117,6 @@ def _exes_in(directory: str, depth: int) -> list[str]:
 
 
 def _best_exe(directory: str | None, name: str) -> str | None:
-    """Самый подходящий .exe в каталоге установки под именем программы.
-
-    Портирует функцию Best-Exe из прежнего PowerShell-скрипта: у записи в
-    реестре обычно есть каталог, но не путь к исполняемому файлу. Крупнейший
-    .exe, чьё имя перекликается с названием программы; если совпадений нет —
-    просто крупнейший. Реестр и localapps теперь обходятся здесь, на Python,
-    а не в скрытом процессе PowerShell — перебор Uninstall/App Paths это один
-    из recon-признаков, по которым антивирусы придираются к Centurio.
-    """
     if not directory:
         return None
     d = directory.strip().strip('"').rstrip("\\")
@@ -153,7 +142,6 @@ def _best_exe(directory: str | None, name: str) -> str | None:
 
 
 def _registry_app(display_name, display_icon, install_location) -> dict | None:
-    """Запись реестра → карточка программы (или None, если exe не нашёлся)."""
     name = (display_name or "").strip()
     if not name:
         return None
@@ -180,12 +168,6 @@ _APP_PATHS_KEYS = (
 
 
 def _registry_entries() -> list[dict]:
-    """Программы из Uninstall и App Paths — напрямую через winreg.
-
-    То же, что делал раздел `$uks`/`$aps` старого PowerShell-скрипта, только
-    без запуска powershell.exe. `winreg` уже используется в `autostart.py` и
-    `steam_paths.py`, так что это штатный путь, а не новая зависимость.
-    """
     try:
         import winreg
     except Exception:
@@ -241,7 +223,7 @@ def _registry_entries() -> list[dict]:
                     except OSError:
                         continue
                     with child:
-                        exe = _val(child, "")  # значение по умолчанию — путь к exe
+                        exe = _val(child, "")  
                     if not isinstance(exe, str):
                         continue
                     exe = exe.strip().strip('"')
@@ -260,7 +242,6 @@ def _subkey_count(winreg, key) -> int:
 
 
 def _localapps_entries() -> list[dict]:
-    """Программы из %LOCALAPPDATA%\\Programs — обход папок, без PowerShell."""
     local = os.environ.get("LOCALAPPDATA")
     base = os.path.join(local, "Programs") if local else ""
     if not base or not os.path.isdir(base):
@@ -281,13 +262,7 @@ def _localapps_entries() -> list[dict]:
             out.append({"name": entry.name, "path": exe, "icon": None, "src": "localapps"})
     return out
 
-# Здесь больше нет ни `Add-Type -TypeDefinition`, ни `DllImport`: значки из
-# exe достаёт `platform/win_icons.py` тем же `PrivateExtractIcons`, только из
-# Python через ctypes. Компиляция C# в рантайме с P/Invoke — классика
-# offensive tooling, попадающая под AMSI, и один из самых тяжёлых признаков,
-# по которым антивирусы принимают Centurio за infostealer. За PowerShell
-# осталось то, для чего он действительно нужен: ярлыки меню «Пуск», реестр и
-# Get-AppxPackage.
+
 _PS_PRELUDE = r'''
 $ErrorActionPreference='SilentlyContinue'
 try{[Console]::OutputEncoding=[System.Text.Encoding]::UTF8}catch{}
@@ -296,9 +271,6 @@ $cache=__CACHE__
 function Md5($s){ $m=[System.Security.Cryptography.MD5]::Create(); (($m.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($s.ToLower())))|ForEach-Object{$_.ToString('x2')}) -join '' }
 '''
 
-# Запасной путь для одиночного файла — только штатная сборка System.Drawing,
-# без компиляции чего-либо. Иконка выйдет мельче, чем даёт PrivateExtractIcons,
-# но сюда попадают лишь случаи, когда ctypes-извлечение не отработало.
 _PS_FALLBACK_ICON = r'''
 Add-Type -AssemblyName System.Drawing
 function Save-Icon($exe){
@@ -401,9 +373,6 @@ function Add-Store($n,$id){
   [void]$out.Add([PSCustomObject]@{name="$n";path="shell:AppsFolder\$id";icon=$r.icon;src='store';icon_err=$r.err})
 }
 
-# Реестр (Uninstall, App Paths) и %LOCALAPPDATA%\Programs обходит Python —
-# см. _registry_entries/_localapps_entries. Здесь остаётся только то, чему
-# нет чистого нативного пути: ярлыки меню «Пуск» и Store через Get-StartApps.
 $menus=@(__DIRS__)
 foreach($d in $menus){
   Get-ChildItem -LiteralPath $d -Recurse -Filter *.lnk 2>$null | ForEach-Object {
@@ -448,15 +417,6 @@ if($r.icon){ Write-Output $r.icon }
 _STORE_PATH_RE = re.compile(r"^shell:appsfolder\\([^!]+)(?:!(.*))?$", re.IGNORECASE)
 
 def _powershell_exe() -> str:
-    """Полный путь к powershell.exe, а не имя для поиска по PATH.
-
-    Имя резолвится через PATH, и если раньше системного каталога там стоит
-    директория, куда пишет непривилегированный процесс (типовая ошибка
-    установки инструментов разработчика), подменяется исполняемый файл.
-
-    32-битный процесс на 64-битной Windows видит System32 через
-    файловую перенаправку как SysWOW64, поэтому для него нужен `Sysnative`.
-    """
     if os.name != "nt":
         return "powershell"
     windir = os.environ.get("windir") or r"C:\Windows"
@@ -540,12 +500,6 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
         log.warning("обнаружение программ Windows: пустой вывод PowerShell "
                    "(код %s): %s", code, stderr[:2000])
 
-    # Реестр и папку Programs обходим на Python (winreg + файловая система),
-    # а не внутри PowerShell: перебор Uninstall/App Paths — recon-признак,
-    # по которому эвристики антивирусов придираются к скрытому процессу. За
-    # PowerShell осталось лишь то, чему нет чистого нативного пути: ярлыки
-    # меню «Пуск» и Store-приложения (Get-StartApps/Get-AppxPackage). Всё
-    # сливается и дедуплицируется по пути в discovery.__init__._dedupe.
     if os.name == "nt":
         data = list(data) + _registry_entries() + _localapps_entries()
 
@@ -561,10 +515,6 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
             if icon:
                 trim_transparent_padding(icon)
         elif icon_cache and not icon:
-            # Значки достаются здесь, а не внутри PowerShell. Помимо ухода от
-            # компиляции C# в рантайме это ещё и меньше работы: до сюда
-            # доходят только записи, пережившие отсев мусора, а скрипт
-            # извлекал иконку каждой найденной, включая выброшенные следом.
             icon = _win_extract_one(path, icon_cache)
         apps.append({"name": name, "path": path, "icon": icon,
                      "icon_fit": "contain", "source": src,
@@ -572,15 +522,6 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
     return apps
 
 def _win_extract_one(path: str, icon_cache: str) -> str | None:
-    """Иконка одного файла.
-
-    Через этот вызов идут все одиночные извлечения — Epic, Steam и
-    дозаполнение значков, — и раньше каждое поднимало свой процесс PowerShell.
-    Холодный старт PowerShell 0.3–1.5 с, так что библиотека из 50 игр без кэша
-    давала минуту фоновой работы и 50 порождённых процессов. Теперь тот же
-    `PrivateExtractIcons` зовётся из Python через `ctypes`; PowerShell остаётся
-    запасным путём на случай, если Win32 или Pillow почему-то не отработали.
-    """
     if not path or not icon_cache:
         return None
     out = win_icons.cache_path(path, icon_cache)

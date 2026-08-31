@@ -15,14 +15,6 @@ _DETACHED_PROCESS = 0x00000008
 
 
 def explorer_exe() -> str:
-    """Полный путь к проводнику, а не имя для поиска по PATH.
-
-    Имя резолвится через PATH: если раньше системного каталога там стоит
-    директория, куда пишет непривилегированный процесс, подменяется
-    исполняемый файл. `explorer.exe` лежит в корне каталога Windows, а не в
-    System32, поэтому файловая перенаправка 32-битных процессов его не
-    задевает и `Sysnative` не нужен.
-    """
     if os.name != "nt":
         return "explorer"
     candidate = os.path.join(os.environ.get("windir") or r"C:\Windows", "explorer.exe")

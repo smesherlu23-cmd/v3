@@ -6,10 +6,7 @@ from typing import NamedTuple
 
 from ..infra import log
 
-# Модификаторы для RegisterHotKey (winuser.h). Раньше здесь были строки
-# формата pynput («<ctrl>»); теперь горячие клавиши регистрируются
-# документированным Win32-вызовом, а не глобальным низкоуровневым хуком, —
-# см. комментарий у HotkeyManager.
+
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
@@ -17,7 +14,7 @@ MOD_WIN = 0x0008
 MOD_NOREPEAT = 0x4000
 
 WM_HOTKEY = 0x0312
-_WM_STOP = 0x0400 + 1  # WM_USER+1 — сигнал потоку завершить цикл сообщений
+_WM_STOP = 0x0400 + 1  
 
 _MOD_FLAGS = {"ctrl": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT, "win": MOD_WIN}
 
@@ -32,8 +29,6 @@ _KEY_ALIASES = {
     "break": "pause",
 }
 
-# Имя клавиши → виртуальный код Windows (winuser.h). Буквы и цифры кода не
-# требуют — их даёт ord() в _key_vk. Всё остальное перечислено здесь.
 _VK = {
     "space": 0x20, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
     "backspace": 0x08, "delete": 0x2E, "insert": 0x2D,
@@ -44,10 +39,8 @@ _VK = {
     "media_next": 0xB0, "media_previous": 0xB1, "media_play_pause": 0xB3,
     "media_volume_mute": 0xAD, "media_volume_down": 0xAE, "media_volume_up": 0xAF,
 }
-_VK.update({f"f{n}": 0x6F + n for n in range(1, 25)})  # F1=0x70 … F24=0x87
+_VK.update({f"f{n}": 0x6F + n for n in range(1, 25)})  
 
-# Клавиши, которые можно назначить без модификатора: их VK нельзя спутать
-# с обычным набором текста.
 _NAMED_KEYS = frozenset(_VK)
 _STANDALONE_KEYS = {
     "pause", "print_screen", "scroll_lock",
@@ -73,12 +66,6 @@ def _key_vk(key: str) -> int | None:
 
 
 def to_win_hotkey(accel: str) -> tuple[int, int] | None:
-    """(битовая маска модификаторов, виртуальный код) для RegisterHotKey.
-
-    None — если комбинацию нельзя выразить: неизвестная клавиша или
-    неизвестный модификатор. Возвращённую пару можно передавать в
-    `RegisterHotKey(hwnd, id, mods, vk)` напрямую.
-    """
     mods, key = split_accel(accel)
     if not key:
         return None
@@ -167,19 +154,6 @@ class _Binding(NamedTuple):
 
 
 class HotkeyManager:
-    """Глобальные горячие клавиши через `RegisterHotKey`, а не хук клавиатуры.
-
-    Прежняя реализация поднимала `pynput.keyboard.GlobalHotKeys`, а это на
-    Windows — `SetWindowsHookEx(WH_KEYBOARD_LL)`: низкоуровневый хук, которому
-    ОС отдаёт *каждое* нажатие в системе. Ровно по этому признаку эвристики
-    антивирусов опознают кейлоггер, и неподписанный Centurio ловил детект.
-
-    `RegisterHotKey` — документированный путь для глобальных комбинаций: ОС
-    присылает `WM_HOTKEY` только для тех сочетаний, что мы зарегистрировали,
-    и ни к каким другим нажатиям доступа у процесса нет. Функция требует
-    поток с циклом сообщений; он поднимается в `_run` и живёт, пока
-    `register` не сменит набор или `stop` не завершит его.
-    """
 
     def __init__(self, on_trigger):
         self.on_trigger = on_trigger
@@ -191,13 +165,6 @@ class HotkeyManager:
         self._lock = threading.Lock()
 
     def _build_mapping(self, bindings):
-        """id горячей клавиши → _Binding. Отсеивает нераспознанные и дубли.
-
-        Чистая функция без обращения к системе, поэтому проверяется
-        напрямую, без реального цикла сообщений. Наполняет `self.bound`
-        всеми разобранными комбинациями; после регистрации `register`
-        оставляет в нём только те, что система действительно приняла.
-        """
         mapping: dict[int, _Binding] = {}
         seen: dict[tuple[int, int], int] = {}
         rejected: list[str] = []
@@ -227,8 +194,6 @@ class HotkeyManager:
         self.stop()
         mapping, self.rejected = self._build_mapping(bindings)
         if not mapping or os.name != "nt":
-            # На не-Windows глобальных клавиш нет: их берёт на себя
-            # внутренний обработчик окна (см. `handles`).
             self.available = False
             self.bound = set()
             return False
@@ -357,14 +322,6 @@ def quick_bindings(apps, reserved=()) -> list[tuple[str, str]]:
 
 
 def free_quick_slot(apps, reserved=()) -> int:
-    """Номер первого свободного быстрого слота; 0 — свободных не осталось.
-
-    `reserved` обязателен так же, как и в `quick_accels`: реально биндится
-    результат `resolve_accels`, который резервирует клавишу вызова самого
-    Centurio. Без него подсказка пустой плитки предлагала слот, уже занятый
-    соседним приложением. Сами зарезервированные комбинации тоже считаются
-    занятыми — клавишей вызова вполне может оказаться `Ctrl+1`.
-    """
     taken = set()
     for accel in list(quick_accels(apps, reserved).values()) + [a for a in reserved if a]:
         mods, key = split_accel(accel)

@@ -102,6 +102,20 @@ try {
         return
     }
 
+    Step "VC++ Redistributable"
+    $vcredist = "installer\vc_redist.x64.exe"
+    if (-not (Test-Path $vcredist)) {
+        try {
+            Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $vcredist
+        }
+        catch {
+            # Не критично: installer\centurio.iss сам пропустит файл, которого
+            # нет (skipifsourcedoesntexist) — просто предупредим, что этот
+            # конкретный CenturioSetup.exe его не понесёт с собой.
+            Write-Warning "не удалось скачать VC++ Redistributable — установщик соберётся без него"
+        }
+    }
+
     Step "сборка установщика"
     Run "ISCC" { & $iscc installer\centurio.iss }
 

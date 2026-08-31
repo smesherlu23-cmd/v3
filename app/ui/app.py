@@ -157,13 +157,9 @@ class CenturioUI:
         return self._settings.get(key, default)
 
     def launch_hotkey(self) -> str:
-        """Клавиша вызова Centurio — она же зарезервирована от быстрых слотов."""
         return self.setting("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
 
     def _accent(self):
-        # Акцент задаётся произвольным цветом (ползунки/HEX), поэтому на входе
-        # он может оказаться чем угодно — прогоняем через parse_hex, чтобы в
-        # bgcolor/border никогда не ушла мусорная строка.
         return C.parse_hex(self._settings.get("accent")) or C.ACCENT
 
     def rail(self) -> dict:
@@ -232,9 +228,6 @@ class CenturioUI:
                          self.menu.control, self.toast.control], expand=True)
         self.page.add(root)
         self.refresh()
-        # Store.__init__ мог записать файл раньше, чем появился интерфейс
-        # (миграция ui_defaults), — тогда on_error ещё не был назначен и об
-        # ошибке никто не узнал. Догоняем её здесь.
         if self.store.write_error:
             self._on_store_error(self.store.write_error)
         if self.store.newer_version:
@@ -483,13 +476,6 @@ class CenturioUI:
         return True
 
     def clear_search(self):
-        """Опустошить поле поиска.
-
-        Публичная точка для контроллеров: раньше `SetsController` лез прямо в
-        виджет — `ui.search_field.value = ""`, — то есть слой сценариев
-        дёргал контрол Flet. Теперь он зовёт этот метод, а поле остаётся
-        деталью интерфейса.
-        """
         self.search_field.value = ""
 
     def _open_palette(self):
@@ -1025,12 +1011,6 @@ class CenturioUI:
         self.refresh()
 
     def set_settings(self, pairs: dict) -> None:
-        """Записать несколько настроек разом — один файл на диск, один refresh().
-
-        Нужно пресетам темы: акцент, тон фона и контраст меняются одним
-        кликом, и через `set_setting` по одной это было бы три записи на
-        диск и три перестройки экрана подряд.
-        """
         items = list(pairs.items())
         for i, (key, value) in enumerate(items):
             self.store.set_setting(key, value, persist=(i == len(items) - 1))
@@ -1136,13 +1116,6 @@ class CenturioUI:
             self.toast.error(res.get("error", "Папка не найдена"))
 
     def icon_cache_size(self) -> int:
-        """Размер кэша значков — пересчитывается не чаще раза в полминуты.
-
-        Обход каталога со `stat` на каждый файл вызывается из отрисовки вкладки
-        «Библиотека», то есть на каждое нажатие любого переключателя на ней.
-        При нескольких тысячах файлов это заметная задержка на ровном месте, а
-        цифра при этом справочная и на секунду устареть может.
-        """
         now = time.monotonic()
         if self._icon_size_at and now - self._icon_size_at <= ICON_SIZE_TTL:
             return self._icon_size
@@ -1157,7 +1130,6 @@ class CenturioUI:
         return total
 
     def forget_icon_cache_size(self) -> None:
-        """Сбросить кэш цифры — после того, как каталог заведомо изменился."""
         self._icon_size_at = 0.0
 
     def clear_icon_cache(self):

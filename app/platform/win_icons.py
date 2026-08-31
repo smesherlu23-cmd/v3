@@ -1,18 +1,3 @@
-"""Извлечение иконки из exe/dll напрямую через Win32, без PowerShell.
-
-Раньше это делал PowerShell: скрытый процесс, внутри которого
-`Add-Type -TypeDefinition` компилировал в рантайме C# с `DllImport("user32")`.
-У такой связки две беды. Первая — цена: холодный старт PowerShell 0.3–1.5 с,
-а процесс запускался по одному на файл, то есть библиотека из 50 игр без кэша
-значков давала минуту фоновой работы и 50 порождённых процессов. Вторая —
-репутация: скрытый PowerShell плюс компиляция C# с P/Invoke в рантайме это
-классика offensive tooling, попадающая под AMSI, и два самых тяжёлых признака
-из тех, по которым антивирусы принимают Centurio за infostealer.
-
-Здесь то же самое делается тем же `PrivateExtractIcons`, только вызванным из
-Python через `ctypes` — ровно так, как в `platform/windows.py` уже вызывается
-`user32` для работы с окнами. Ни процесса, ни компиляции, ни AMSI.
-"""
 from __future__ import annotations
 
 import ctypes
@@ -60,16 +45,10 @@ class _ICONINFO(ctypes.Structure):
 
 
 def available() -> bool:
-    """Есть ли вообще Win32 под рукой — на других системах модуль молчит."""
     return os.name == "nt"
 
 
 def cache_path(exe: str, icon_cache: str, size: int = DEFAULT_SIZE) -> str:
-    """Имя файла в кэше значков — то же, что складывал PowerShell.
-
-    Совпадение обязательно: уже накопленный у пользователя кэш должен
-    подхватиться как есть, без повторного извлечения всей библиотеки.
-    """
     digest = hashlib.md5(str(exe).lower().encode("utf-8"), usedforsecurity=False).hexdigest()
     return os.path.join(icon_cache, f"{digest}_{size}.png")
 
@@ -105,9 +84,6 @@ def _dlls():
         ctypes.c_void_p, ctypes.POINTER(_BITMAPINFO), wintypes.UINT,
     ]
     gdi32.GetDIBits.restype = ctypes.c_int
-    # Типы обязательны и для «очевидных» функций: без argtypes ctypes считает
-    # целочисленный аргумент 32-битным int, а дескриптор GDI на 64-битной
-    # Windows в него не влезает — вызов падает с OverflowError.
     gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
     gdi32.SelectObject.restype = wintypes.HGDIOBJ
     gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
@@ -121,7 +97,7 @@ def _header(size: int) -> _BITMAPINFO:
     info = _BITMAPINFO()
     info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
     info.bmiHeader.biWidth = size
-    info.bmiHeader.biHeight = -size   # сверху вниз, иначе картинка выйдет вверх ногами
+    info.bmiHeader.biHeight = -size   
     info.bmiHeader.biPlanes = 1
     info.bmiHeader.biBitCount = 32
     info.bmiHeader.biCompression = _BI_RGB
@@ -129,10 +105,6 @@ def _header(size: int) -> _BITMAPINFO:
 
 
 def _mask_alpha(user32, gdi32, hicon, size: int) -> bytes | None:
-    """Альфа из AND-маски — для старых иконок без собственного альфа-канала.
-
-    В маске единица означает «прозрачно», поэтому непрозрачны как раз нули.
-    """
     info = _ICONINFO()
     if not user32.GetIconInfo(hicon, ctypes.byref(info)):
         return None
@@ -158,7 +130,6 @@ def _mask_alpha(user32, gdi32, hicon, size: int) -> bytes | None:
 
 
 def _render(user32, gdi32, hicon, size: int):
-    """HICON → изображение Pillow в RGBA или None."""
     from PIL import Image
 
     header = _header(size)
@@ -179,8 +150,6 @@ def _render(user32, gdi32, hicon, size: int):
             return None
         raw = ctypes.string_at(bits, size * size * 4)
     finally:
-        # Вернуть прежний объект в DC до удаления: выбранную в контекст
-        # картинку GDI удалить не даст, и она осталась бы утечкой.
         if prior:
             gdi32.SelectObject(dc, prior)
         if dib:
@@ -189,8 +158,6 @@ def _render(user32, gdi32, hicon, size: int):
 
     image = Image.frombuffer("RGBA", (size, size), raw, "raw", "BGRA", 0, 1)
     if image.getchannel("A").getbbox() is None:
-        # Иконка без собственной альфы: DrawIconEx оставил канал нулевым, и
-        # картинка вышла целиком прозрачной. Берём альфу из AND-маски.
         alpha = _mask_alpha(user32, gdi32, hicon, size)
         if alpha is None:
             return None
@@ -199,7 +166,6 @@ def _render(user32, gdi32, hicon, size: int):
 
 
 def extract_png(exe: str, out_path: str, size: int = DEFAULT_SIZE) -> bool:
-    """Сохранить иконку `exe` в PNG. False — не вышло, зовите запасной путь."""
     if not available() or not exe or not os.path.exists(exe):
         return False
     try:
