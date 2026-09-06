@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 import flet as ft
@@ -53,16 +54,70 @@ def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=
             log.exception("%s on quit failed", label)
 
 
+def _report_startup_failure() -> None:
+    """Показать, почему программа не запустилась.
+
+    Собранный `Centurio.exe` — оконный, консоли у него нет, и трассировка из
+    Flet уходит в никуда. Без этого окна сбой старта выглядит снаружи как
+    «exe вылетает сразу», без единой зацепки.
+    """
+    detail = traceback.format_exc(limit=8).strip()
+    text = ("Centurio не смог запуститься.\n\n"
+            f"{detail}\n\n"
+            f"Подробности: {paths.data_dir() / 'centurio.log'}")
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text[:1800], "Centurio", 0x10)
+    except Exception:
+        print(text, file=sys.stderr)
+
+
+def _optional(label: str, step) -> bool:
+    """Необязательный шаг запуска: сбой записываем, но окно всё равно открываем.
+
+    Centurio — панель запуска. Ни трей, ни глобальные клавиши, ни монитор
+    процессов не стоят того, чтобы из-за них программа не открылась вовсе:
+    окно без трея нужнее, чем «exe вылетает сразу». Обязательные шаги (Store,
+    сборка интерфейса, mount) намеренно не заворачиваются — без них показывать
+    нечего, и о таком сбое сообщает `main()`.
+    """
+    try:
+        step()
+        return True
+    except Exception:
+        log.exception("шаг запуска «%s» не удался — продолжаю без него", label)
+        return False
+
+
 def main(page: ft.Page):
+    """Точка входа Flet: собрать окно, а при сбое — не умереть молча.
+
+    Исключение отсюда раньше уходило в Flet, процесс закрывался, и в логе не
+    оставалось ничего: уровень по умолчанию — WARNING, а до `log.setup()`
+    сообщений нет вовсе.
+    """
+    try:
+        _start(page)
+    except Exception:
+        try:
+            # Идемпотентно: если лог уже поднят, вернёт тот же логгер, а если
+            # упали до его настройки — настроит сейчас, чтобы запись дошла.
+            log.setup(log_dir=paths.data_dir())
+        except Exception:
+            pass
+        log.exception("не удалось запустить Centurio")
+        _report_startup_failure()
+        raise
+
+
+def _start(page: ft.Page):
     log.setup(log_dir=paths.data_dir())
     store = Store()
     log.set_debug(bool(store.state()["settings"].get("debug_log")))
     log.debug("Centurio starting (argv=%s)", sys.argv)
 
-    try:
-        ensure_icons(ASSETS_DIR)
-    except OSError:
-        log.exception("не удалось подготовить иконки")
+    _optional("подготовка значков", lambda: ensure_icons(ASSETS_DIR))
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
     images.embed_images(is_web)
     start_hidden = "--hidden" in sys.argv
@@ -339,8 +394,11 @@ def main(page: ft.Page):
         except Exception:
             log.exception("сбой при заполнении значков")
     threading.Thread(target=_backfill, daemon=True).start()
-    refresh_runtime()
-    launcher.start_monitor()
+    # Регистрация глобальных клавиш идёт через Win32 (RegisterHotKey) и трогает
+    # трей — оба места платформенные и на чужой машине могут повести себя как
+    # угодно. Без них панель остаётся рабочей мышью и внутренними клавишами.
+    _optional("горячие клавиши и трей", refresh_runtime)
+    _optional("монитор запущенных программ", launcher.start_monitor)
 
     def _auto_rescan_loop():
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
@@ -352,16 +410,25 @@ def main(page: ft.Page):
     threading.Thread(target=_auto_rescan_loop, daemon=True).start()
 
     if not is_web:
-        settings = store.state()["settings"]
-        if not settings.get("autostart_adopted"):
-            adopted = bool(settings.get("autostart")) or autostart.adopt_installer_choice()
-            store.set_setting("autostart", adopted)
-            store.set_setting("autostart_adopted", True)
-            ui.refresh()
-        autostart.sync(bool(store.state()["settings"].get("autostart", False)))
-        tray.start()
+        def _adopt_autostart():
+            settings = store.state()["settings"]
+            if not settings.get("autostart_adopted"):
+                adopted = (bool(settings.get("autostart"))
+                           or autostart.adopt_installer_choice())
+                store.set_setting("autostart", adopted)
+                store.set_setting("autostart_adopted", True)
+                ui.refresh()
+            autostart.sync(bool(store.state()["settings"].get("autostart", False)))
+
+        _optional("автозапуск", _adopt_autostart)
+        _optional("значок в трее", tray.start)
         if start_hidden:
-            hide_window()
+            # Прятаться в трей можно только если трей действительно поднялся:
+            # иначе окно исчезнет, а вернуть его будет нечем.
+            if tray.available:
+                hide_window()
+            else:
+                log.warning("трея нет — открываю окно, несмотря на --hidden")
 
 
 def _ordered_sets(state) -> list[dict]:
