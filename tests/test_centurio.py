@@ -3169,6 +3169,31 @@ def _drop_log_handlers(_log):
     logging.getLogger("centurio").handlers = []
 
 
+def _run_bounded(fn, seconds=20.0):
+    """Выполнить fn на отдельном потоке → (успело ли, с каким исключением).
+
+    Запуск `main()` трогает платформу, и любое зависание там обязано стать
+    красным тестом за секунды, а не молчаливо висящей сборкой: модальное окно
+    из `_report_startup_failure` однажды уже держало windows-раннер три часа
+    вместо двадцати секунд. Тот же приём, что и в `_completes`.
+    """
+    import threading
+
+    box = {}
+    done = threading.Event()
+
+    def run():
+        try:
+            fn()
+        except BaseException as exc:      # noqa: BLE001 — донесём наружу как есть
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    return done.wait(seconds), box.get("exc")
+
+
 def test_startup_failure_is_reported_not_silent():
     """Сбой старта обязан оставить трассировку, а не убить окно молча.
 
@@ -3191,16 +3216,18 @@ def test_startup_failure_is_reported_not_silent():
         prev = os.environ.get("APPDATA")
         os.environ["APPDATA"] = d
         real_ui = main_mod.CenturioUI
+        real_report = main_mod._report_startup_failure
         try:
             def boom(*a, **kw):
                 raise RuntimeError("сбой сборки интерфейса")
             main_mod.CenturioUI = boom
+            # `_report_startup_failure` показывает модальное окно MessageBoxW.
+            # На раннере его некому закрыть, и шаг Test висел часами вместо
+            # секунд. Проверяем здесь запись в лог, а не саму отрисовку окна.
+            main_mod._report_startup_failure = lambda: None
 
-            raised = None
-            try:
-                main_mod.main(_FakePage())
-            except Exception as exc:
-                raised = exc
+            finished, raised = _run_bounded(lambda: main_mod.main(_FakePage()))
+            ok(finished, "startup returns instead of hanging")
             ok(isinstance(raised, RuntimeError),
                f"the failure is re-raised, not swallowed into a dead window ({raised!r})")
 
@@ -3214,6 +3241,7 @@ def test_startup_failure_is_reported_not_silent():
                "and names the actual cause, not just 'failed to start'")
         finally:
             main_mod.CenturioUI = real_ui
+            main_mod._report_startup_failure = real_report
             _drop_log_handlers(_log)
             if prev is None:
                 os.environ.pop("APPDATA", None)
@@ -3247,7 +3275,8 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
         raise OSError("симулированный отказ платформы")
 
     saved = (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register)
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             main_mod._report_startup_failure)
     with tempfile.TemporaryDirectory() as d:
         prev = os.environ.get("APPDATA")
         os.environ["APPDATA"] = d
@@ -3256,12 +3285,12 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
             tr_mod.TrayController.start = boom
             la_mod.Launcher.start_monitor = boom
             hk_mod.HotkeyManager.register = boom
+            # Страховка: если старт всё же упадёт, модальное окно не должно
+            # подвесить прогон — см. _run_bounded.
+            main_mod._report_startup_failure = lambda: None
 
-            raised = None
-            try:
-                main_mod.main(_FakePage())
-            except Exception as exc:
-                raised = exc
+            finished, raised = _run_bounded(lambda: main_mod.main(_FakePage()))
+            ok(finished, "startup returns instead of hanging")
             ok(raised is None,
                f"the window still opens when every optional step fails ({raised!r})")
 
@@ -3275,7 +3304,8 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
                f"and each skipped step is written down, not swallowed ({len(degraded)})")
         finally:
             (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register) = saved
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             main_mod._report_startup_failure) = saved
             _drop_log_handlers(_log)
             if prev is None:
                 os.environ.pop("APPDATA", None)
