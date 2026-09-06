@@ -145,6 +145,40 @@ TOGGLE_LAUNCH = "__centurio_toggle_launch__"
 SET_PREFIX = "set:"
 
 
+def _win32():
+    """Типизированные user32/kernel32 для горячих клавиш.
+
+    Типы обязательны и для «очевидных» функций: без `argtypes` ctypes считает
+    целочисленный аргумент 32-битным `int`, а `WPARAM`/`LPARAM` на 64-битной
+    Windows шире; без `restype` возврат считается знаковым, и
+    `GetCurrentThreadId` для идентификатора больше 2^31 отдавал бы
+    отрицательное число — `PostThreadMessageW` тогда будит не тот поток, и
+    выход виснет на join. На этом же уже спотыкались вызовы GDI, см.
+    `platform/win_icons.py`.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int,
+                                      wintypes.UINT, wintypes.UINT]
+    user32.RegisterHotKey.restype = wintypes.BOOL
+    user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.UnregisterHotKey.restype = wintypes.BOOL
+    user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                   wintypes.UINT, wintypes.UINT]
+    user32.GetMessageW.restype = ctypes.c_int
+    user32.PostThreadMessageW.argtypes = [wintypes.DWORD, wintypes.UINT,
+                                          wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostThreadMessageW.restype = wintypes.BOOL
+    kernel32.GetCurrentThreadId.argtypes = []
+    kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+
+    return ctypes, wintypes, user32, kernel32
+
+
 class _Binding(NamedTuple):
     target: str
     accel: str
@@ -215,10 +249,7 @@ class HotkeyManager:
 
     def _run(self, mapping, started, os_rejected, registered):
         try:
-            import ctypes
-            from ctypes import wintypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
+            ctypes, wintypes, user32, kernel32 = _win32()
         except Exception:
             log.exception("ctypes unavailable for global hotkeys")
             started.set()
@@ -277,8 +308,8 @@ class HotkeyManager:
             self._thread_id = 0
         if thread is not None and thread_id:
             try:
-                import ctypes
-                ctypes.windll.user32.PostThreadMessageW(thread_id, _WM_STOP, 0, 0)
+                _, _, user32, _ = _win32()
+                user32.PostThreadMessageW(thread_id, _WM_STOP, 0, 0)
             except Exception:
                 log.exception("failed to signal the hotkey thread to stop")
             thread.join(2.0)

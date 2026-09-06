@@ -3150,6 +3150,139 @@ def test_log():
                 _log._LOGGER.removeHandler(h)
 
 
+def _reset_centurio_log():
+    import importlib
+    import logging
+
+    from app.infra import log as _log
+    importlib.reload(_log)
+    logging.getLogger("centurio").handlers = []
+    return _log
+
+
+def _drop_log_handlers(_log):
+    import logging
+
+    for h in list(_log._LOGGER.handlers):
+        h.close()
+        _log._LOGGER.removeHandler(h)
+    logging.getLogger("centurio").handlers = []
+
+
+def test_startup_failure_is_reported_not_silent():
+    """Сбой старта обязан оставить трассировку, а не убить окно молча.
+
+    Собранный `Centurio.exe` — оконный: консоли нет, и исключение из `main()`
+    уходило в Flet бесследно. Уровень лога по умолчанию — WARNING, поэтому в
+    файле тоже не оставалось ничего. Снаружи это выглядело как «exe вылетает
+    сразу», без единой зацепки, и причину нельзя было даже назвать.
+    """
+    import importlib
+
+    _log = _reset_centurio_log()
+    try:
+        from app import main as main_mod
+    except Exception as exc:
+        skip("startup guard test", exc)
+        return
+    importlib.reload(main_mod)
+
+    with tempfile.TemporaryDirectory() as d:
+        prev = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = d
+        real_ui = main_mod.CenturioUI
+        try:
+            def boom(*a, **kw):
+                raise RuntimeError("сбой сборки интерфейса")
+            main_mod.CenturioUI = boom
+
+            raised = None
+            try:
+                main_mod.main(_FakePage())
+            except Exception as exc:
+                raised = exc
+            ok(isinstance(raised, RuntimeError),
+               f"the failure is re-raised, not swallowed into a dead window ({raised!r})")
+
+            body = ""
+            logfile = os.path.join(d, "Centurio", "centurio.log")
+            if os.path.exists(logfile):
+                with open(logfile, encoding="utf-8") as fh:
+                    body = fh.read()
+            ok("Traceback" in body, "the log carries a real traceback")
+            ok("сбой сборки интерфейса" in body,
+               "and names the actual cause, not just 'failed to start'")
+        finally:
+            main_mod.CenturioUI = real_ui
+            _drop_log_handlers(_log)
+            if prev is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = prev
+
+
+def test_optional_startup_steps_degrade_instead_of_killing_the_app():
+    """Отказ трея, клавиш или значков не должен мешать окну открыться.
+
+    Centurio — панель запуска: окно без трея нужнее, чем «exe вылетает сразу».
+    Платформенные шаги (RegisterHotKey, pystray, монитор процессов, запись
+    значков рядом с exe) на чужой машине могут отказать по причинам, которые
+    нам не подвластны, — тогда их надо записать в лог и идти дальше.
+    """
+    import importlib
+
+    _log = _reset_centurio_log()
+    try:
+        from app import main as main_mod
+    except Exception as exc:
+        skip("startup degradation test", exc)
+        return
+    importlib.reload(main_mod)
+
+    from app.core import hotkeys as hk_mod
+    from app.platform import launcher as la_mod
+    from app.platform import tray as tr_mod
+
+    def boom(*a, **kw):
+        raise OSError("симулированный отказ платформы")
+
+    saved = (main_mod.ensure_icons, tr_mod.TrayController.start,
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register)
+    with tempfile.TemporaryDirectory() as d:
+        prev = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = d
+        try:
+            main_mod.ensure_icons = boom
+            tr_mod.TrayController.start = boom
+            la_mod.Launcher.start_monitor = boom
+            hk_mod.HotkeyManager.register = boom
+
+            raised = None
+            try:
+                main_mod.main(_FakePage())
+            except Exception as exc:
+                raised = exc
+            ok(raised is None,
+               f"the window still opens when every optional step fails ({raised!r})")
+
+            body = ""
+            logfile = os.path.join(d, "Centurio", "centurio.log")
+            if os.path.exists(logfile):
+                with open(logfile, encoding="utf-8") as fh:
+                    body = fh.read()
+            degraded = [line for line in body.splitlines() if "шаг запуска" in line]
+            ok(len(degraded) >= 4,
+               f"and each skipped step is written down, not swallowed ({len(degraded)})")
+        finally:
+            (main_mod.ensure_icons, tr_mod.TrayController.start,
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register) = saved
+            _drop_log_handlers(_log)
+            if prev is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = prev
+
+
 def test_log_is_ready_before_the_store_is_read():
     """Порядок в `main()`: сначала лог, потом чтение файла данных.
 
@@ -3161,8 +3294,17 @@ def test_log_is_ready_before_the_store_is_read():
     import ast
 
     src = (Path(__file__).resolve().parent.parent / "app" / "main.py").read_text(encoding="utf-8")
+
+    # Ищем не по имени, а по делу: ту функцию, которая заводит Store. Тело
+    # старта переехало из `main` в `_start` (сверху появилась обёртка, ловящая
+    # сбой запуска), и привязка к имени сломала бы проверку, хотя само
+    # правило — лог раньше чтения данных — не менялось.
+    def makes_store(fn):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "Store" for n in ast.walk(fn))
+
     fn = next(n for n in ast.walk(ast.parse(src))
-              if isinstance(n, ast.FunctionDef) and n.name == "main")
+              if isinstance(n, ast.FunctionDef) and makes_store(n))
 
     def first_line(match):
         # Без аннотации намеренно: в этом файле нет `from __future__ import
