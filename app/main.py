@@ -65,6 +65,11 @@ def _report_startup_failure() -> None:
     text = ("Centurio не смог запуститься.\n\n"
             f"{detail}\n\n"
             f"Подробности: {paths.data_dir() / 'centurio.log'}")
+    # Модальное окно ждёт «ОК». Там, где нажимать некому (тесты, CI), оно
+    # вешает процесс — см. тот же переключатель в корневом main.py.
+    if os.environ.get("CENTURIO_NO_DIALOG") == "1":
+        print(text, file=sys.stderr)
+        return
     try:
         import ctypes
 

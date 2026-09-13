@@ -3194,6 +3194,51 @@ def _run_bounded(fn, seconds=20.0):
     return done.wait(seconds), box.get("exc")
 
 
+def test_entry_point_records_a_crash_before_any_project_import():
+    """«Вылетает, логов нет» — самый бесполезный отчёт; журнал должен быть всегда.
+
+    Обычный лог поднимается внутри `main(page)`, то есть уже после `import
+    flet` и разбора всего пакета `app`. Если процесс умирает раньше — а
+    отсутствующая нативная DLL убивает именно там, — наружу не попадало ни
+    строчки: у собранного exe нет консоли. Корневой `main.py` теперь пишет
+    `centurio-crash.log` только стандартной библиотекой и до импортов проекта.
+
+    Проверяется по-настоящему: запускаем настоящую точку входа отдельным
+    процессом, подсунув падающий `flet` — так же ведёт себя ненайденная DLL.
+    """
+    import subprocess
+    import sys as _sys
+
+    root = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory() as d:
+        fake = os.path.join(d, "fake")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
+            fh.write('raise ImportError("DLL load failed while importing flet")\n')
+
+        env = dict(os.environ)
+        env["APPDATA"] = d
+        env["PYTHONPATH"] = fake
+        # Иначе модальное окно ждало бы «ОК» и повесило бы прогон.
+        env["CENTURIO_NO_DIALOG"] = "1"
+        env.pop("CENTURIO_WEB", None)
+        proc = subprocess.run([_sys.executable, str(root / "main.py")],
+                              env=env, capture_output=True, text=True, timeout=120)
+
+        ok(proc.returncode != 0, "a broken import really does kill the process")
+
+        crash = os.path.join(d, "Centurio", "centurio-crash.log")
+        ok(os.path.exists(crash), "and it leaves a crash log behind anyway")
+        body = ""
+        if os.path.exists(crash):
+            with open(crash, encoding="utf-8") as fh:
+                body = fh.read()
+        ok("Centurio boot" in body,
+           "the log says how far startup got before dying")
+        ok("DLL load failed" in body,
+           f"and names the actual failure, not just 'it crashed' ({body[-200:]!r})")
+
+
 def test_startup_failure_is_reported_not_silent():
     """Сбой старта обязан оставить трассировку, а не убить окно молча.
 
