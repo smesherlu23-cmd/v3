@@ -2438,6 +2438,61 @@ def test_packaging_metadata():
        f"requirements-only: {required - declared})")
 
 
+def test_release_fixes_the_code_page_and_runs_the_built_exe():
+    """Релиз обязан перевести exe на UTF-8 и запустить его до подписи.
+
+    serious_python передаёт пути в PYTHONHOME/PYTHONPATH узкими строками в
+    UTF-8, а Windows читает их в cp1251. У пользователя с кириллицей в имени
+    профиля собранный exe поэтому выходил с кодом 1 за секунду — без логов и
+    без записей в журнале Windows; на windows-раннере это воспроизведено
+    `smoke.ps1 -NonAsciiProfile` и вылечено манифестом activeCodePage=UTF-8.
+    Порядок важен: правка ресурса ломает подпись, а непроверенный exe не
+    должен доехать до установщика. `continue-on-error` превратил бы проверку
+    в украшение.
+    """
+    text = _read(".github", "workflows", "release.yml")
+    build = text.find("flet build windows")
+    manifest = text.find("utf8_manifest.ps1")
+    smoke = text.find("smoke.ps1 -BuildDir")
+    cyrillic = text.find("-NonAsciiProfile")
+    sign = text.find("sign.ps1")
+    ok(-1 < build < manifest < smoke < sign, "release.yml: сборка → UTF-8 → запуск → подпись")
+    ok(-1 < cyrillic < sign, "release.yml: запуск проверяется и в профиле с кириллицей")
+    ok("continue-on-error" not in text, "release.yml: проверки не отключены молча")
+
+    local = _read("scripts", "build_release.ps1")
+    manifest = local.find("utf8_manifest.ps1")
+    ok(-1 < local.find("flet build windows") < manifest < local.find("sign.ps1"),
+       "локальная сборка тоже переводит exe на UTF-8 до подписи")
+
+
+def test_app_package_leaves_the_repository_out():
+    """В app.zip уезжает только приложение, а не весь репозиторий.
+
+    С `[tool.flet.app] path = "."` и без списка исключений в дистрибутив
+    попадали .git (на раннере в .git/config лежал токен actions/checkout),
+    тесты, скрипты сборки и кэши — это видно в распакованном приложении у
+    пользователя. serious_python сравнивает исключения с точным путём от
+    корня проекта, поэтому каталоги перечислены поимённо.
+    """
+    import re
+
+    pyproject = _read("pyproject.toml")
+    section = re.search(r"^\[tool\.flet\.app\]\n(.*?)(?=^\[|\Z)", pyproject, re.M | re.S)
+    ok(section is not None, "pyproject содержит [tool.flet.app]")
+    block = re.search(r"^exclude = \[(.*?)^\]", section.group(1) if section else "", re.M | re.S)
+    excluded = set(re.findall(r'"([^"]+)"', block.group(1) if block else ""))
+    for name in (".git", ".github", "tests", "scripts", "installer",
+                 ".pytest_cache", ".ruff_cache"):
+        ok(name in excluded, f"{name} не упаковывается в дистрибутив")
+    for name in ("app", "assets", "main.py"):
+        ok(name not in excluded, f"{name} нужен приложению и остаётся в пакете")
+
+    release = _read(".github", "workflows", "release.yml")
+    ok("persist-credentials: false" in release,
+       "релизная сборка не оставляет токен в .git/config")
+
+
 def test_readme_points_at_files_that_exist():
     """README не должен описывать то, чего в репозитории нет.
 

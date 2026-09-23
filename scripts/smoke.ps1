@@ -51,10 +51,26 @@ function Section([string]$text) {
     Write-Host "---- $text"
 }
 
+# Файл целиком, даже если его держит открытым работающий Centurio
+# (faulthandler не отпускает журнал запуска до выхода): File.ReadAllBytes
+# просит монопольную запись и падает на таком файле.
+function Read-Shared([string]$path) {
+    $stream = [System.IO.FileStream]::new($path, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+    try {
+        $buffer = [System.IO.MemoryStream]::new()
+        $stream.CopyTo($buffer)
+        # Запятая: иначе PowerShell развернёт массив байтов в поток объектов.
+        return ,$buffer.ToArray()
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 # Текст, дописанный в файл после отметки $offset (размера до запуска).
 function Read-NewText([string]$path, [long]$offset) {
     if (-not (Test-Path -LiteralPath $path)) { return "" }
-    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $bytes = Read-Shared $path
     if ($bytes.Length -le $offset) { return "" }
     return [System.Text.Encoding]::UTF8.GetString($bytes, [int]$offset, $bytes.Length - [int]$offset)
 }
@@ -76,6 +92,7 @@ $savedEnv = @{
 }
 $shellFolders = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
 $proc = $null
+$startedAt = $null
 $script:verdict = 1
 
 try {
@@ -162,18 +179,27 @@ try {
     if ($consoles.Count -eq 0) { Write-Host "(не найден — Python не дошёл до запуска модуля)" }
     foreach ($c in $consoles) {
         Write-Host "[$($c.FullName)]"
-        $text = [System.IO.File]::ReadAllText($c.FullName, [System.Text.Encoding]::UTF8)
+        $text = [System.Text.Encoding]::UTF8.GetString((Read-Shared $c.FullName))
         $consoleText += $text
         ($text -split "`n" | Select-Object -Last 80) -join "`n" | Write-Host
     }
 
+    # Сюда оболочка распаковывает app.zip. Служебным каталогам репозитория
+    # в нём не место: .git сборки на раннере несёт в .git/config токен
+    # actions/checkout, а tests и кэши — просто лишний вес и лишний повод для
+    # эвристик антивирусов. Список исключений — [tool.flet.app] в pyproject.
     Section "распакованное приложение Flet"
+    $leaked = @()
     $flet = Get-ChildItem -LiteralPath $dataDir -Recurse -Directory -Filter "flet" -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($flet) {
-        Write-Host $flet.FullName
-        Get-ChildItem -LiteralPath $flet.FullName -Recurse -Depth 1 |
-            Select-Object -First 15 | ForEach-Object { Write-Host "  $($_.FullName.Substring($flet.FullName.Length))" }
+        $app = Join-Path $flet.FullName "app"
+        Write-Host $app
+        Get-ChildItem -LiteralPath $app -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "  $($_.Name)" }
+        $leaked = @(".git", ".github", "tests", "installer", "scripts", ".pytest_cache", ".ruff_cache" |
+            Where-Object { Test-Path -LiteralPath (Join-Path $app $_) })
+        if ($leaked.Count) { Write-Host "в пакет попали служебные каталоги: $($leaked -join ', ')" }
     } else {
         Write-Host "(не распаковано)"
     }
@@ -191,7 +217,8 @@ try {
     Write-Host "процесс жив:              $alive"
     Write-Host "main.py отметился:        $booted"
     Write-Host "трассировка/ошибка:       $failure"
-    if ($alive -and $booted -and -not $failure) {
+    Write-Host "лишнее в пакете:          $($leaked.Count -gt 0)"
+    if ($alive -and $booted -and -not $failure -and $leaked.Count -eq 0) {
         Write-Host "OK: Centurio запускается"
         $script:verdict = 0
     } else {
@@ -203,8 +230,13 @@ finally {
     if ($proc -and -not $proc.HasExited) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     }
-    # Flutter-оболочка могла пережить свой процесс-родитель — добиваем по имени.
-    Get-Process -Name "centurio" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Добиваем по имени всё, что запустилось за время проверки, — но не
+    # чужой Centurio, открытый до неё (на своей машине он может работать).
+    if ($startedAt) {
+        Get-Process -Name "centurio" -ErrorAction SilentlyContinue |
+            Where-Object { $_.StartTime -ge $startedAt } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+    }
     foreach ($name in $saved.Keys) {
         Set-ItemProperty -Path $shellFolders -Name $name -Value $saved[$name] -Type ExpandString
     }
