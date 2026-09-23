@@ -70,6 +70,33 @@ jobs:
       - name: Build the application
         run: flet build windows --verbose
 
+      # ВРЕМЕННО, диагностика: оба сценария до и после правки манифеста, без
+      # остановки сборки — нужно увидеть всё, что оставляет exe.
+      - name: Smoke test, plain profile (before)
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}"
+
+      - name: Smoke test, Cyrillic profile (before)
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}" -NonAsciiProfile
+
+      - name: Switch the exe to the UTF-8 code page
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/utf8_manifest.ps1 -Path "${{ env.BUILD_DIR }}/Centurio.exe"
+
+      - name: Smoke test, Cyrillic profile (after)
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}" -NonAsciiProfile
+
+      - name: Smoke test, plain profile (after)
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}"
+
       - name: Sign the application
         shell: pwsh
         env:
