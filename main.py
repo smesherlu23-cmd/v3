@@ -107,7 +107,10 @@ def _boot() -> None:
     port = int(os.environ.get("CENTURIO_PORT", "0") or 0)
     if not web and not single_instance.acquire():
         _notify_already_running()
-        sys.exit(0)
+        # Не sys.exit: в собранном exe Flet подменяет его функцией, которая
+        # только сообщает код оболочке и возвращает управление, — и второй
+        # экземпляр запускался бы дальше как ни в чём не бывало.
+        return
     if web:
         ft.app(target=main, view=None, port=port or 8550, assets_dir=str(ASSETS_DIR))
     else:

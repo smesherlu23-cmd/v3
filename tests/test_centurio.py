@@ -2001,6 +2001,120 @@ def test_autostart():
         ok(autostart.sync(False) is False, "sync keeps 'off' outside Windows")
 
 
+def test_built_exe_autostart_passes_no_arguments():
+    """Собранному exe нельзя передавать `--hidden` — он не запустит Python.
+
+    Оболочка `flet build` (main.dart шаблона) принимает любой аргумент
+    командной строки, кроме `--debug`, за адрес сервера «режима разработчика»
+    и встроенный Python не запускает вовсе. Ярлык «Автозагрузки» с `--hidden`
+    — и от инсталлятора, и от самого Centurio — поднимал окно, которое
+    вечно ждало подключения к «--hidden». «Запуск в трей» теперь передаётся
+    полем «Окно: свёрнутое» у ярлыка, а старые ярлыки переписываются.
+    """
+    import struct
+
+    from app.platform import autostart
+
+    prev = {k: os.environ.get(k) for k in ("FLET_PLATFORM", "APPDATA")}
+
+    def restore():
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            os.environ["APPDATA"] = d
+            os.environ.pop("FLET_PLATFORM", None)
+            ok("--hidden" in autostart._launch_parts()[1],
+               "из исходников трей по-прежнему просит --hidden")
+            os.environ["FLET_PLATFORM"] = "windows"
+            ok(autostart._launch_parts()[1] == "",
+               "собранному exe ярлык не передаёт ни одного аргумента")
+
+            link = autostart.startup_shortcut()
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.write_bytes(b"L\0\0\0" + '"C:\\x\\Centurio.exe" --hidden'.encode("utf-16-le"))
+            ok(autostart.has_stale_arguments() is True,
+               "ярлык прошлой версии с --hidden распознаётся как устаревший")
+            link.write_bytes(b"L\0\0\0" + "C:\\x\\Centurio.exe".encode("utf-16-le"))
+            if os.name != "nt":
+                ok(autostart.has_stale_arguments() is False,
+                   "ярлык без аргументов переписывать незачем")
+            os.environ.pop("FLET_PLATFORM", None)
+            link.write_bytes(b"L\0\0\0" + '"main.py" --hidden'.encode("utf-16-le"))
+            ok(autostart.has_stale_arguments() is False,
+               "при запуске из исходников --hidden в ярлыке — норма, а не устаревание")
+            link.unlink()
+
+            ok(isinstance(autostart.started_minimized(), bool),
+               "STARTUPINFO читается без исключений на любой платформе")
+
+            if os.name == "nt":
+                os.environ["FLET_PLATFORM"] = "windows"
+                ok(autostart.create_startup_shortcut() is True,
+                   "ярлык собранного exe создаётся")
+                data = link.read_bytes()
+                ok("--hidden".encode("utf-16-le") not in data,
+                   "и не несёт --hidden")
+                # ShellLinkHeader: ShowCommand — 4 байта по смещению 0x3C.
+                ok(struct.unpack_from("<I", data, 0x3C)[0] == autostart.SW_SHOWMINNOACTIVE,
+                   "зато запускает окно свёрнутым — это и есть «в трей»")
+                ok(autostart.has_stale_arguments() is False,
+                   "свежий ярлык не считается устаревшим")
+                autostart.remove_startup_shortcut()
+        finally:
+            restore()
+
+
+def test_second_instance_stops_even_when_flet_disarms_sys_exit():
+    """Второй экземпляр обязан остановиться и в собранном exe.
+
+    Загрузчик `flet build` подменяет `sys.exit` функцией, которая только
+    сообщает код оболочке и возвращает управление. `sys.exit(0)` после
+    «Centurio уже запущен» поэтому ничего не останавливал: следом шёл
+    `ft.app()`, и второй экземпляр поднимал второе окно. Проверяется в
+    отдельном процессе ровно в таких условиях.
+    """
+    import subprocess
+    import sys as _sys
+
+    root = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory() as d:
+        fake = os.path.join(d, "fake")
+        os.makedirs(os.path.join(fake, "app", "platform"))
+        with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
+            fh.write("def app(**kw):\n    print('FT_APP_STARTED')\n")
+        # Подменяется весь пакет app: проверяется только логика точки входа.
+        for rel, body in ((("app", "__init__.py"), ""),
+                          (("app", "main.py"), "ASSETS_DIR = '.'\ndef main(page):\n    pass\n"),
+                          (("app", "platform", "__init__.py"), ""),
+                          (("app", "platform", "single_instance.py"),
+                           "def acquire():\n    return False\n")):
+            with open(os.path.join(fake, *rel), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        runner = os.path.join(d, "run.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write("import runpy, sys\n"
+                     "sys.exit = lambda code=0: print('EXIT', code)\n"
+                     f"runpy.run_path({str(root / 'main.py')!r}, run_name='__main__')\n")
+
+        env = dict(os.environ)
+        env["APPDATA"] = d
+        env["PYTHONPATH"] = fake
+        env["CENTURIO_NO_DIALOG"] = "1"
+        # Кириллица в stderr на windows-раннере (cp1252) иначе не печатается.
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.pop("CENTURIO_WEB", None)
+        proc = subprocess.run([_sys.executable, runner], cwd=d, env=env,
+                              capture_output=True, encoding="utf-8", timeout=120)
+        ok("уже запущен" in proc.stderr, "второму экземпляру говорят, что Centurio уже запущен")
+        ok("FT_APP_STARTED" not in proc.stdout,
+           f"и окно он не поднимает, даже когда sys.exit обезврежен ({proc.stdout!r})")
+
+
 def test_autostart_cannot_switch_itself_back_on():
     """Выключенный пользователем автозапуск остаётся выключенным.
 
