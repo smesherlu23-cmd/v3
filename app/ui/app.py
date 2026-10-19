@@ -33,6 +33,8 @@ TILE_CACHE_MAX = 600
 ICON_SIZE_TTL = 30.0
 
 CATEGORY_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
+APP_ICON_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico")
+APP_ICON_SIZE = 256
 
 class CenturioUI:
     def __init__(self, page: ft.Page, store: Store, launcher, controllers=None):
@@ -677,6 +679,66 @@ class CenturioUI:
                         action_label="Отменить")
         self.on_library_changed()
 
+    def rename_app(self, app_id, name):
+        name = (name or "").strip()
+        app = self.store.get_app(app_id)
+        if not app or not name or name == app["name"]:
+            return
+        self.store.update_app(app_id, {"name": name})
+        self.on_library_changed()
+
+    def pick_app_icon(self, app_id):
+        def picked(src):
+            if not src:
+                return
+            stored = self._store_app_icon(app_id, src)
+            if stored:
+                self.store.update_app(app_id, {"icon": stored, "icon_fit": "contain",
+                                               "custom_icon": True})
+                self.on_library_changed()
+        self.ask_for_file("Значок программы", picked,
+                          extensions=[e.lstrip(".") for e in APP_ICON_EXTS])
+
+    def _store_app_icon(self, app_id, src) -> str | None:
+        """Своя картинка → PNG в кэше значков, под новым именем на каждую смену.
+
+        Новое имя нужно, чтобы ни кэш плиток, ни кэш картинок Flutter не
+        показали прежний значок.
+        """
+        if Path(src).suffix.lower() not in APP_ICON_EXTS:
+            self.toast.error("Подойдёт PNG, JPG, WEBP, GIF, BMP или ICO")
+            return None
+        dest_dir = Path(self.icon_cache_dir()) / "custom"
+        dest = dest_dir / f"{app_id}-{int(time.time() * 1000)}.png"
+        try:
+            from PIL import Image
+
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            with Image.open(src) as im:
+                im = im.convert("RGBA")
+                im.thumbnail((APP_ICON_SIZE, APP_ICON_SIZE))
+                im.save(dest, "PNG")
+        except Exception:
+            log.exception("не удалось подготовить значок из %s", src)
+            self.toast.error("Не удалось прочитать картинку")
+            return None
+        self._drop_custom_icons(app_id, keep=dest)
+        return str(dest)
+
+    def _drop_custom_icons(self, app_id, keep=None):
+        for stale in (Path(self.icon_cache_dir()) / "custom").glob(f"{app_id}-*"):
+            if stale != keep:
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+
+    def reset_app_icon(self, app_id):
+        self.store.update_app(app_id, {"icon": None, "custom_icon": False})
+        self._drop_custom_icons(app_id)
+        self.on_library_changed()
+        self.scan.backfill_icons_async()
+
     def _set_args(self, app_id, value):
         text = (value or "").strip()
         try:
@@ -1030,6 +1092,33 @@ class CenturioUI:
         self.toast.show(f"Копия сохранена: {path.name}", icon=ft.Icons.BACKUP,
                         icon_color=C.MUTED)
 
+    def pick_backup(self):
+        self.ask_for_file("Копия библиотеки", self.restore_backup, extensions=["json"])
+
+    def restore_backup(self, src):
+        """Заменить библиотеку копией. Текущая сначала сама уходит в копию."""
+        if not src:
+            return
+        try:
+            safety = self.store.backup()
+        except Exception:
+            log.exception("не удалось сохранить текущую библиотеку перед восстановлением")
+            self.toast.error("Не удалось сохранить текущую библиотеку — восстановление отменено")
+            return
+        if not self.store.import_data(src):
+            self.toast.error("Это не копия библиотеки Centurio или она от более новой версии",
+                             detail=str(src))
+            return
+        self.view.set_screen("grid")
+        self.toast.show(f"Библиотека восстановлена из {Path(src).name}", icon=ft.Icons.RESTORE,
+                        icon_color=C.MUTED, action=lambda: self._undo_restore(safety),
+                        action_label="Вернуть")
+        self.on_library_changed()
+
+    def _undo_restore(self, safety):
+        if self.store.import_data(safety):
+            self.on_library_changed()
+
     def show_data_folder(self):
         res = self.launcher.show_in_folder({"path": str(self.store.path)})
         if not res.get("ok"):
@@ -1055,6 +1144,7 @@ class CenturioUI:
     def clear_icon_cache(self):
         removed = 0
         keep = {(c.get("image") or "") for c in self.categories()}
+        keep |= {a.get("icon") or "" for a in self.apps() if a.get("custom_icon")}
         try:
             for entry in Path(self.icon_cache_dir()).rglob("*"):
                 if entry.is_file() and str(entry) not in keep:
@@ -1064,7 +1154,9 @@ class CenturioUI:
             log.exception("не удалось очистить кэш иконок")
             self.toast.error("Не удалось очистить кэш")
             return
-        self.store.update_apps([a["id"] for a in self.apps()], {"icon": None, "poster": None})
+        self.store.update_apps([a["id"] for a in self.apps() if not a.get("custom_icon")],
+                               {"icon": None})
+        self.store.update_apps([a["id"] for a in self.apps()], {"poster": None})
         self.forget_icon_cache_size()
         self.toast.show(f"Кэш очищен, файлов удалено: {removed}")
         self.scan.backfill_icons_async()

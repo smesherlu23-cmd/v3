@@ -201,6 +201,15 @@ class ContextMenus:
         self.ui.menu.show(x, y, self.set_submenu([app["id"]]),
                        header=menus.text_header("Добавить в набор"))
 
+    def app_icon_menu(self, app, e):
+        x, y = self.menu_at(e)
+        rows = [menus.item(ft.Icons.IMAGE, "Выбрать картинку…",
+                           lambda: self.ui.pick_app_icon(app["id"]))]
+        if app.get("custom_icon"):
+            rows.append(menus.item(ft.Icons.RESTORE, "Значок из программы",
+                                   lambda: self.ui.reset_app_icon(app["id"])))
+        self.ui.menu.show(x, y, rows, header=None)
+
     def launch_more_menu(self, app, e):
         x, y = self.menu_at(e)
         rows = [

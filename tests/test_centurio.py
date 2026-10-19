@@ -4634,6 +4634,8 @@ def test_ui_context_menus():
 def test_ui_inspector_replaces_the_modal_form():
     """Инспектор вместо окна на тринадцать полей."""
     try:
+        import flet as ft
+
         from app.ui.app import CenturioUI  # noqa: F401
     except Exception as exc:
         skip("UI inspector test", exc)
@@ -4649,7 +4651,9 @@ def test_ui_inspector_replaces_the_modal_form():
         ok(ui.inspector_container.visible, "clicking a tile opens the panel")
         ok(not page.opened, "and blocks nothing")
         shown = _texts(ui.inspector_container)
-        ok("Excel" in shown, "the panel names the app")
+        name_field = _find_control(ui.inspector_container,
+                                   lambda n: isinstance(n, ft.TextField) and n.value == "Excel")
+        ok(name_field is not None, "the panel names the app in a field you can rename it in")
         ok(any("EXCEL.EXE" in t for t in shown), "and shows where it lives")
         ok("Запустить" in shown, "with the action that runs it")
         ok("Показать в папке" in [c.tooltip for c in _walk(ui.inspector_container)
@@ -4692,7 +4696,8 @@ def test_ui_inspector_replaces_the_modal_form():
 
         second = store.add_app({"name": "Zoom", "path": "/x/z", "category_id": "work"})["id"]
         ui._select_tile(second)
-        ok("Zoom" in _texts(ui.inspector_container),
+        ok(_find_control(ui.inspector_container,
+                         lambda n: isinstance(n, ft.TextField) and n.value == "Zoom"),
            "selecting another tile switches the panel instead of stacking a window")
 
         ui._close_inspector()
@@ -5560,6 +5565,71 @@ def test_ui_keyboard():
         ok(hidden == [1], "Esc with nothing left to close hides the window")
 
 
+def test_rename_icon_and_restore_from_backup():
+    """Программу можно переименовать и дать ей свою картинку; копию — восстановить.
+
+    Имена из реестра («7-Zip 23.01 (x64)», «WINWORD») раньше оставались как
+    есть, а у «Сохранить копию» не было обратной кнопки.
+    """
+    try:
+        from PIL import Image
+
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("rename/icon/restore test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        app_id = store.add_app({"name": "WINWORD", "path": "C:/w.exe",
+                                "category_id": "work"})["id"]
+        ui, _ = _ui_for(store)
+
+        ui.rename_app(app_id, "  Word ")
+        ok(store.get_app(app_id)["name"] == "Word", "the name is trimmed and saved")
+        ui.rename_app(app_id, "   ")
+        ok(store.get_app(app_id)["name"] == "Word", "a blank name is ignored")
+
+        src = os.path.join(d, "logo.bmp")
+        Image.new("RGB", (512, 300), "red").save(src)
+        ui.ask_for_file = lambda title, on_path, extensions=None: on_path(src)
+        ui.pick_app_icon(app_id)
+        app = store.get_app(app_id)
+        ok(app["custom_icon"] and app["icon"].endswith(".png"), "a picked image becomes the icon")
+        with Image.open(app["icon"]) as im:
+            ok(max(im.size) <= 256, "scaled down to icon size")
+        first = app["icon"]
+        ui.pick_app_icon(app_id)
+        ok(store.get_app(app_id)["icon"] != first and not os.path.exists(first),
+           "a new pick gets a new file and the old one is removed")
+
+        from app.platform import discovery
+        discovery.backfill_icons(store, ui.icon_cache_dir(), refresh=True)
+        ok(store.get_app(app_id)["custom_icon"], "refreshing icons keeps the user's picture")
+        ui.clear_icon_cache()
+        ok(os.path.exists(store.get_app(app_id)["icon"]), "and so does clearing the icon cache")
+
+        ui.scan.backfill_icons_async = lambda: None
+        ui.reset_app_icon(app_id)
+        ok(not store.get_app(app_id)["custom_icon"], "the program's own icon can come back")
+
+        backup = store.backup()
+        store.add_app({"name": "Extra", "path": "C:/e.exe", "category_id": "work"})
+        ui.restore_backup(str(backup))
+        ok([a["name"] for a in store.state()["apps"]] == ["Word"],
+           "restoring a backup puts the library back as it was")
+        ui.toast.fire_action()
+        ok(sorted(a["name"] for a in store.state()["apps"]) == ["Extra", "Word"],
+           "and the restore itself can be undone")
+
+        junk = os.path.join(d, "junk.json")
+        with open(junk, "w", encoding="utf-8") as fh:
+            fh.write('{"version": 99, "apps": []}')
+        ui.restore_backup(junk)
+        ok(len(store.state()["apps"]) == 2, "a backup from a newer version is refused")
+        ok("более новой" in ui.toast.text.value, "with a reason")
+
+
 def test_ui_keys_belong_to_the_focused_field():
     """Пока курсор в поле ввода, клавиши библиотеки молчат.
 
@@ -5584,7 +5654,8 @@ def test_ui_keys_belong_to_the_focused_field():
 
         ui.view.select_one(ids[0])
         ui._toggle_adv()
-        args = _find_control(ui.inspector_container, lambda n: isinstance(n, ft.TextField))
+        args = _find_control(ui.inspector_container,
+                             lambda n: isinstance(n, ft.TextField) and n.hint_text == "не заданы")
         ok(args is not None, "инспектор показывает поле «Аргументы»")
 
         args.on_focus(types_ns(control=args))

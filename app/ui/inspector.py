@@ -34,12 +34,19 @@ class InspectorPanel:
                         spacing=6, tight=True) if running else \
             T(short_ago(app.get("last_launched")) or "ещё не открывали",
               size=11.5, color=C.MUTED_2)
+        name = Wg.track_typing(ft.TextField(
+            value=app["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
+            text_size=15.5, color=C.TEXT, cursor_color=C.TEXT,
+            content_padding=ft.padding.symmetric(0, 0), tooltip="Переименовать",
+            text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, font_family="Inter Bold"),
+            on_blur=lambda e: self.ui.rename_app(app["id"], e.control.value),
+            on_submit=lambda e: self.ui.rename_app(app["id"], e.control.value)),
+            self.ui.view, "app_name")
+        icon = ft.Container(self.ui.icon_slot(app, 46, 13, glyph=23), tooltip="Сменить значок",
+                            on_click=lambda e: self.ui.context_menus.app_icon_menu(app, e))
         header = ft.Container(
-            ft.Row([self.ui.icon_slot(app, 46, 13, glyph=23),
-                    ft.Column([T(app["name"], size=15.5, weight=ft.FontWeight.BOLD,
-                                 color=C.TEXT, max_lines=1,
-                                 overflow=ft.TextOverflow.ELLIPSIS),
-                               status], spacing=5, expand=True, tight=True),
+            ft.Row([icon,
+                    ft.Column([name, status], spacing=5, expand=True, tight=True),
                     ft.Container(ft.Icon(ft.Icons.CLOSE, size=18, color=C.MUTED_2),
                                  on_click=lambda e: self.ui._close_inspector(),
                                  tooltip="Закрыть панель")],

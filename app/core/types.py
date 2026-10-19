@@ -45,6 +45,7 @@ class App(TypedDict, total=False):
     hue: int
     icon: str | None
     icon_fit: str
+    custom_icon: bool
     poster: str | None
     favorite: bool
     quick: bool

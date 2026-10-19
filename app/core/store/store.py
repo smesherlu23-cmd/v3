@@ -225,6 +225,7 @@ class Store:
             "hue": app["hue"] if isinstance(app.get("hue"), int) else sanitize.hue_from_string(app.get("name") or app.get("path") or ""),
             "icon": app.get("icon") or None,
             "icon_fit": app.get("icon_fit") or "contain",
+            "custom_icon": bool(app.get("custom_icon")),
             "poster": app.get("poster") or None,
             "favorite": bool(app.get("favorite")),
             "quick": bool(app.get("quick")),
@@ -315,8 +316,8 @@ class Store:
             if not app:
                 return None
             for key in ("name", "path", "args", "working_dir", "run_as_admin", "sub", "category_id",
-                        "hue", "icon", "icon_fit", "poster", "favorite", "quick", "hidden",
-                        "track_exe", "order"):
+                        "hue", "icon", "icon_fit", "custom_icon", "poster", "favorite",
+                        "quick", "hidden", "track_exe", "order"):
                 if key in patch:
                     app[key] = patch[key]
             if persist == "debounce":
@@ -762,15 +763,25 @@ class Store:
 
     def backup(self) -> Path:
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        return self.export_data(self.path.with_name(f"centurio-backup-{stamp}.json"))
+        dest = self.path.with_name(f"centurio-backup-{stamp}.json")
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = self.path.with_name(f"centurio-backup-{stamp}-{n}.json")
+        return self.export_data(dest)
 
     def import_data(self, src: str | Path, merge: bool = False) -> bool:
+        if self.read_only:
+            return False
         try:
             with open(src, encoding="utf-8") as fh:
                 incoming = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return False
         if not isinstance(incoming, dict) or "apps" not in incoming:
+            return False
+        version = incoming.get("version")
+        if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
             return False
         clean = self._sanitize(incoming)
         with self._lock:
