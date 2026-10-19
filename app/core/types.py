@@ -8,6 +8,7 @@ class Settings(TypedDict, total=False):
     autostart_adopted: bool
     minimize_to_tray: bool
     close_to_tray: bool
+    tray_hint_shown: bool
     accent: str
     bg_tint: int | None
     contrast: str

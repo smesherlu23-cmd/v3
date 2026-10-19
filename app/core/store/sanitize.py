@@ -22,6 +22,7 @@ DEFAULT_SETTINGS = {
     "autostart_adopted": False,
     "minimize_to_tray": True,
     "close_to_tray": True,
+    "tray_hint_shown": False,
     "accent": "#f5f5f7",
     "bg_tint": None,
     "contrast": "normal",
@@ -222,7 +223,7 @@ def clean_records(raw, clean) -> list[dict]:
 
 
 _BOOL_SETTINGS = {
-    "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray",
+    "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
     "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
     "triage", "debug_log",
 }

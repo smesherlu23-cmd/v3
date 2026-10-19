@@ -92,8 +92,11 @@ def _message_box(text: str, title: str = "Centurio", flags: int = 0x10) -> None:
         print(text, file=sys.stderr)
 
 
-def _notify_already_running():
-    _message_box("Centurio уже запущен — смотрите в трее.", flags=0x40)
+def _notify_already_running(single_instance):
+    # Обычно первый экземпляр просто показывает своё окно. Сообщение — только
+    # если достучаться до него не вышло.
+    if not single_instance.signal_existing():
+        _message_box("Centurio уже запущен — смотрите в трее.", flags=0x40)
 
 
 def _boot() -> None:
@@ -106,13 +109,16 @@ def _boot() -> None:
     web = os.environ.get("CENTURIO_WEB") == "1"
     port = int(os.environ.get("CENTURIO_PORT", "0") or 0)
     if not web and not single_instance.acquire():
-        _notify_already_running()
+        _notify_already_running(single_instance)
         # Не sys.exit: в собранном exe Flet подменяет его функцией, которая
         # только сообщает код оболочке и возвращает управление, — и второй
         # экземпляр запускался бы дальше как ни в чём не бывало.
         return
     if web:
-        ft.app(target=main, view=None, port=port or 8550, assets_dir=str(ASSETS_DIR))
+        # Только с этой машины: веб-режим без пароля, а интерфейс умеет
+        # запускать любые программы.
+        ft.app(target=main, view=None, host="127.0.0.1", port=port or 8550,
+               assets_dir=str(ASSETS_DIR))
     else:
         ft.app(target=main, assets_dir=str(ASSETS_DIR))
 

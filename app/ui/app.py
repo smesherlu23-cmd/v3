@@ -928,9 +928,11 @@ class CenturioUI:
         self.refresh()
 
     def open_library(self):
+        """Показ окна из трея или повторным запуском: сразу можно печатать имя."""
         self.view.close_palette()
         self.view.set_screen("grid")
         self.refresh()
+        self._focus(self.search_field)
 
     def set_setting(self, key, value):
         self.store.set_setting(key, value)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 import time
 
@@ -79,3 +80,80 @@ def plu_programs(n):
 
 def plu_windows(n):
     return _plural(n, "окно", "окна", "окон")
+
+
+# Поиск. Пользователь набирает не в той раскладке («еуд» вместо «tel») и
+# по-русски («телеграм», «ворд»), а имена программ чаще латиницей.
+_EN_KEYS = "`qwertyuiop[]asdfghjkl;'zxcvbnm,."
+_RU_KEYS = "ёйцукенгшщзхъфывапролджэячсмитьбю"
+_TO_RU = str.maketrans(_EN_KEYS, _RU_KEYS)
+_TO_EN = str.maketrans(_RU_KEYS, _EN_KEYS)
+
+_TRANSLIT = (
+    ("shch", "щ"), ("sch", "щ"), ("chr", "хр"), ("dge", "дж"), ("you", "ю"),
+    ("ch", "ч"), ("sh", "ш"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("wh", "в"),
+    ("ph", "ф"), ("th", "т"), ("ya", "я"), ("yu", "ю"), ("yo", "ё"), ("oo", "у"),
+    ("ee", "и"), ("ea", "и"), ("xc", "кс"), ("ck", "к"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"),
+    ("h", "х"), ("i", "и"), ("j", "дж"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"),
+    ("o", "о"), ("p", "п"), ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"),
+    ("v", "в"), ("w", "в"), ("x", "кс"), ("y", "и"), ("z", "з"),
+)
+
+
+def _words_of(text: str) -> list[str]:
+    return [w for w in re.split(r"[^0-9a-zа-яё+#]+", text.lower()) if w]
+
+
+def _translit_word(word: str) -> str:
+    out = ["э"] if word.startswith("e") else []
+    i = 1 if out else 0
+    while i < len(word):
+        for lat, cyr in _TRANSLIT:
+            if word.startswith(lat, i):
+                out.append(cyr)
+                i += len(lat)
+                break
+        else:
+            out.append(word[i])
+            i += 1
+    return "".join(out)
+
+
+def query_variants(query: str) -> list[str]:
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    return list(dict.fromkeys(v for v in (q, q.translate(_TO_RU), q.translate(_TO_EN)) if v))
+
+
+def match_rank(name: str, query: str) -> int | None:
+    """Насколько хорошо `name` подходит под запрос; меньше — лучше, None — мимо.
+
+    0 — имя начинается с запроса, 1 — какое-то слово, 2 — первые буквы слов
+    («vsc» → Visual Studio Code), 3 — просто вхождение. Каждый уровень
+    проверяется и для запроса в другой раскладке, и для имени, прочитанного
+    русскими буквами.
+    """
+    words = _words_of(name)
+    if not words:
+        return None
+    plain = " ".join(words)
+    translit_words = [_translit_word(w) for w in words]
+    translit = " ".join(translit_words)
+    acronym = "".join(w[0] for w in words)
+    best = None
+    for q in query_variants(query):
+        flat = " ".join(_words_of(q)) or q
+        if plain.startswith(flat) or translit.startswith(flat):
+            rank = 0
+        elif any(w.startswith(flat) for w in words + translit_words):
+            rank = 1
+        elif len(flat) >= 2 and " " not in flat and acronym.startswith(flat):
+            rank = 2
+        elif flat in plain or flat in translit:
+            rank = 3
+        else:
+            continue
+        best = rank if best is None else min(best, rank)
+    return best

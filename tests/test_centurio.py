@@ -1418,11 +1418,21 @@ def test_single_instance_mutex_is_per_session():
     ok(single_instance.MUTEX_NAME.startswith("Local\\"),
        f"имя мьютекса ограничено сеансом ({single_instance.MUTEX_NAME})")
 
+    ok(single_instance.SHOW_EVENT_NAME.startswith("Local\\"),
+       "событие «покажи окно» тоже живёт в сеансе")
     if os.name != "nt":
+        ok(single_instance.signal_existing() is False,
+           "вне Windows будить некого — второй запуск скажет об этом сам")
         return
+    import threading
+
+    woke = threading.Event()
     try:
         ok(single_instance.acquire() is True, "первый экземпляр захватывает мьютекс")
         ok(single_instance.acquire() is True, "повторный вызов в том же процессе — не отказ")
+        ok(single_instance.listen(woke.set), "первый экземпляр слушает просьбы показать окно")
+        ok(single_instance.signal_existing() is True, "второй запуск достучался до первого")
+        ok(woke.wait(5), "и первый показал окно")
     finally:
         single_instance.release()
 
@@ -2227,7 +2237,8 @@ def test_second_instance_stops_even_when_flet_disarms_sys_exit():
                           (("app", "main.py"), "ASSETS_DIR = '.'\ndef main(page):\n    pass\n"),
                           (("app", "platform", "__init__.py"), ""),
                           (("app", "platform", "single_instance.py"),
-                           "def acquire():\n    return False\n")):
+                           "def acquire():\n    return False\n"
+                           "def signal_existing():\n    return False\n")):
             with open(os.path.join(fake, *rel), "w", encoding="utf-8") as fh:
                 fh.write(body)
         runner = os.path.join(d, "run.py")
@@ -2711,6 +2722,8 @@ def test_single_entry_point():
     page_module = _read("app", "main.py")
     ok('if __name__ == "__main__"' in root_main and "ft.app(" in root_main,
        "the root main.py starts the app")
+    ok('host="127.0.0.1"' in root_main,
+       "the browser mode listens on this machine only — it can launch any program")
     # app/main.py still reads CENTURIO_WEB — that's is_web inside the page
     # builder, not a second launcher.
     ok('if __name__ == "__main__"' not in page_module,
@@ -3618,6 +3631,58 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
                 os.environ["APPDATA"] = prev
 
 
+def test_first_hide_to_tray_explains_where_the_window_went():
+    """Первый уход в трей объясняет себя — и только первый.
+
+    Крестик по умолчанию прячет окно в трей, а значок в Windows 11 часто
+    скрыт за стрелкой: без подсказки выглядело так, будто программа закрылась.
+    """
+    import importlib
+
+    _log = _reset_centurio_log()
+    try:
+        from app import main as main_mod
+    except Exception as exc:
+        skip("tray hint test", exc)
+        return
+    importlib.reload(main_mod)
+    from app.platform import tray as tr_mod
+
+    shown = []
+
+    def fake_start(self):
+        self.available = True
+        self._icon = types_ns(notify=lambda message, title=None: shown.append(message),
+                              update_menu=lambda: None, stop=lambda: None)
+        return True
+
+    saved = (tr_mod.TrayController.start, main_mod._report_startup_failure)
+    with tempfile.TemporaryDirectory() as d:
+        prev = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = d
+        try:
+            tr_mod.TrayController.start = fake_start
+            main_mod._report_startup_failure = lambda: None
+            page = _FakePage()
+            finished, raised = _run_bounded(lambda: main_mod.main(page))
+            ok(finished and raised is None, f"the window opens ({raised!r})")
+            page.window.on_event(types_ns(data="close"))
+            ok(page.window.visible is False, "the close button hides the window to the tray")
+            ok(len(shown) == 1 and "трее" in shown[0], "and says where it went")
+            page.window.visible = True
+            page.window.on_event(types_ns(data="close"))
+            ok(len(shown) == 1, "but only the first time")
+        finally:
+            tr_mod.TrayController.start, main_mod._report_startup_failure = saved
+            from app.platform import single_instance
+            single_instance.release()
+            _drop_log_handlers(_log)
+            if prev is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = prev
+
+
 def test_log_is_ready_before_the_store_is_read():
     """Порядок в `main()`: сначала лог, потом чтение файла данных.
 
@@ -3692,6 +3757,32 @@ def test_log_level_follows_the_debug_setting():
             for h in list(_log._LOGGER.handlers):
                 h.close()
                 _log._LOGGER.removeHandler(h)
+
+
+def test_search_forgives_layout_and_cyrillic():
+    """Поиск понимает не ту раскладку, русское написание и первые буквы.
+
+    Раньше искалась только подстрока: «еуд» (набрано вместо «tel»), «хром»,
+    «ворд» и «vsc» не находили ничего.
+    """
+    from app.core import queries
+
+    apps = [{"id": n, "name": n, "category_id": "work", "launch_count": c}
+            for n, c in (("Telegram", 0), ("Google Chrome", 0), ("Microsoft Word", 0),
+                         ("Visual Studio Code", 0), ("Notepad", 3), ("Notion", 9))]
+
+    def first(q):
+        rows = queries.search_rows(apps, q, set(), [{"id": "work", "name": "Работа"}])
+        return [r["app"]["name"] for r in rows]
+
+    ok(first("еуд")[:1] == ["Telegram"], "a query typed in the Russian layout still finds it")
+    ok(first("телег")[:1] == ["Telegram"], "so does the name spelled in Cyrillic")
+    ok(first("хром")[:1] == ["Google Chrome"], "«хром» finds Chrome")
+    ok(first("ворд")[:1] == ["Microsoft Word"], "«ворд» finds Word")
+    ok(first("vsc")[:1] == ["Visual Studio Code"], "first letters of the words find it too")
+    ok(first("not") == ["Notion", "Notepad"],
+       "equally good matches go by how often they were launched")
+    ok(first("zzz") == [], "and nonsense finds nothing")
 
 
 def test_queries():

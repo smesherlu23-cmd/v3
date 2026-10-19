@@ -228,10 +228,20 @@ def _start(page: ft.Page):
             return
         if tray.available:
             hide_window()
+            tray_hint_once()
         else:
             page.window.minimized = True
             set_visible(False)
             page.update()
+
+    def tray_hint_once():
+        # Окно исчезло, а значок в Windows 11 часто спрятан за стрелкой —
+        # без подсказки кажется, что программа закрылась.
+        if store.state()["settings"].get("tray_hint_shown"):
+            return
+        if tray.notify("Centurio работает в трее. Щёлкните значок, чтобы открыть окно, "
+                       "или запустите Centurio ещё раз. Выйти — «Выход» в меню значка."):
+            store.set_setting("tray_hint_shown", True)
 
     def on_setting(key, value):
         if key == "autostart":
@@ -358,6 +368,8 @@ def _start(page: ft.Page):
 
         _optional("автозапуск", _adopt_autostart)
         _optional("значок в трее", tray.start)
+        _optional("показ окна по второму запуску",
+                  lambda: single_instance.listen(open_library))
         if start_hidden:
             # Прятаться в трей можно только если трей действительно поднялся:
             # иначе окно исчезнет, а вернуть его будет нечем.

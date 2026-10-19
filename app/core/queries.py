@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .text import launch_key, plu_programs, plu_windows, short_ago
+from .text import launch_key, match_rank, plu_programs, plu_windows, short_ago
 
 SORT_KEYS = ("alpha", "recent", "added", "manual")
 
@@ -166,12 +166,16 @@ def search_rows(apps: list[dict], query: str, running: set,
 
     q = (query or "").strip().lower()
     if q:
-        hits = [a for a in pool
-                if q in a["name"].lower()
-                or q in (a.get("sub") or "").lower()
-                or q in names.get(a.get("category_id"), "").lower()]
-        hits.sort(key=lambda a: (not a["name"].lower().startswith(q), a["name"].lower()))
-        for app in hits:
+        scored = []
+        for a in pool:
+            rank = match_rank(a["name"], q)
+            if rank is None and match_rank(
+                    f"{a.get('sub') or ''} {names.get(a.get('category_id'), '')}", q) is not None:
+                rank = 4
+            if rank is not None:
+                scored.append(((rank, -int(a.get("launch_count") or 0), a["name"].lower()), a))
+        scored.sort(key=lambda pair: pair[0])
+        for _key, app in scored:
             add(app, "открыто" if app["id"] in running else "")
         return out
 
@@ -194,7 +198,8 @@ def set_rows(sets: list[dict], apps: list[dict], query: str) -> list[dict]:
     out = []
     for rec in sets:
         members = [names[i] for i in rec.get("apps", []) if i in names]
-        if q and q not in rec["name"].lower() and not any(q in m.lower() for m in members):
+        if q and match_rank(rec["name"], q) is None \
+                and not any(match_rank(m, q) is not None for m in members):
             continue
         out.append({"set": rec, "members": members})
     return out
@@ -286,7 +291,7 @@ def group_found(found: list[dict], existing_keys: set, categories: list[dict],
         name = item.get("name") or ""
         if not path:
             continue
-        if q and q not in name.lower() and q not in path.lower():
+        if q and match_rank(name, q) is None and q not in path.lower():
             continue
         source = item.get("source") or ""
         if source not in SOURCES:
