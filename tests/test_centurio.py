@@ -4865,7 +4865,10 @@ def test_ui_sets():
            "the pure item-count/layout subtitle is a hint — stays hidden")
 
         # Набор запускается в своём потоке — пауза между программами не должна
-        # морозить окно. Здесь она обнулена, чтобы тест не ждал её вживую.
+        # морозить окно. Здесь она обнулена, чтобы тест не ждал её вживую,
+        # как и ожидание окон для раскладки: на windows-раннере их не будет.
+        from app.controllers import sets as sets_mod
+        saved_wait, sets_mod.ARRANGE_WAIT = sets_mod.ARRANGE_WAIT, 0.0
         store.update_set(rec["id"], {"delay_seconds": 0})
         ui.launcher.launch.return_value = {"ok": True, "running": True}
         ui.launcher.running_ids.return_value = ids
@@ -4896,6 +4899,7 @@ def test_ui_sets():
         ok(_settle_threads(before, timeout=6), "and the run finishes on its own")
         ok(time.time() - started_at >= 0.2,
            "having actually waited the pause between the two programs")
+        sets_mod.ARRANGE_WAIT = saved_wait
 
         third = store.add_app({"name": "Figma", "path": "/x/f", "category_id": "work"})["id"]
         ui.set_ops.add_to_set(rec["id"], [third])
