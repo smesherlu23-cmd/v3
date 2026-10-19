@@ -62,9 +62,12 @@ class Launcher:
             names: set[str] = set()
             track = (a.get("track_exe") or "").strip().lower()
             if track:
+                # Заданный процесс точнее пути: у приложений на Squirrel путь —
+                # общий для всех Update.exe, и по нему «запущенными» считались
+                # бы все сразу, стоило одному обновиться.
                 names.add(track)
             path = a.get("path") or ""
-            if path and "://" not in path:
+            if not track and path and "://" not in path:
                 base = ntpath.basename(path).lower()
                 if ntpath.splitext(base)[1] in _EXE_EXTS:
                     names.add(base)

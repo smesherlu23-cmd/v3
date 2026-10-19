@@ -3993,6 +3993,26 @@ def test_long_menus_scroll_instead_of_cutting_off():
            "and the menu stays inside the window, scrolling instead")
 
 
+def test_running_is_tracked_by_the_real_process():
+    """Приложение с известным процессом отслеживается по нему, а не по пути.
+
+    У Discord и Slack на Squirrel путь — их общий Update.exe: стоило одному
+    обновиться, «запущенными» становились все.
+    """
+    from app.platform import windows as W
+    from app.platform.launcher import Launcher
+
+    apps = [{"id": "d", "path": "C:/Discord/Update.exe", "track_exe": "Discord.exe"},
+            {"id": "s", "path": "C:/Slack/Update.exe", "track_exe": "slack.exe"},
+            {"id": "n", "path": "C:/Notepad++/notepad++.exe"}]
+    launcher = Launcher()
+    launcher.set_apps(apps)
+    ok("update.exe" not in launcher._exe_index, "the shared Update.exe is not a marker")
+    ok(launcher._exe_index.get("discord.exe") == {"d"}, "the real process is")
+    ok(launcher._exe_index.get("notepad++.exe") == {"n"}, "a plain program is still found by its exe")
+    ok(W.exe_names_for(apps[0]) == {"discord.exe"}, "window matching uses the same rule")
+
+
 def test_search_forgives_layout_and_cyrillic():
     """Поиск понимает не ту раскладку, русское написание и первые буквы.
 

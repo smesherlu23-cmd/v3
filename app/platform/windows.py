@@ -253,7 +253,7 @@ def exe_names_for(app: dict) -> set[str]:
     if track:
         names.add(track)
     path = app.get("path") or ""
-    if path and "://" not in path:
+    if not track and path and "://" not in path:
         base = ntpath.basename(path).lower()
         if base.endswith((".exe", ".bat", ".cmd", ".com")):
             names.add(base)
