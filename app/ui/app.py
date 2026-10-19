@@ -463,7 +463,17 @@ class CenturioUI:
         self.bulk_layer.visible = True
 
     def _flat_apps(self, sections=None):
-        return queries.flatten_sections(self.sections() if sections is None else sections)
+        """Плитки в том порядке, в каком они на экране, — без свёрнутых секций.
+
+        Стрелки ходили и по плиткам свёрнутых категорий: выделение пропадало
+        из виду, а Enter запускал невидимую программу. В режиме выбора свёрнутые
+        секции раскрыты, и их плитки снова участвуют.
+        """
+        sections = self.sections() if sections is None else sections
+        if not self.view.select_mode:
+            sections = [sec for sec in sections
+                        if not (sec.get("cid") and sec["cid"] in self.view.collapsed)]
+        return queries.flatten_sections(sections)
 
     def _selected_id(self, sections=None):
         if self.view.inspector:

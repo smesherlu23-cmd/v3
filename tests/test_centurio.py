@@ -4013,6 +4013,30 @@ def test_running_is_tracked_by_the_real_process():
     ok(W.exe_names_for(apps[0]) == {"discord.exe"}, "window matching uses the same rule")
 
 
+def test_arrow_keys_skip_collapsed_sections():
+    """Стрелки не уходят в свёрнутую категорию, Enter не запускает невидимое."""
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("collapsed navigation test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        hidden_cat = store.add_category("Свёрнутая")
+        shown = store.add_app({"name": "A", "path": "/x/a", "category_id": "work"})["id"]
+        store.add_app({"name": "B", "path": "/x/b", "category_id": hidden_cat["id"]})
+        ui, _ = _ui_for(store)
+        ui._toggle_section(hidden_cat["id"])
+        ok([a["id"] for a in ui._flat_apps()] == [shown], "a collapsed section's tiles are out")
+        ui.move_selection(1)
+        ui.move_selection(1)
+        ok(ui._flat_apps()[ui.view.selected]["id"] == shown,
+           "so the selection stays on what is actually shown")
+        ui.toggle_select_mode()
+        ok(len(ui._flat_apps()) == 2, "select mode opens collapsed sections, and counts them")
+
+
 def test_search_forgives_layout_and_cyrillic():
     """Поиск понимает не ту раскладку, русское написание и первые буквы.
 
