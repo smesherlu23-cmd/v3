@@ -4,6 +4,7 @@ import flet as ft
 
 from ..core import queries
 from ..core.hotkeys import slot_target
+from ..core.view_state import SEARCH_FIELD
 
 
 def _survives_typing(e, key: str) -> bool:
@@ -64,7 +65,8 @@ class Keymap:
             self.ui._launch(row["app"]["id"], from_palette=True, as_admin=admin)
 
     def _library_key(self, e, key):
-        if self.ui.view.typing and not _survives_typing(e, key):
+        if self.ui.view.typing and not _survives_typing(e, key) \
+                and not self._idle_search_escape(key):
             return
         if self.ui.view.screen == "triage":
             if self._triage_key(key):
@@ -86,6 +88,15 @@ class Keymap:
             self.ui.move_selection(-1)
         elif key in ("Enter", "Numpad Enter"):
             self.ui.activate_selected()
+
+    def _idle_search_escape(self, key) -> bool:
+        """Esc в пустом поиске — как Esc на главном экране.
+
+        Окно, открытое из трея, само ставит курсор в поиск; без этого Esc
+        перестал бы прятать его обратно. Набранный текст Esc не трогает.
+        """
+        return (key == "Escape" and self.ui.view.typing == SEARCH_FIELD
+                and not (self.ui.search_field.value or "").strip())
 
     def _triage_key(self, key) -> bool:
         queue = self.ui.inbox()

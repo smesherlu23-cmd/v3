@@ -5716,8 +5716,14 @@ def test_ui_keys_belong_to_the_focused_field():
         ui.controllers["hide_to_tray"] = lambda: hidden.append(1)
         ui.keymap.handle_key(_key("Arrow Down"))
         ok(ui.view.selected == -1, "стрелки в поиске не двигают выделение в сетке")
+        search.value = "tel"
         ui.keymap.handle_key(_key("Escape"))
-        ok(hidden == [], "Escape в поле не прячет окно в трей")
+        ok(hidden == [], "Escape в поле с текстом не прячет окно в трей")
+        search.value = ""
+        ui.keymap.handle_key(_key("Escape"))
+        ok(hidden == [1], "а в пустом поиске прячет — как на главном экране, "
+                          "иначе окно из трея (курсор сразу в поиске) не убрать клавишей")
+        search.on_focus(types_ns(control=search))
 
         ui.refresh()
         ok(ui.view.typing == "search",
