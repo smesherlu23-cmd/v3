@@ -453,6 +453,197 @@ def test_native_registry_and_localapps_discovery():
        "system-directory exes are recognised so they can be filtered out")
 
 
+def test_shortcut_arguments_survive_discovery():
+    """Ярлык меню «Пуск» приносит аргументы и рабочую папку, а не только exe.
+
+    У Discord ярлык ведёт на `Update.exe --processStart Discord.exe`: без
+    аргументов Update.exe ничего не запускает. Ярлыки приложений Chrome
+    ведут на один chrome_proxy.exe с разными `--app-id` и по одному пути
+    склеивались в одну запись.
+    """
+    from app.platform import discovery
+    from app.platform.discovery import windows as win
+
+    ok(win.shortcut_args('--processStart "Discord.exe"') == ["--processStart", "Discord.exe"],
+       "shortcut arguments are split with quotes removed")
+    ok(win.shortcut_args('--a "unclosed') == ["--a", '"unclosed'],
+       "an unbalanced quote falls back to a plain split instead of failing")
+    ok(win.squirrel_target(["--processStart", "Discord.exe"]) == "Discord.exe",
+       "the real program behind Squirrel's Update.exe is recognised")
+    ok(win.squirrel_target(["--app-id=x"]) is None, "other arguments name no program")
+
+    with tempfile.TemporaryDirectory() as d:
+        update = os.path.join(d, "Update.exe")
+        proxy = os.path.join(d, "chrome_proxy.exe")
+        for path in (update, proxy):
+            with open(path, "wb") as fh:
+                fh.write(b"x")
+        menu = [
+            {"name": "Discord", "path": update, "src": "startmenu",
+             "args": "--processStart Discord.exe", "wd": d},
+            {"name": "YouTube", "path": proxy, "src": "startmenu", "args": "--app-id=yt"},
+            {"name": "Gmail", "path": proxy, "src": "startmenu", "args": "--app-id=gm"},
+        ]
+        class _WindowsOs:
+            name = "nt"
+
+            def __getattr__(self, attr):
+                return getattr(os, attr)
+
+        saved = (win.raw_windows_entries, win._registry_entries, win._localapps_entries,
+                 win.os)
+        try:
+            win.raw_windows_entries = lambda cache: (menu, "", 0)
+            win._registry_entries = lambda: [{"name": "Discord Inc", "path": update,
+                                              "icon": None, "src": "registry"}]
+            win._localapps_entries = lambda: []
+            win.os = _WindowsOs()
+            found = discovery._dedupe(win._discover_windows(None))
+        finally:
+            (win.raw_windows_entries, win._registry_entries, win._localapps_entries,
+             win.os) = saved
+
+    by_name = {a["name"]: a for a in found}
+    ok(set(by_name) == {"Discord", "YouTube", "Gmail"},
+       f"both web apps survive and the bare registry copy is dropped ({sorted(by_name)})")
+    ok(by_name["Discord"]["args"] == ["--processStart", "Discord.exe"]
+       and by_name["Discord"]["working_dir"] == d,
+       "the shortcut's arguments and working folder are kept")
+    ok(by_name["Discord"]["track_exe"] == "Discord.exe",
+       "and the running program is tracked by its real exe")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ok(store.queue_inbox(found) == 3, "each shortcut becomes its own queue entry")
+        item = next(i for i in store.state()["inbox"] if i["name"] == "Discord")
+        ok(item["args"] == ["--processStart", "Discord.exe"], "and keeps its arguments there")
+
+
+def test_dismissed_programs_stay_dismissed():
+    """«Не нужно» в разборе и удаление из библиотеки запоминаются.
+
+    Раньше следующее сканирование (а с автопроверкой — каждые 15 минут)
+    клало ту же программу обратно в очередь.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("dismiss test", exc)
+        return
+
+    found = [{"name": "Junk", "path": "C:/junk.exe"}, {"name": "Keep", "path": "C:/keep.exe"}]
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+        store.queue_inbox(found)
+        junk = next(i for i in store.state()["inbox"] if i["name"] == "Junk")
+        ui.triage.triage_drop(junk["id"])
+        ok(store.is_ignored(junk), "«не нужно» puts the program on the ignore list")
+        ok(store.queue_inbox(found) == 0, "and the next scan does not bring it back")
+
+        ui.toast.fire_action()
+        ok(not store.is_ignored(junk) and len(store.state()["inbox"]) == 2,
+           "undo takes it off the list and back into the queue")
+
+        keep = next(i for i in store.state()["inbox"] if i["name"] == "Keep")
+        ui.triage.triage_place(keep["id"], "work")
+        app = next(a for a in store.state()["apps"] if a["name"] == "Keep")
+        ui._remove_apps([app["id"]])
+        ok(store.queue_inbox(found) == 0, "a program removed from the library is not re-offered")
+        ui.toast.fire_action()
+        ok(not store.is_ignored(app), "until the removal is undone")
+
+        store.ignore([{"path": "C:/later.exe"}])
+        store.add_app({"name": "Later", "path": "C:/later.exe"})
+        ok(not store.is_ignored({"path": "C:/later.exe"}),
+           "adding a program by hand forgets that it was dismissed")
+
+        reread = Store(os.path.join(d, "data.json"))
+        ok(reread.state()["ignored"] == store.state()["ignored"], "the list survives a restart")
+
+
+def test_set_layout_waits_for_late_windows():
+    """Раскладка набора ждёт окна, которые открываются не сразу.
+
+    Раньше окна расставлялись один раз через пару секунд после запуска:
+    тяжёлая программа к этому моменту окна ещё не показала и молча
+    оставалась на месте.
+    """
+    try:
+        from app.controllers import sets as sets_mod
+    except Exception as exc:
+        skip("set layout wait test", exc)
+        return
+    from unittest.mock import MagicMock
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ids = [store.add_app({"name": n, "path": f"C:/{n}.exe"})["id"] for n in ("a", "b")]
+        rec = store.add_set("S", ids)
+        store.update_set(rec["id"], {"layout": {"preset": "half"}})
+
+        calls = {"n": 0}
+        placed = []
+
+        def list_windows():
+            calls["n"] += 1
+            wins = [{"hwnd": 1, "exe": "a.exe", "minimized": False}]
+            if calls["n"] >= 3:
+                wins.append({"hwnd": 2, "exe": "b.exe", "minimized": False})
+            return wins
+
+        fake = types_ns(
+            available=lambda: True, work_area=lambda i=0: (0, 0, 1000, 800),
+            list_windows=list_windows,
+            windows_for=lambda names, snap: [w for w in snap if w["exe"] in names],
+            exe_names_for=lambda app: {os.path.basename(app["path"]).lower()},
+            place=lambda hwnd, rect: placed.append(hwnd) or True,
+            minimize=lambda hwnd: True)
+        ui = MagicMock()
+        ui.store = store
+        saved = (sets_mod.W, sets_mod.ARRANGE_POLL, sets_mod.ARRANGE_SETTLE)
+        sets_mod.W, sets_mod.ARRANGE_POLL, sets_mod.ARRANGE_SETTLE = fake, 0.01, 0.01
+        try:
+            sets_mod.SetsController(ui).arrange_set(rec["id"], quiet=True, wait=2.0)
+        finally:
+            sets_mod.W, sets_mod.ARRANGE_POLL, sets_mod.ARRANGE_SETTLE = saved
+        ok(2 in placed, "a window that appears late is still put in its place")
+        ok(placed.count(1) >= 2, "and the early one is placed again once things settle")
+        ok(not ui.notify.show.called, "nothing to complain about when every window showed up")
+
+
+def test_console_programs_get_a_console():
+    """Консольная программа запускается со своим окном консоли.
+
+    С DETACHED_PROCESS у PowerShell, Python или .bat консоли не было вовсе:
+    они работали невидимо или сразу завершались.
+    """
+    from app.platform import launcher as la_mod
+
+    seen = {}
+
+    class FakeProc:
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kw):
+        seen.update(kw)
+        return FakeProc()
+
+    with tempfile.TemporaryDirectory() as d:
+        exe = os.path.join(d, "pwsh.exe")
+        with open(exe, "wb") as fh:
+            fh.write(b"x")
+        saved = la_mod.subprocess.Popen
+        la_mod.subprocess.Popen = fake_popen
+        try:
+            res = la_mod.Launcher().launch({"id": "p", "path": exe})
+        finally:
+            la_mod.subprocess.Popen = saved
+    ok(res.get("ok"), "the program starts")
+    ok(seen.get("creationflags") == 0x10, "with CREATE_NEW_CONSOLE, not DETACHED_PROCESS")
+
+
 def test_discovery_sources():
     """Найденное помечается источником и умеет докладывать об ошибках."""
     from app.platform import discovery
@@ -4548,10 +4739,23 @@ def test_ui_sets():
         store.update_set(rec["id"], {"delay_seconds": 0})
         ui.launcher.launch.return_value = {"ok": True, "running": True}
         ui.launcher.running_ids.return_value = ids
+        ui.launcher.is_running.return_value = False
         before = set(__import__("threading").enumerate())
         ui.set_ops.launch_set(rec["id"])
         ok(_settle_threads(before), "running a set finishes off the UI thread")
         ok(ui.launcher.launch.call_count == 2, "having started everything in it")
+
+        # Уже открытая программа второй раз не запускается — набор только
+        # добавляет недостающее.
+        ui.launcher.launch.reset_mock()
+        ui.launcher.is_running.side_effect = lambda app_id: app_id == ids[0]
+        before = set(__import__("threading").enumerate())
+        ui.set_ops.launch_set(rec["id"])
+        ok(_settle_threads(before), "the second run finishes too")
+        ok([c.args[0]["id"] for c in ui.launcher.launch.call_args_list] == [ids[1]],
+           "a program that is already open is not started a second time")
+        ok("уже были открыты" in ui.toast.text.value, "and the toast says which were open")
+        ui.launcher.is_running.side_effect = None
 
         store.update_set(rec["id"], {"delay_seconds": 0.2})
         ui.launcher.launch.reset_mock()

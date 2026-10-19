@@ -93,6 +93,8 @@ class AppSet(TypedDict, total=False):
 class InboxItem(TypedDict, total=False):
     id: str
     path: str
+    args: list[str]
+    working_dir: str
     name: str
     source: str
     order: int
@@ -105,4 +107,5 @@ class StoreState(TypedDict, total=False):
     categories: list[Category]
     sets: list[AppSet]
     inbox: list[InboxItem]
+    ignored: list[str]
     settings: Settings

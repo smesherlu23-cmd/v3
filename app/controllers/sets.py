@@ -13,6 +13,14 @@ from ..platform import windows as W
 if TYPE_CHECKING:
     from .host import UIHost
 
+# Сколько ждать окна только что запущенных программ: тяжёлые (IDE, браузер с
+# десятком вкладок) рисуют главное окно не за секунду.
+ARRANGE_WAIT = 20.0
+ARRANGE_POLL = 0.5
+# Многие программы сами восстанавливают своё прошлое положение уже после
+# того, как окно появилось, — поэтому раскладка повторяется ещё раз.
+ARRANGE_SETTLE = 1.5
+
 
 class SetsController:
     def __init__(self, ui: UIHost):
@@ -37,13 +45,16 @@ class SetsController:
 
     def _run_set(self, rec, from_palette: bool):
         delay = max(0.0, float(rec.get("delay_seconds") or 0.0))
-        started, failed = [], 0
+        started, failed, already = [], 0, []
         try:
-            for index, entry in enumerate(rec["items"]):
+            for entry in rec["items"]:
                 app = self.store.get_app(entry["app_id"])
                 if not app:
                     continue
-                if index and delay:
+                if self.launcher.is_running(app["id"]):
+                    already.append(app["name"])
+                    continue
+                if (started or failed) and delay:
                     time.sleep(delay)
                 try:
                     res = self.launcher.launch(app)
@@ -56,23 +67,27 @@ class SetsController:
                 else:
                     failed += 1
             self.ui.running = set(self.launcher.running_ids())
-            if not started:
+            if not started and not already:
                 self.notify.error(f"Ни одна программа из «{rec['name']}» не запустилась")
                 self.ui.safe_refresh()
                 return
-            text = "Открыто: " + ", ".join(started)
+            parts = []
+            if started:
+                parts.append("Открыто: " + ", ".join(started))
+            if already:
+                parts.append("уже были открыты: " + ", ".join(already))
             if failed:
-                text += f" · не удалось: {failed}"
-            self.notify.show(text, icon="layers")
-            if W.available() and queries.has_layout(rec):
-                time.sleep(max(0.5, delay))
-                self.arrange_set(rec["id"], quiet=True)
+                parts.append(f"не удалось: {failed}")
+            self.notify.show(" · ".join(parts), icon="layers")
             self.ui.after_launch(from_palette)
+            if W.available() and queries.has_layout(rec):
+                self.arrange_set(rec["id"], quiet=True, wait=ARRANGE_WAIT)
         except Exception:
             log.exception("запуск набора «%s» failed", rec.get("name"))
             self.ui.safe_refresh()
 
-    def arrange_set(self, set_id, quiet: bool = False):
+    def arrange_set(self, set_id, quiet: bool = False, wait: float = 0.0):
+        """Расставить окна набора. `wait` — сколько секунд ждать ещё не открытые."""
         rec = self.store.get_set(set_id)
         if not rec:
             return
@@ -89,30 +104,52 @@ class SetsController:
             if not quiet:
                 self.notify.error("Не удалось прочитать размеры экрана")
             return
-        snapshot = W.list_windows()
-        placed = 0
         conf = rec["layout"]
+        targets = {}
         for entry in rec["items"]:
             app = self.store.get_app(entry["app_id"])
             if not app:
                 continue
-            wins = W.windows_for(W.exe_names_for(app), snapshot)
-            if not wins:
-                continue
             if entry.get("minimized"):
-                if W.minimize(wins[0]["hwnd"]):
-                    placed += 1
+                targets[app["id"]] = (app, None)
                 continue
             rect = L.rect_for(entry, conf["preset"], conf["split"], conf["vsplit"])
-            if rect is None:
-                continue
-            if W.place(wins[0]["hwnd"], L.to_pixels(rect, area)):
-                placed += 1
+            if rect is not None:
+                targets[app["id"]] = (app, L.to_pixels(rect, area))
+
+        def place_all(skip=()) -> set:
+            done = set()
+            snapshot = W.list_windows()
+            for app_id, (app, pixels) in targets.items():
+                if app_id in skip:
+                    continue
+                wins = W.windows_for(W.exe_names_for(app), snapshot)
+                if not wins:
+                    continue
+                hwnd = wins[0]["hwnd"]
+                if W.minimize(hwnd) if pixels is None else W.place(hwnd, pixels):
+                    done.add(app_id)
+            return done
+
+        placed = place_all()
+        deadline = time.monotonic() + max(0.0, wait)
+        while len(placed) < len(targets) and time.monotonic() < deadline:
+            time.sleep(ARRANGE_POLL)
+            placed |= place_all(skip=placed)
+        if wait and placed:
+            time.sleep(ARRANGE_SETTLE)
+            place_all()
+        missing = [app["name"] for app_id, (app, _px) in targets.items() if app_id not in placed]
+
         if fallback:
             self.notify.show(f"Монитора {rec['monitor'] + 1} нет — разложили на основном",
                                icon="monitor", tone="muted")
+        elif wait and missing:
+            self.notify.show("Не дождался окон: " + ", ".join(missing)
+                             + " — «Расставить окна» в меню набора разложит их позже",
+                             icon="arrange", tone="muted")
         elif not quiet:
-            self.notify.show(f"Окна расставлены: {placed}" if placed
+            self.notify.show(f"Окна расставлены: {len(placed)}" if placed
                                else "Ни одно окно набора не открыто",
                                icon="arrange", tone="muted")
         self.ui.safe_refresh()

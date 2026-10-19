@@ -201,6 +201,9 @@ def clean_inbox(item, index: int) -> dict | None:
     name = rec.get("name")
     rec["name"] = name.strip() if isinstance(name, str) and name.strip() else "Без названия"
     rec["source"] = rec["source"] if isinstance(rec.get("source"), str) else ""
+    args = rec.get("args")
+    rec["args"] = [a for a in args if isinstance(a, str)] if isinstance(args, list) else []
+    rec["working_dir"] = rec["working_dir"] if isinstance(rec.get("working_dir"), str) else ""
     rec["order"] = as_int(rec.get("order"), index)
     rec["found_at"] = as_int(rec.get("found_at"))
     return rec

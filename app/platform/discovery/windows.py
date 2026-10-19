@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 
+from ...core.text import split_args
 from ...infra import log
 from .. import win_icons
 
@@ -363,7 +364,7 @@ function Save-StoreIcon($family,$appId){
 _WIN_PS = _PS_PRELUDE + _PS_STORE_FUNCS + r'''
 $sh=New-Object -ComObject WScript.Shell
 $out=New-Object System.Collections.ArrayList
-function Add-App($n,$p,$s){ if(-not $n -or -not $p){ return }; if($p.ToLower() -like '*\windows\*'){ return }; [void]$out.Add([PSCustomObject]@{name="$n";path="$p";icon=$null;src="$s"}) }
+function Add-App($n,$p,$s,$a,$w){ if(-not $n -or -not $p){ return }; if($p.ToLower() -like '*\windows\*'){ return }; [void]$out.Add([PSCustomObject]@{name="$n";path="$p";icon=$null;src="$s";args="$a";wd="$w"}) }
 function Add-Store($n,$id){
   if(-not $n -or -not $id){ return }
   $parts=$id -split '!',2
@@ -377,7 +378,7 @@ $menus=@(__DIRS__)
 foreach($d in $menus){
   Get-ChildItem -LiteralPath $d -Recurse -Filter *.lnk 2>$null | ForEach-Object {
     $t=$sh.CreateShortcut($_.FullName); $p=$t.TargetPath
-    if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App $_.BaseName $p 'startmenu' }
+    if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App $_.BaseName $p 'startmenu' $t.Arguments $t.WorkingDirectory }
   }
 }
 
@@ -395,7 +396,7 @@ try{
       if(-not $skip){ Add-Store $_.Name $id }
     } elseif($id -and $id.ToLower().EndsWith('.lnk') -and (Test-Path -LiteralPath $id)){
       $t=$sh.CreateShortcut($id); $p=$t.TargetPath
-      if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App $_.Name $p 'startmenu' }
+      if($p -and $p.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $p)){ Add-App $_.Name $p 'startmenu' $t.Arguments $t.WorkingDirectory }
     } elseif($id -and $id.ToLower().EndsWith('.exe') -and (Test-Path -LiteralPath $id)){
       Add-App $_.Name $id 'startmenu'
     }
@@ -494,6 +495,28 @@ def trim_transparent_padding(path: str, min_content_ratio: float = 0.85) -> None
         log.exception("не удалось обрезать прозрачные поля у иконки %s", path)
 
 
+def shortcut_args(text) -> list[str]:
+    text = str(text or "").strip()
+    if not text:
+        return []
+    try:
+        return split_args(text)
+    except ValueError:
+        return text.split()
+
+
+def squirrel_target(args) -> str | None:
+    """Настоящий exe приложения на Squirrel (`Update.exe --processStart X.exe`).
+
+    Сам Update.exe живёт секунду, а окна принадлежат X.exe — следить за
+    запущенным и раскладывать окна нужно по нему.
+    """
+    for flag, value in zip(args, args[1:]):
+        if flag.lower() == "--processstart" and value.lower().endswith(".exe"):
+            return ntpath.basename(value)
+    return None
+
+
 def _discover_windows(icon_cache: str | None) -> list[dict]:
     data, stderr, code = raw_windows_entries(icon_cache)
     if not data and (code != 0 or stderr):
@@ -501,7 +524,12 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
                    "(код %s): %s", code, stderr[:2000])
 
     if os.name == "nt":
-        data = list(data) + _registry_entries() + _localapps_entries()
+        # Реестр и папка Programs знают только путь к exe. Если на тот же exe
+        # уже есть ярлык в меню «Пуск», ярлык точнее: он несёт аргументы, без
+        # которых, например, Update.exe у Discord ничего не запускает.
+        menu = {str(x.get("path") or "").lower() for x in data if x.get("src") == "startmenu"}
+        data = list(data) + [x for x in _registry_entries() + _localapps_entries()
+                             if x["path"].lower() not in menu]
 
     apps = []
     for x in data:
@@ -516,8 +544,11 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
                 trim_transparent_padding(icon)
         elif icon_cache and not icon:
             icon = _win_extract_one(path, icon_cache)
-        apps.append({"name": name, "path": path, "icon": icon,
+        args = shortcut_args(x.get("args"))
+        apps.append({"name": name, "path": path, "args": args,
+                     "working_dir": str(x.get("wd") or ""), "icon": icon,
                      "icon_fit": "contain", "source": src,
+                     "track_exe": squirrel_target(args),
                      "sub": "Microsoft Store" if src == "store" else ""})
     return apps
 

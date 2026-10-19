@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core import queries
-from ..core.text import plu_apps
+from ..core.text import launch_key, plu_apps
 from ..infra import log
 from ..platform import discovery
 
@@ -100,7 +100,7 @@ class ScanController:
     def found_groups(self):
         found = self.cached_discovery() or []
         found = list(found) + list(self._manual_found)
-        existing = {(a.get("path") or "").lower() for a in self.ui.apps()}
+        existing = {launch_key(a) for a in self.ui.apps()}
         return queries.group_found(found, existing, self.ui.categories(),
                                    only_new=self.ui.view.only_new,
                                    query=self.ui.view.add_query)
@@ -132,13 +132,13 @@ class ScanController:
         if steam:
             item.update(steam)
         found = list(self._manual_found)
-        if any((f.get("path") or "").lower() == item["path"].lower() for f in found):
+        if any(launch_key(f) == launch_key(item) for f in found):
             self.notify.show("Этот путь уже в списке", icon="check_circle", tone="muted")
             return
         found.append(item)
         self._manual_found = found
         self.ui.view.manual_path = ""
-        self.ui.view.add_sel.add(item["path"].lower())
+        self.ui.view.add_sel.add(launch_key(item))
         if steam:
             self.notify.show(f"{item['name']} — игра Steam, запустится через клиент",
                                icon="link", tone="muted")
@@ -185,7 +185,9 @@ class ScanController:
         for row in chosen:
             item = row["item"]
             payload.append({
-                "name": item.get("name"), "path": item.get("path"), "icon": item.get("icon"),
+                "name": item.get("name"), "path": item.get("path"),
+                "args": item.get("args") or [], "working_dir": item.get("working_dir") or "",
+                "icon": item.get("icon"),
                 "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
                 "track_exe": item.get("track_exe"), "poster": item.get("poster"),
                 "category_id": self.add_category_for(row),
@@ -295,8 +297,8 @@ class ScanController:
                     discovery.prune_icon_cache(self.store, cache)
                 except Exception:
                     log.exception("не удалось прибрать кэш иконок")
-                existing = {(a.get("path") or "").lower() for a in self.store.state()["apps"]}
-                new = [a for a in found if (a.get("path") or "").lower() not in existing]
+                existing = {launch_key(a) for a in self.store.state()["apps"]}
+                new = [a for a in found if launch_key(a) not in existing]
                 if new and self.store.state()["settings"].get("triage", True):
                     queued = self.store.queue_inbox(new)
                     self.ui.on_library_changed()

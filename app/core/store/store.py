@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ...infra import log, paths
 from ...infra.debounce import Debounce
 from .. import layout as L
+from ..text import launch_key
 from . import sanitize
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ class Store:
             "apps": [],
             "sets": [],
             "inbox": [],
+            "ignored": [],
             "settings": {**sanitize.DEFAULT_SETTINGS,
                         "ui_defaults_version": sanitize.UI_DEFAULTS_VERSION},
         }
@@ -120,9 +122,12 @@ class Store:
         for rec in sets:
             rec["items"] = [i for i in rec["items"] if i["app_id"] in known]
             sanitize.fit_slots(sanitize.mirror_items(rec))
-        have = {(a.get("path") or "").lower() for a in apps}
+        have = {launch_key(a) for a in apps}
         inbox = [i for i in sanitize.clean_records(parsed.get("inbox"), sanitize.clean_inbox)
-                 if i["path"].lower() not in have]
+                 if launch_key(i) not in have]
+        raw_ignored = parsed.get("ignored")
+        ignored = list(dict.fromkeys(k for k in raw_ignored if isinstance(k, str) and k)) \
+            if isinstance(raw_ignored, list) else []
         raw_settings = parsed.get("settings")
         prior_version = raw_settings.get("ui_defaults_version") \
             if isinstance(raw_settings, dict) else None
@@ -136,6 +141,7 @@ class Store:
             "apps": apps,
             "sets": [s for s in sets if s["items"]],
             "inbox": inbox,
+            "ignored": ignored,
             "settings": sanitize.clean_settings(raw_settings),
         }
 
@@ -234,6 +240,7 @@ class Store:
         with self._lock:
             record = self._new_app_record(app)
             self.data["apps"].append(record)
+            self._forget_ignored([record])
             self._persist()
             return _clone(record)
 
@@ -246,8 +253,40 @@ class Store:
                 records.append(record)
             if not records:
                 return []
+            self._forget_ignored(records)
             self._persist()
             return _clone(records)
+
+    def _forget_ignored(self, records) -> None:
+        keys = {launch_key(r) for r in records}
+        if keys & set(self.data["ignored"]):
+            self.data["ignored"] = [k for k in self.data["ignored"] if k not in keys]
+
+    def _remember_ignored(self, records) -> None:
+        known = set(self.data["ignored"])
+        for key in (launch_key(r) for r in records):
+            if key and key not in known:
+                self.data["ignored"].append(key)
+                known.add(key)
+
+    def ignore(self, records) -> None:
+        """Больше не предлагать эти программы при сканировании."""
+        with self._lock:
+            before = len(self.data["ignored"])
+            self._remember_ignored(records)
+            if len(self.data["ignored"]) != before:
+                self._persist()
+
+    def unignore(self, records) -> None:
+        with self._lock:
+            before = len(self.data["ignored"])
+            self._forget_ignored(records)
+            if len(self.data["ignored"]) != before:
+                self._persist()
+
+    def is_ignored(self, record) -> bool:
+        with self._lock:
+            return launch_key(record) in self.data["ignored"]
 
     def _app_ref(self, app_id: str) -> dict | None:
         return next((a for a in self.data["apps"] if a["id"] == app_id), None)
@@ -312,6 +351,7 @@ class Store:
         if not gone:
             return {"apps": [], "sets": []}
         self.data["apps"] = [a for a in self.data["apps"] if a["id"] not in wanted]
+        self._remember_ignored(gone)
         affected_sets = []
         kept_sets = []
         for rec in self.data["sets"]:
@@ -343,6 +383,7 @@ class Store:
             if not fresh:
                 return 0
             self.data["apps"] += fresh
+            self._forget_ignored(fresh)
             self._persist()
             return len(fresh)
 
@@ -637,18 +678,22 @@ class Store:
 
     def queue_inbox(self, items) -> int:
         with self._lock:
-            have = {(a.get("path") or "").lower() for a in self.data["apps"]}
-            have |= {i["path"].lower() for i in self.data["inbox"]}
+            have = {launch_key(a) for a in self.data["apps"]}
+            have |= {launch_key(i) for i in self.data["inbox"]}
+            have |= set(self.data["ignored"])
             added = 0
             for item in items:
                 path = (item.get("path") or "").strip()
-                if not path or path.lower() in have:
+                key = launch_key(item)
+                if not path or key in have:
                     continue
-                have.add(path.lower())
+                have.add(key)
                 self.data["inbox"].append({
                     "id": str(uuid.uuid4()),
                     "name": item.get("name") or "Без названия",
                     "path": path,
+                    "args": list(item.get("args") or []),
+                    "working_dir": item.get("working_dir") or "",
                     "icon": item.get("icon"),
                     "icon_fit": item.get("icon_fit") or "contain",
                     "poster": item.get("poster"),
@@ -749,16 +794,19 @@ class Store:
                     self.data["sets"].append(rec)
                     hs.add(rec["id"])
 
-                seen_paths = {(a.get("path") or "").lower() for a in self.data["apps"]}
-                seen_paths |= {i["path"].lower() for i in self.data["inbox"]}
+                seen = {launch_key(a) for a in self.data["apps"]}
+                seen |= {launch_key(i) for i in self.data["inbox"]}
                 for item in clean["inbox"]:
-                    path = item["path"].lower()
-                    if path in seen_paths:
+                    key = launch_key(item)
+                    if key in seen:
                         continue
                     item = _clone(item)
                     item["order"] = len(self.data["inbox"])
                     self.data["inbox"].append(item)
-                    seen_paths.add(path)
+                    seen.add(key)
+                known = set(self.data["ignored"])
+                self.data["ignored"] += [k for k in clean["ignored"] if k not in known]
+                self._forget_ignored(self.data["apps"])
             else:
                 self.data = clean
             self._persist()

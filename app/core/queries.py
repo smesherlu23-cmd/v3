@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .text import plu_programs, plu_windows, short_ago
+from .text import launch_key, plu_programs, plu_windows, short_ago
 
 SORT_KEYS = ("alpha", "recent", "added", "manual")
 
@@ -277,7 +277,7 @@ def suggest_categories(item: dict, categories: list[dict], limit: int = 4) -> li
     return ordered[:limit]
 
 
-def group_found(found: list[dict], existing_paths: set, categories: list[dict],
+def group_found(found: list[dict], existing_keys: set, categories: list[dict],
                 only_new: bool = False, query: str = "") -> list[dict]:
     q = (query or "").strip().lower()
     buckets: dict[str, list[dict]] = {}
@@ -291,12 +291,13 @@ def group_found(found: list[dict], existing_paths: set, categories: list[dict],
         source = item.get("source") or ""
         if source not in SOURCES:
             source = ""
+        key = launch_key(item)
         buckets.setdefault(source, []).append({
-            "key": path.lower(),
+            "key": key,
             "item": item,
             "name": name,
             "path": path,
-            "is_new": path.lower() not in existing_paths,
+            "is_new": key not in existing_keys,
             "cat": suggest_category(item, categories),
         })
 

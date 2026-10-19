@@ -12,6 +12,20 @@ def split_args(text: str) -> list[str]:
     return list(lexer)
 
 
+def launch_key(item) -> str:
+    """Что именно запускается: путь и аргументы, без учёта регистра.
+
+    Ярлыки приложений Chrome или Discord ведут на один и тот же exe с разными
+    аргументами — по одному пути они склеивались в одну запись.
+    """
+    path = str(item.get("path") or "").strip().lower()
+    args = item.get("args")
+    if isinstance(args, (list, tuple)):
+        args = " ".join(str(a) for a in args)
+    args = str(args or "").strip().lower()
+    return f"{path}\x00{args}" if args else path
+
+
 def _plural(n, one, few, many):
     m10, m100 = n % 10, n % 100
     if m10 == 1 and m100 != 11:

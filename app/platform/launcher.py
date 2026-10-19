@@ -11,7 +11,10 @@ from ..core.text import split_args
 from ..infra import log, procs
 
 _EXE_EXTS = {".exe", ".bat", ".cmd", ".com"}
-_DETACHED_PROCESS = 0x00000008
+# Консольной программе (PowerShell, Python, .bat) — своё окно консоли.
+# С DETACHED_PROCESS консоли не было вовсе: программа работала невидимо или
+# сразу завершалась. Оконные программы этот флаг не замечают.
+_CREATE_NEW_CONSOLE = 0x00000010
 
 
 def explorer_exe() -> str:
@@ -192,7 +195,7 @@ class Launcher:
 
         if self._is_executable(path):
             try:
-                proc = subprocess.Popen([path, *args], cwd=cwd, creationflags=_DETACHED_PROCESS)
+                proc = subprocess.Popen([path, *args], cwd=cwd, creationflags=_CREATE_NEW_CONSOLE)
             except OSError:
                 log.exception("Popen failed for %s; falling back to shell open", path)
                 try:

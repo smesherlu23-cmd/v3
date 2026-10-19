@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from ...core.text import launch_key
 from ...infra import log
 from . import epic_art, steam_art, steam_paths, windows  # noqa: F401
 from .epic import _epic_games
@@ -127,9 +128,10 @@ def _dedupe(apps: list[dict]) -> list[dict]:
         name = (a.get("name") or "").strip()
         if not path or not name:
             continue
-        key = path.lower()
+        key = launch_key(a)
         if key not in seen:
-            seen[key] = {"name": name, "path": path, "icon": a.get("icon"),
+            seen[key] = {"name": name, "path": path, "args": list(a.get("args") or []),
+                         "working_dir": a.get("working_dir") or "", "icon": a.get("icon"),
                          "icon_fit": a.get("icon_fit", "contain"), "source": a.get("source", ""),
                          "sub": a.get("sub", ""), "track_exe": a.get("track_exe"),
                          "poster": a.get("poster")}
