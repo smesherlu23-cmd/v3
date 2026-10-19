@@ -5567,6 +5567,9 @@ def test_ui_category_popover():
         swapped = ui._store_category_image(cat_id, jpg)
         ok(swapped and swapped.endswith(".jpg"), "a JPG is accepted, not just PNG/SVG")
         ok(not os.path.exists(stored), "and the previous file is cleaned up")
+        again = ui._store_category_image(cat_id, jpg)
+        ok(again != swapped and not os.path.exists(swapped),
+           "a new picture of the same format gets a new name, so no stale cached image shows")
 
         ok(ui._store_category_image(cat_id, os.path.join(d, "notes.txt")) is None,
            "something that isn't an image is still refused")

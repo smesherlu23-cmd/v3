@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 
@@ -774,7 +775,7 @@ class CenturioUI:
             self.toast.error("Подойдёт PNG, JPG, WEBP, GIF, BMP или ICO")
             return None
         dest_dir = Path(self.icon_cache_dir()) / "custom"
-        dest = dest_dir / f"{app_id}-{int(time.time() * 1000)}.png"
+        dest = dest_dir / f"{app_id}-{uuid.uuid4().hex[:8]}.png"
         try:
             from PIL import Image
 
@@ -988,19 +989,21 @@ class CenturioUI:
         import shutil
         suffix = Path(src).suffix.lower()
         if suffix not in CATEGORY_IMAGE_EXTS:
-            self.toast.error("Подойдёт PNG, JPG, WEBP, GIF или SVG")
+            self.toast.error("Подойдёт PNG, JPG, WEBP, GIF, BMP или SVG")
             return None
         dest_dir = Path(self.icon_cache_dir()) / "categories"
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / f"{cat_id}{suffix}"
+            # Новое имя на каждую смену: по старому пути Flutter показывал бы
+            # прежнюю картинку из своего кэша до перезапуска.
+            dest = dest_dir / f"{cat_id}-{uuid.uuid4().hex[:8]}{suffix}"
             shutil.copyfile(src, dest)
         except OSError:
             log.exception("не удалось скопировать изображение категории")
             self.toast.error("Не удалось прочитать файл")
             return None
 
-        for stale in dest_dir.glob(f"{cat_id}.*"):
+        for stale in [*dest_dir.glob(f"{cat_id}.*"), *dest_dir.glob(f"{cat_id}-*")]:
             if stale != dest:
                 try:
                     stale.unlink()
