@@ -561,6 +561,14 @@ def test_dismissed_programs_stay_dismissed():
         reread = Store(os.path.join(d, "data.json"))
         ok(reread.state()["ignored"] == store.state()["ignored"], "the list survives a restart")
 
+        # Отмена «положить в категорию» и отмена добавления — это «не сейчас»,
+        # а не «никогда»: программа не должна попасть в список молча.
+        store.queue_inbox([{"name": "Maybe", "path": "C:/maybe.exe"}])
+        maybe = next(i for i in store.state()["inbox"] if i["name"] == "Maybe")
+        ui.triage.triage_place(maybe["id"], "work")
+        ui.toast.fire_action()
+        ok(not store.is_ignored(maybe), "undoing a triage placement does not dismiss it")
+
 
 def test_set_layout_waits_for_late_windows():
     """Раскладка набора ждёт окна, которые открываются не сразу.

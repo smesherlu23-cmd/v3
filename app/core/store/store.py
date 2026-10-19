@@ -352,7 +352,6 @@ class Store:
         if not gone:
             return {"apps": [], "sets": []}
         self.data["apps"] = [a for a in self.data["apps"] if a["id"] not in wanted]
-        self._remember_ignored(gone)
         affected_sets = []
         kept_sets = []
         for rec in self.data["sets"]:

@@ -822,6 +822,9 @@ class CenturioUI:
         gone = bundle["apps"]
         if not gone:
             return
+        # Убранное руками больше не предлагать при сканировании; отмена
+        # (restore_apps) вычёркивает из списка обратно.
+        self.store.ignore(gone)
         self.view.close_inspector()
         text = (f"{gone[0]['name']} убран из библиотеки" if len(gone) == 1
                 else f"Убрано {len(gone)} {plu_apps(len(gone))}")
