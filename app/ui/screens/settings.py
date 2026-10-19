@@ -160,10 +160,16 @@ def _theme_preset_chip(ui, preset):
         ui.set_settings({"accent": accent_hex, "bg_tint": preset["bg_tint"],
                          "contrast": preset["contrast"]})
 
+    # «Контраст» с тем же белым акцентом, что «Уголь», иначе не отличить:
+    # его образец — переход от самого тёмного к самому светлому.
+    contrast_strip = (ft.LinearGradient(begin=ft.alignment.center_left,
+                                        end=ft.alignment.center_right,
+                                        colors=[C.BG_0, accent_hex])
+                      if preset["contrast"] == "strong" else None)
     chip = ft.Container(
         ft.Column([
             ft.Container(width=46, height=30, border_radius=8, bgcolor=swatch_color,
-                        border=ft.border.all(1.5, accent_hex)),
+                        gradient=contrast_strip, border=ft.border.all(1.5, accent_hex)),
             T(preset["label"], size=10.5, color=C.TEXT if active else C.MUTED),
         ], spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
         padding=ft.padding.all(7), border_radius=11,
@@ -285,13 +291,15 @@ def _settings_startup(ui):
     return [
         _switch(ui, "Запускать с Windows", "autostart"),
         _switch(ui, "Крестик сворачивает в трей", "close_to_tray"),
+        _switch(ui, "Сворачивание прячет в трей", "minimize_to_tray"),
         _switch(ui, "Прятать окно после запуска", "hide_after"),
     ]
 
 
 def _settings_library(ui):
     size = ui.icon_cache_size()
-    cache_label = f"{size / (1024 * 1024):.0f} МБ" if size else "пусто"
+    cache_label = (f"{size / (1024 * 1024):.0f} МБ" if size >= 1024 * 1024
+                   else f"{max(1, size // 1024)} КБ" if size else "пусто")
     return [
         _switch(ui, "Складывать новое в разбор", "triage"),
         _switch(ui, "Проверять новое раз в 15 минут", "auto_rescan"),

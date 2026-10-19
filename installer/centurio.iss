@@ -71,6 +71,16 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; autostart.started_minimized().
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Flags: runminimized; Tasks: startup
 
+[Registry]
+; Запасной путь автозапуска (HKCU\Run) Centurio пишет сам, когда ярлык создать
+; не удалось. Ключ не создаётся, а значение уходит вместе с программой.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue dontcreatekey
+
+[UninstallDelete]
+; Ярлык «Автозагрузки», включённый в настройках Centurio, а не инсталлятором:
+; про него деинсталлятор сам не знает и оставил бы ярлык на удалённый exe.
+Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
+
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Устанавливаем компоненты Microsoft Visual C++..."; Check: ShouldRunVCRedist; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

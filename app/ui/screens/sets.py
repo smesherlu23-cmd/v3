@@ -35,7 +35,7 @@ def _set_header(ui, rec):
     if accel:
         meta += [_meta_divider(),
                  ft.Container(T(accel, size=11.5, color=C.MUTED, font_family="monospace"),
-                              tooltip="Открывает набор из любой программы")]
+                              tooltip="Запускает набор, пока открыто окно Centurio")]
     meta += [_meta_divider(),
              ft.Container(T(f"Монитор {rec['monitor'] + 1}", size=12, color=C.MUTED_2),
                           tooltip="Куда расставлять окна",
@@ -211,9 +211,6 @@ def _order_column(ui, rec):
                                  border_radius=8, alignment=ft.alignment.center,
                                  tooltip="Другая пауза",
                                  on_click=lambda e: ui.context_menus.delay_menu(rec, e))),
-        _set_option("Закрывать набор целиком",
-                    Wg.toggle(rec["close_together"],
-                             lambda v: ui.set_ops.set_close_together(rec["id"], v), ui._accent())),
     ]
     return ft.Container(
         ft.Column([head, ft.Column(rows, spacing=6, tight=True)] + settings,

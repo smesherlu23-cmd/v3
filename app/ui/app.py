@@ -366,9 +366,6 @@ class CenturioUI:
         return queries.build_sections(self.apps(), self.categories(), self.view.filter,
                                       self.view.sort, self.running)
 
-    def visible_apps(self):
-        return queries.flatten_sections(self.sections())
-
     def _palette_rows(self):
         apps = self.apps()
         rows = [dict(r, kind="app") for r in
@@ -496,10 +493,6 @@ class CenturioUI:
 
     def _set_sort(self, key):
         self.view.set_sort(key)
-        self.refresh()
-
-    def _cycle_sort(self):
-        self.view.cycle_sort()
         self.refresh()
 
     def _toggle_section(self, cid):
@@ -744,7 +737,9 @@ class CenturioUI:
         try:
             args = split_args(text) if text else []
         except ValueError:
-            args = text.split()
+            self.toast.error("В аргументах не закрыта кавычка — не сохранено", detail=text)
+            self.refresh()
+            return
         self.store.update_app(app_id, {"args": args})
         self.refresh()
 

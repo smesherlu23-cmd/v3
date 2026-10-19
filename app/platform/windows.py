@@ -11,6 +11,8 @@ _SW_MINIMIZE = 6
 _SW_SHOWNORMAL = 1
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
+_MAX_FRAME = 32
 
 _lock = threading.Lock()
 
@@ -115,14 +117,47 @@ def activate(hwnd) -> bool:
         return False
 
 
+def _frame_margins(hwnd) -> tuple[int, int, int, int]:
+    """Невидимая рамка окна: насколько GetWindowRect больше того, что видно.
+
+    В Windows 10/11 у окна есть прозрачная рамка для захвата мышью, около
+    7 пикселей слева, справа и снизу. Без поправки на неё окна набора стоят
+    с зазорами между собой и отступают от краёв экрана.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    outer, inner = wintypes.RECT(), wintypes.RECT()
+    try:
+        if not _user32().GetWindowRect(hwnd, ctypes.byref(outer)):
+            return 0, 0, 0, 0
+        dwm = ctypes.windll.dwmapi.DwmGetWindowAttribute
+        dwm.argtypes = (wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD)
+        dwm.restype = ctypes.c_long
+        if dwm(hwnd, _DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(inner),
+               ctypes.sizeof(inner)) != 0:
+            return 0, 0, 0, 0
+    except Exception:
+        return 0, 0, 0, 0
+    margins = (inner.left - outer.left, inner.top - outer.top,
+               outer.right - inner.right, outer.bottom - inner.bottom)
+    return tuple(m if 0 <= m <= _MAX_FRAME else 0 for m in margins)
+
+
+def frame_adjusted(rect, margins) -> tuple[int, int, int, int]:
+    x, y, w, h = rect
+    left, top, right, bottom = margins
+    return x - left, y - top, w + left + right, h + top + bottom
+
+
 def place(hwnd, rect) -> bool:
     if not available() or not hwnd:
         return False
-    x, y, w, h = (int(v) for v in rect)
     try:
         user32 = _user32()
         if user32.IsIconic(hwnd) or user32.IsZoomed(hwnd):
             user32.ShowWindow(hwnd, _SW_SHOWNORMAL)
+        x, y, w, h = frame_adjusted([int(v) for v in rect], _frame_margins(hwnd))
         return bool(user32.SetWindowPos(hwnd, 0, x, y, w, h,
                                         _SWP_NOZORDER | _SWP_NOACTIVATE))
     except Exception:

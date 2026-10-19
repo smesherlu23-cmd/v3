@@ -7,11 +7,8 @@ from collections import OrderedDict
 
 import flet as ft
 
-from ..core.store import hue_from_string
-
 _RASTER_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
 MIN_ART_PX = 160
-_MISS = object()
 
 
 class _LruCache:
@@ -54,7 +51,6 @@ class _LruCache:
 
 _IMG_B64_CACHE = _LruCache(max_entries=192, max_bytes=24 * 1024 * 1024)
 _SVG_CACHE = _LruCache(max_entries=64, max_bytes=2 * 1024 * 1024)
-_IMG_SIZE_CACHE = _LruCache(max_entries=512)
 
 # Кодировать ли растр в base64 вместо того, чтобы отдать путь. Нужно только
 # режиму CENTURIO_WEB: страница в браузере не может открыть файл на диске.
@@ -129,32 +125,3 @@ def icon_image(path, **kw) -> ft.Image | None:
 def is_launcher_art(a) -> bool:
     path = a.get("path") or ""
     return path.startswith("steam://") or path.startswith("com.epicgames.launcher://")
-
-
-def img_size(path) -> tuple[int, int] | None:
-    if not path or not str(path).lower().endswith(_RASTER_EXT):
-        return None
-    key = str(path)
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
-    cached = _IMG_SIZE_CACHE.get(key, st.st_mtime, _MISS)
-    if cached is not _MISS:
-        return cached
-    size = None
-    try:
-        from PIL import Image
-        with Image.open(path) as im:
-            w, h = im.size
-        if w and h:
-            size = (w, h)
-    except Exception:
-        size = None
-    _IMG_SIZE_CACHE.put(key, st.st_mtime, size)
-    return size
-
-
-def app_hue(a) -> int:
-    h = a.get("hue")
-    return h if isinstance(h, int) else hue_from_string(a.get("name") or "")

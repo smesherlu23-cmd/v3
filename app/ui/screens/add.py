@@ -190,7 +190,9 @@ def _inline_error(ui, err):
 
 
 def _add_empty(ui):
-    only_new = ui.view.only_new
+    # «Всё уже в библиотеке» — только если поиск вообще что-то нашёл: пустой
+    # результат (скажем, PowerShell запрещён политикой) так не называется.
+    only_new = ui.view.only_new and bool(ui.scan.cached_discovery())
     return ft.Container(
         ft.Column([
             T("Новых программ не нашлось" if only_new else "Ничего не нашлось",

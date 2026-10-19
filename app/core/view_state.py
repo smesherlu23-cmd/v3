@@ -92,10 +92,6 @@ class ViewState:
             self.sort = s
             self.persist()
 
-    def cycle_sort(self):
-        cur = self.sort if self.sort in queries.SORT_KEYS else "alpha"
-        self.set_sort(queries.SORT_KEYS[(queries.SORT_KEYS.index(cur) + 1) % len(queries.SORT_KEYS)])
-
     def toggle_sidebar(self):
         self.sidebar_open = not self.sidebar_open
 

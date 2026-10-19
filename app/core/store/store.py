@@ -642,14 +642,6 @@ class Store:
             self._persist()
             return _clone(rec)
 
-    def reorder_sets(self, ordered_ids: list[str]) -> None:
-        with self._lock:
-            pos = {sid: i for i, sid in enumerate(ordered_ids)}
-            for rec in self.data["sets"]:
-                if rec["id"] in pos:
-                    rec["order"] = pos[rec["id"]]
-            self._persist()
-
     def remove_set(self, set_id: str) -> dict | None:
         with self._lock:
             rec = next((s for s in self.data["sets"] if s["id"] == set_id), None)

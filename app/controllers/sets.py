@@ -322,10 +322,6 @@ class SetsController:
         self.store.update_set(set_id, {"monitor": index})
         self.ui.refresh()
 
-    def set_close_together(self, set_id, value):
-        self.store.update_set(set_id, {"close_together": bool(value)})
-        self.ui.refresh()
-
     def set_item_slot(self, set_id, app_id, slot):
         self.store.update_set_item(set_id, app_id, {"slot": slot, "minimized": False})
         self.ui.refresh()

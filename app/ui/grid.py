@@ -338,10 +338,11 @@ class GridView:
         meta = self._tile_meta(a)
         foot_lines = [T(a["name"], size=12.5, weight=ft.FontWeight.W_600, color=C.TEXT,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
-        if meta:
-            foot_lines.append(T(meta, size=10.5, color=C.MUTED_2, max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS,
-                                font_family="monospace" if meta.startswith("Ctrl") else None))
+        # Вторая строка есть всегда, пусть и пустая: иначе плитки с подписью
+        # выше соседних и ряд сетки «пляшет».
+        foot_lines.append(T(meta or "", size=10.5, color=C.MUTED_2, max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            font_family="monospace" if meta.startswith("Ctrl") else None))
         foot = ft.Container(ft.Column(foot_lines, spacing=2, tight=True),
                             padding=ft.padding.only(11, 9, 11, 10))
 
@@ -482,8 +483,11 @@ class GridView:
             T(text, size=13, color=C.MUTED_2, text_align=ft.TextAlign.CENTER, width=380),
         ]
         if btn_label:
+            # В Row кнопка берёт ширину по содержимому, а не всю колонку.
             controls += [ft.Container(height=18),
-                         Wg.primary_btn(btn_label, on_click, self.ui._accent(), ft.Icons.ADD)]
+                         ft.Row([Wg.primary_btn(btn_label, on_click, self.ui._accent(),
+                                                ft.Icons.ADD)],
+                                alignment=ft.MainAxisAlignment.CENTER)]
         return ft.Container(
             ft.Column(controls, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
             alignment=ft.alignment.center, padding=ft.padding.only(0, 80, 0, 40))

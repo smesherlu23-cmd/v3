@@ -25,6 +25,7 @@ def build_triage_screen(ui):
             T(f"Осталось {total} · разобрано {done}", size=12, color=C.TEXT_DIM),
         ], spacing=4, tight=True, expand=True),
             ft.Container(T("Отложить всё", size=12.5, color=C.MUTED_2),
+                         tooltip="Очистить очередь — найденное вернётся при следующей проверке",
                          on_click=lambda e: ui.triage.triage_defer_all())],
             spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         padding=ft.padding.only(26, 22, 26, 0))
@@ -74,8 +75,10 @@ def build_triage_screen(ui):
 
     footer = ft.Container(
         ft.Row([hint("1–4", "положить в категорию"), hint("Enter", "взять предложенную"),
-                hint("→", "пропустить"), ft.Container(expand=True),
-                ft.Container(hint("Del", "не нужно"),
+                ft.Container(hint("→", "пропустить"), tooltip="Показать позже",
+                             on_click=lambda e, iid=item["id"]: ui.triage.triage_skip(iid)),
+                ft.Container(expand=True),
+                ft.Container(hint("Del", "не нужно"), tooltip="Больше не предлагать",
                              on_click=lambda e, iid=item["id"]: ui.triage.triage_drop(iid))],
                spacing=20, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         height=52, bgcolor=C.BG_2, padding=ft.padding.symmetric(0, 26),
@@ -89,7 +92,11 @@ def build_triage_screen(ui):
 
 def _triage_done(ui):
     done = getattr(ui.triage, "done_count", 0)
-    text = (f"{done} {plu_programs(done)} лежат по местам. " if done else "")
+    text = (f"{done} {plu_programs(done)} {'лежит' if done % 10 == 1 and done % 100 != 11 else 'лежат'}"
+            " по местам. " if done else "")
+    later = ("Новое Centurio найдёт сам и положит сюда." if ui.setting("auto_rescan")
+             else "Чтобы найти новое, нажмите «Поискать ещё» или включите "
+                  "автопроверку в настройках.")
     return ft.Container(
         ft.Column([
             ft.Container(ft.Icon(ft.Icons.CHECK, size=28, color=C.GREEN),
@@ -97,7 +104,7 @@ def _triage_done(ui):
                          border=ft.border.all(1, C.DONE_BORDER),
                          alignment=ft.alignment.center),
             T("Всё разобрано", size=18, weight=ft.FontWeight.BOLD, color=C.TEXT),
-            T(text + "Новое появится здесь само — заходить специально не нужно.",
+            T(text + later,
               size=13, color=C.MUTED_2, width=300, text_align=ft.TextAlign.CENTER),
             ft.Container(ft.Row([
                 Wg.primary_btn("К библиотеке", ui.back_to_grid, ui._accent()),

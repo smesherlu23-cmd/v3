@@ -113,10 +113,9 @@ class ContextMenus:
         rows = [
             menus.item(ft.Icons.PLAY_ARROW, "Запустить набор",
                        lambda: self.ui.set_ops.launch_set(rec["id"])),
+            menus.item(ft.Icons.CLOSE, "Закрыть окна набора",
+                       lambda: self.ui.set_ops.close_set_windows(rec["id"])),
         ]
-        if rec.get("close_together"):
-            rows.append(menus.item(ft.Icons.CLOSE, "Закрыть набор",
-                                   lambda: self.ui.set_ops.close_set_windows(rec["id"])))
         rows += [
             menus.item(ft.Icons.CROP_FREE, "Расставить окна",
                        lambda: self.ui.set_ops.arrange_set(rec["id"]),

@@ -644,6 +644,40 @@ def test_console_programs_get_a_console():
     ok(seen.get("creationflags") == 0x10, "with CREATE_NEW_CONSOLE, not DETACHED_PROCESS")
 
 
+def test_secondary_text_is_readable():
+    """Второстепенный текст держит контраст WCAG AA (4.5:1) на фоне и панелях.
+
+    Подсказки и пояснения были цвета 3.7:1 и 3.0:1 при кегле 10.5–13 px.
+    """
+    def lum(hexval):
+        r, g, b = (int(hexval[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+        def f(c):
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+    def ratio(a, b):
+        hi, lo = sorted((lum(a), lum(b)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    from app.ui import theme
+    theme.reset_theme()
+    for name in ("MUTED", "MUTED_2", "TEXT_DIM"):
+        for bg in ("BG_1", "PANEL", "PANEL_3"):
+            value = ratio(getattr(C, name), getattr(C, bg))
+            ok(value >= 4.5, f"{name} on {bg}: {value:.2f}:1")
+
+
+def test_window_placement_covers_the_invisible_frame():
+    """Окна набора встают вплотную: поправка на невидимую рамку Windows."""
+    from app.platform import windows as W
+
+    ok(W.frame_adjusted((0, 0, 960, 1040), (7, 0, 7, 7)) == (-7, 0, 974, 1047),
+       "the window rect grows by the invisible frame so the visible part fits the slot")
+    ok(W.frame_adjusted((10, 20, 30, 40), (0, 0, 0, 0)) == (10, 20, 30, 40),
+       "no frame, no change")
+
+
 def test_discovery_sources():
     """Найденное помечается источником и умеет докладывать об ошибках."""
     from app.platform import discovery

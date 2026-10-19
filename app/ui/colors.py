@@ -16,7 +16,7 @@ LINE_5 = "#33333a"
 TEXT = "#e6e6e8"
 TEXT_2 = "#c8ccd0"
 MUTED = "#9aa0a6"
-MUTED_2 = "#6b6b70"
+MUTED_2 = "#828289"
 MUTED_3 = "#3d3d43"
 GREEN = "#4ade80"
 DANGER = "#e34f4f"
@@ -33,7 +33,7 @@ SLOT_BG = "#15151b"
 SLOT_BORDER = "#26262e"
 SLOT_GLYPH = "#7f8590"
 
-TEXT_DIM = "#5a5f68"
+TEXT_DIM = "#80858e"
 TEXT_FAINT = "#4a4f58"
 TEXT_GHOST = "#2e2e37"
 HINT = "#33383f"
@@ -183,13 +183,6 @@ def cover_colors(hue: int) -> tuple[str, str]:
     h = (hue % 360) / 360.0
     top = colorsys.hls_to_rgb(h, 0.58, 0.62)
     bottom = colorsys.hls_to_rgb(h, 0.42, 0.60)
-    return _hex(top), _hex(bottom)
-
-
-def chip_colors(hue: int) -> tuple[str, str]:
-    h = (hue % 360) / 360.0
-    top = colorsys.hls_to_rgb(h, 0.62, 0.62)
-    bottom = colorsys.hls_to_rgb(h, 0.48, 0.60)
     return _hex(top), _hex(bottom)
 
 
