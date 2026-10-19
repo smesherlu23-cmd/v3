@@ -41,3 +41,21 @@ build_number = 1
 
 [tool.flet.app]
 path = "."
+# Всё, кроме самого приложения, в app.zip не нужно. Без этого списка туда
+# уезжал весь репозиторий — вместе с .git (на раннере в .git/config лежит
+# токен actions/checkout), тестами и кэшами. Сравнивается точный путь от
+# корня проекта; каталог build исключает сам `flet build`.
+exclude = [
+    ".git",
+    ".github",
+    ".gitattributes",
+    ".gitignore",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "installer",
+    "scripts",
+    "tests",
+]

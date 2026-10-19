@@ -65,6 +65,11 @@ def _report_startup_failure() -> None:
     text = ("Centurio не смог запуститься.\n\n"
             f"{detail}\n\n"
             f"Подробности: {paths.data_dir() / 'centurio.log'}")
+    # Модальное окно ждёт «ОК». Там, где нажимать некому (тесты, CI), оно
+    # вешает процесс — см. тот же переключатель в корневом main.py.
+    if os.environ.get("CENTURIO_NO_DIALOG") == "1":
+        print(text, file=sys.stderr)
+        return
     try:
         import ctypes
 
@@ -120,7 +125,10 @@ def _start(page: ft.Page):
     _optional("подготовка значков", lambda: ensure_icons(ASSETS_DIR))
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
     images.embed_images(is_web)
-    start_hidden = "--hidden" in sys.argv
+    # Собранный exe аргументов не получает (см. autostart._embedded), поэтому
+    # «Автозагрузка» просит трей полем «Окно: свёрнутое» у ярлыка;
+    # `--hidden` остаётся для запуска из исходников.
+    start_hidden = "--hidden" in sys.argv or (not is_web and autostart.started_minimized())
 
     page.title = "Centurio"
     page.bgcolor = C.BG_1

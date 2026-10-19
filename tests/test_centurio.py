@@ -2001,6 +2001,120 @@ def test_autostart():
         ok(autostart.sync(False) is False, "sync keeps 'off' outside Windows")
 
 
+def test_built_exe_autostart_passes_no_arguments():
+    """Собранному exe нельзя передавать `--hidden` — он не запустит Python.
+
+    Оболочка `flet build` (main.dart шаблона) принимает любой аргумент
+    командной строки, кроме `--debug`, за адрес сервера «режима разработчика»
+    и встроенный Python не запускает вовсе. Ярлык «Автозагрузки» с `--hidden`
+    — и от инсталлятора, и от самого Centurio — поднимал окно, которое
+    вечно ждало подключения к «--hidden». «Запуск в трей» теперь передаётся
+    полем «Окно: свёрнутое» у ярлыка, а старые ярлыки переписываются.
+    """
+    import struct
+
+    from app.platform import autostart
+
+    prev = {k: os.environ.get(k) for k in ("FLET_PLATFORM", "APPDATA")}
+
+    def restore():
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    with tempfile.TemporaryDirectory() as d:
+        try:
+            os.environ["APPDATA"] = d
+            os.environ.pop("FLET_PLATFORM", None)
+            ok("--hidden" in autostart._launch_parts()[1],
+               "из исходников трей по-прежнему просит --hidden")
+            os.environ["FLET_PLATFORM"] = "windows"
+            ok(autostart._launch_parts()[1] == "",
+               "собранному exe ярлык не передаёт ни одного аргумента")
+
+            link = autostart.startup_shortcut()
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.write_bytes(b"L\0\0\0" + '"C:\\x\\Centurio.exe" --hidden'.encode("utf-16-le"))
+            ok(autostart.has_stale_arguments() is True,
+               "ярлык прошлой версии с --hidden распознаётся как устаревший")
+            link.write_bytes(b"L\0\0\0" + "C:\\x\\Centurio.exe".encode("utf-16-le"))
+            if os.name != "nt":
+                ok(autostart.has_stale_arguments() is False,
+                   "ярлык без аргументов переписывать незачем")
+            os.environ.pop("FLET_PLATFORM", None)
+            link.write_bytes(b"L\0\0\0" + '"main.py" --hidden'.encode("utf-16-le"))
+            ok(autostart.has_stale_arguments() is False,
+               "при запуске из исходников --hidden в ярлыке — норма, а не устаревание")
+            link.unlink()
+
+            ok(isinstance(autostart.started_minimized(), bool),
+               "STARTUPINFO читается без исключений на любой платформе")
+
+            if os.name == "nt":
+                os.environ["FLET_PLATFORM"] = "windows"
+                ok(autostart.create_startup_shortcut() is True,
+                   "ярлык собранного exe создаётся")
+                data = link.read_bytes()
+                ok("--hidden".encode("utf-16-le") not in data,
+                   "и не несёт --hidden")
+                # ShellLinkHeader: ShowCommand — 4 байта по смещению 0x3C.
+                ok(struct.unpack_from("<I", data, 0x3C)[0] == autostart.SW_SHOWMINNOACTIVE,
+                   "зато запускает окно свёрнутым — это и есть «в трей»")
+                ok(autostart.has_stale_arguments() is False,
+                   "свежий ярлык не считается устаревшим")
+                autostart.remove_startup_shortcut()
+        finally:
+            restore()
+
+
+def test_second_instance_stops_even_when_flet_disarms_sys_exit():
+    """Второй экземпляр обязан остановиться и в собранном exe.
+
+    Загрузчик `flet build` подменяет `sys.exit` функцией, которая только
+    сообщает код оболочке и возвращает управление. `sys.exit(0)` после
+    «Centurio уже запущен» поэтому ничего не останавливал: следом шёл
+    `ft.app()`, и второй экземпляр поднимал второе окно. Проверяется в
+    отдельном процессе ровно в таких условиях.
+    """
+    import subprocess
+    import sys as _sys
+
+    root = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory() as d:
+        fake = os.path.join(d, "fake")
+        os.makedirs(os.path.join(fake, "app", "platform"))
+        with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
+            fh.write("def app(**kw):\n    print('FT_APP_STARTED')\n")
+        # Подменяется весь пакет app: проверяется только логика точки входа.
+        for rel, body in ((("app", "__init__.py"), ""),
+                          (("app", "main.py"), "ASSETS_DIR = '.'\ndef main(page):\n    pass\n"),
+                          (("app", "platform", "__init__.py"), ""),
+                          (("app", "platform", "single_instance.py"),
+                           "def acquire():\n    return False\n")):
+            with open(os.path.join(fake, *rel), "w", encoding="utf-8") as fh:
+                fh.write(body)
+        runner = os.path.join(d, "run.py")
+        with open(runner, "w", encoding="utf-8") as fh:
+            fh.write("import runpy, sys\n"
+                     "sys.exit = lambda code=0: print('EXIT', code)\n"
+                     f"runpy.run_path({str(root / 'main.py')!r}, run_name='__main__')\n")
+
+        env = dict(os.environ)
+        env["APPDATA"] = d
+        env["PYTHONPATH"] = fake
+        env["CENTURIO_NO_DIALOG"] = "1"
+        # Кириллица в stderr на windows-раннере (cp1252) иначе не печатается.
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.pop("CENTURIO_WEB", None)
+        proc = subprocess.run([_sys.executable, runner], cwd=d, env=env,
+                              capture_output=True, encoding="utf-8", timeout=120)
+        ok("уже запущен" in proc.stderr, "второму экземпляру говорят, что Centurio уже запущен")
+        ok("FT_APP_STARTED" not in proc.stdout,
+           f"и окно он не поднимает, даже когда sys.exit обезврежен ({proc.stdout!r})")
+
+
 def test_autostart_cannot_switch_itself_back_on():
     """Выключенный пользователем автозапуск остаётся выключенным.
 
@@ -2322,6 +2436,61 @@ def test_packaging_metadata():
     ok(declared == required,
        f"requirements.txt and pyproject agree (pyproject-only: {declared - required}, "
        f"requirements-only: {required - declared})")
+
+
+def test_release_fixes_the_code_page_and_runs_the_built_exe():
+    """Релиз обязан перевести exe на UTF-8 и запустить его до подписи.
+
+    serious_python передаёт пути в PYTHONHOME/PYTHONPATH узкими строками в
+    UTF-8, а Windows читает их в cp1251. У пользователя с кириллицей в имени
+    профиля собранный exe поэтому выходил с кодом 1 за секунду — без логов и
+    без записей в журнале Windows; на windows-раннере это воспроизведено
+    `smoke.ps1 -NonAsciiProfile` и вылечено манифестом activeCodePage=UTF-8.
+    Порядок важен: правка ресурса ломает подпись, а непроверенный exe не
+    должен доехать до установщика. `continue-on-error` превратил бы проверку
+    в украшение.
+    """
+    text = _read(".github", "workflows", "release.yml")
+    build = text.find("flet build windows")
+    manifest = text.find("utf8_manifest.ps1")
+    smoke = text.find("smoke.ps1 -BuildDir")
+    cyrillic = text.find("-NonAsciiProfile")
+    sign = text.find("sign.ps1")
+    ok(-1 < build < manifest < smoke < sign, "release.yml: сборка → UTF-8 → запуск → подпись")
+    ok(-1 < cyrillic < sign, "release.yml: запуск проверяется и в профиле с кириллицей")
+    ok("continue-on-error" not in text, "release.yml: проверки не отключены молча")
+
+    local = _read("scripts", "build_release.ps1")
+    manifest = local.find("utf8_manifest.ps1")
+    ok(-1 < local.find("flet build windows") < manifest < local.find("sign.ps1"),
+       "локальная сборка тоже переводит exe на UTF-8 до подписи")
+
+
+def test_app_package_leaves_the_repository_out():
+    """В app.zip уезжает только приложение, а не весь репозиторий.
+
+    С `[tool.flet.app] path = "."` и без списка исключений в дистрибутив
+    попадали .git (на раннере в .git/config лежал токен actions/checkout),
+    тесты, скрипты сборки и кэши — это видно в распакованном приложении у
+    пользователя. serious_python сравнивает исключения с точным путём от
+    корня проекта, поэтому каталоги перечислены поимённо.
+    """
+    import re
+
+    pyproject = _read("pyproject.toml")
+    section = re.search(r"^\[tool\.flet\.app\]\n(.*?)(?=^\[|\Z)", pyproject, re.M | re.S)
+    ok(section is not None, "pyproject содержит [tool.flet.app]")
+    block = re.search(r"^exclude = \[(.*?)^\]", section.group(1) if section else "", re.M | re.S)
+    excluded = set(re.findall(r'"([^"]+)"', block.group(1) if block else ""))
+    for name in (".git", ".github", "tests", "scripts", "installer",
+                 ".pytest_cache", ".ruff_cache"):
+        ok(name in excluded, f"{name} не упаковывается в дистрибутив")
+    for name in ("app", "assets", "main.py"):
+        ok(name not in excluded, f"{name} нужен приложению и остаётся в пакете")
+
+    release = _read(".github", "workflows", "release.yml")
+    ok("persist-credentials: false" in release,
+       "релизная сборка не оставляет токен в .git/config")
 
 
 def test_readme_points_at_files_that_exist():
@@ -3169,6 +3338,76 @@ def _drop_log_handlers(_log):
     logging.getLogger("centurio").handlers = []
 
 
+def _run_bounded(fn, seconds=20.0):
+    """Выполнить fn на отдельном потоке → (успело ли, с каким исключением).
+
+    Запуск `main()` трогает платформу, и любое зависание там обязано стать
+    красным тестом за секунды, а не молчаливо висящей сборкой: модальное окно
+    из `_report_startup_failure` однажды уже держало windows-раннер три часа
+    вместо двадцати секунд. Тот же приём, что и в `_completes`.
+    """
+    import threading
+
+    box = {}
+    done = threading.Event()
+
+    def run():
+        try:
+            fn()
+        except BaseException as exc:      # noqa: BLE001 — донесём наружу как есть
+            box["exc"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    return done.wait(seconds), box.get("exc")
+
+
+def test_entry_point_records_a_crash_before_any_project_import():
+    """«Вылетает, логов нет» — самый бесполезный отчёт; журнал должен быть всегда.
+
+    Обычный лог поднимается внутри `main(page)`, то есть уже после `import
+    flet` и разбора всего пакета `app`. Если процесс умирает раньше — а
+    отсутствующая нативная DLL убивает именно там, — наружу не попадало ни
+    строчки: у собранного exe нет консоли. Корневой `main.py` теперь пишет
+    `centurio-crash.log` только стандартной библиотекой и до импортов проекта.
+
+    Проверяется по-настоящему: запускаем настоящую точку входа отдельным
+    процессом, подсунув падающий `flet` — так же ведёт себя ненайденная DLL.
+    """
+    import subprocess
+    import sys as _sys
+
+    root = Path(__file__).resolve().parent.parent
+    with tempfile.TemporaryDirectory() as d:
+        fake = os.path.join(d, "fake")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
+            fh.write('raise ImportError("DLL load failed while importing flet")\n')
+
+        env = dict(os.environ)
+        env["APPDATA"] = d
+        env["PYTHONPATH"] = fake
+        # Иначе модальное окно ждало бы «ОК» и повесило бы прогон.
+        env["CENTURIO_NO_DIALOG"] = "1"
+        env.pop("CENTURIO_WEB", None)
+        proc = subprocess.run([_sys.executable, str(root / "main.py")],
+                              env=env, capture_output=True, text=True, timeout=120)
+
+        ok(proc.returncode != 0, "a broken import really does kill the process")
+
+        crash = os.path.join(d, "Centurio", "centurio-crash.log")
+        ok(os.path.exists(crash), "and it leaves a crash log behind anyway")
+        body = ""
+        if os.path.exists(crash):
+            with open(crash, encoding="utf-8") as fh:
+                body = fh.read()
+        ok("Centurio boot" in body,
+           "the log says how far startup got before dying")
+        ok("DLL load failed" in body,
+           f"and names the actual failure, not just 'it crashed' ({body[-200:]!r})")
+
+
 def test_startup_failure_is_reported_not_silent():
     """Сбой старта обязан оставить трассировку, а не убить окно молча.
 
@@ -3191,16 +3430,18 @@ def test_startup_failure_is_reported_not_silent():
         prev = os.environ.get("APPDATA")
         os.environ["APPDATA"] = d
         real_ui = main_mod.CenturioUI
+        real_report = main_mod._report_startup_failure
         try:
             def boom(*a, **kw):
                 raise RuntimeError("сбой сборки интерфейса")
             main_mod.CenturioUI = boom
+            # `_report_startup_failure` показывает модальное окно MessageBoxW.
+            # На раннере его некому закрыть, и шаг Test висел часами вместо
+            # секунд. Проверяем здесь запись в лог, а не саму отрисовку окна.
+            main_mod._report_startup_failure = lambda: None
 
-            raised = None
-            try:
-                main_mod.main(_FakePage())
-            except Exception as exc:
-                raised = exc
+            finished, raised = _run_bounded(lambda: main_mod.main(_FakePage()))
+            ok(finished, "startup returns instead of hanging")
             ok(isinstance(raised, RuntimeError),
                f"the failure is re-raised, not swallowed into a dead window ({raised!r})")
 
@@ -3214,6 +3455,7 @@ def test_startup_failure_is_reported_not_silent():
                "and names the actual cause, not just 'failed to start'")
         finally:
             main_mod.CenturioUI = real_ui
+            main_mod._report_startup_failure = real_report
             _drop_log_handlers(_log)
             if prev is None:
                 os.environ.pop("APPDATA", None)
@@ -3247,7 +3489,8 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
         raise OSError("симулированный отказ платформы")
 
     saved = (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register)
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             main_mod._report_startup_failure)
     with tempfile.TemporaryDirectory() as d:
         prev = os.environ.get("APPDATA")
         os.environ["APPDATA"] = d
@@ -3256,12 +3499,12 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
             tr_mod.TrayController.start = boom
             la_mod.Launcher.start_monitor = boom
             hk_mod.HotkeyManager.register = boom
+            # Страховка: если старт всё же упадёт, модальное окно не должно
+            # подвесить прогон — см. _run_bounded.
+            main_mod._report_startup_failure = lambda: None
 
-            raised = None
-            try:
-                main_mod.main(_FakePage())
-            except Exception as exc:
-                raised = exc
+            finished, raised = _run_bounded(lambda: main_mod.main(_FakePage()))
+            ok(finished, "startup returns instead of hanging")
             ok(raised is None,
                f"the window still opens when every optional step fails ({raised!r})")
 
@@ -3275,7 +3518,8 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
                f"and each skipped step is written down, not swallowed ({len(degraded)})")
         finally:
             (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register) = saved
+             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             main_mod._report_startup_failure) = saved
             _drop_log_handlers(_log)
             if prev is None:
                 os.environ.pop("APPDATA", None)

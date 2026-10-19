@@ -8,16 +8,78 @@ from ..infra import log
 
 APP_NAME = "Centurio"
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_HIDDEN_ARG = "--hidden"
+
+# «Окно: свёрнутое» у ярлыка. Им, а не аргументом, собранный exe узнаёт, что
+# его запустила «Автозагрузка» и показываться не нужно (см. _embedded).
+SW_SHOWMINNOACTIVE = 7
+_STARTF_USESHOWWINDOW = 0x1
+# SW_HIDE, SW_SHOWMINIMIZED, SW_MINIMIZE, SW_SHOWMINNOACTIVE
+_MINIMIZED_SHOW = frozenset((0, 2, 6, 7))
+
+
+def _embedded() -> bool:
+    """Запущены ли мы внутри собранного `flet build` exe.
+
+    Там Python встроен во Flutter-оболочку, и любой аргумент командной строки
+    она принимает за адрес сервера «режима разработчика»: Python не
+    запускается вовсе, а окно ждёт подключения к «--hidden» (шаблон сборки
+    Flet, main.dart: `isDesktopPlatform() && _args.isNotEmpty`). Поэтому
+    собранному exe аргументы передавать нельзя. Признак — FLET_PLATFORM:
+    его выставляет эта же оболочка.
+    """
+    return bool(os.environ.get("FLET_PLATFORM"))
 
 
 def _launch_parts() -> tuple[str, str]:
     exe = sys.executable
+    if _embedded():
+        return exe, ""
     if getattr(sys, "frozen", False):
-        return exe, "--hidden"
+        return exe, _HIDDEN_ARG
     script = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
     if script:
-        return exe, f'"{script}" --hidden'
-    return exe, "--hidden"
+        return exe, f'"{script}" {_HIDDEN_ARG}'
+    return exe, _HIDDEN_ARG
+
+
+def started_minimized() -> bool:
+    """Попросил ли запустивший нас ярлык свёрнутое окно.
+
+    Так «Автозагрузка» передаёт собранному exe «запуск в трей» вместо
+    `--hidden`: у ярлыка стоит «Окно: свёрнутое», и Windows кладёт это в
+    STARTUPINFO процесса. Обычный запуск из меню «Пуск» или двойным щелчком
+    приходит с SW_SHOWNORMAL и сюда не попадает.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class STARTUPINFOW(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR),
+                        ("lpDesktop", wintypes.LPWSTR), ("lpTitle", wintypes.LPWSTR),
+                        ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+                        ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD),
+                        ("dwXCountChars", wintypes.DWORD), ("dwYCountChars", wintypes.DWORD),
+                        ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                        ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
+                        ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
+                        ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
+
+        # Свой экземпляр kernel32: argtypes, выставленные на общем
+        # ctypes.windll, поменяли бы их всем остальным модулям.
+        get_startup_info = ctypes.WinDLL("kernel32").GetStartupInfoW
+        get_startup_info.argtypes = [ctypes.POINTER(STARTUPINFOW)]
+        get_startup_info.restype = None
+        si = STARTUPINFOW()
+        si.cb = ctypes.sizeof(si)
+        get_startup_info(ctypes.byref(si))
+        return bool(si.dwFlags & _STARTF_USESHOWWINDOW) and si.wShowWindow in _MINIMIZED_SHOW
+    except Exception:
+        log.exception("не удалось прочитать STARTUPINFO")
+        return False
 
 
 def _launch_command() -> str:
@@ -34,7 +96,7 @@ def startup_shortcut() -> Path | None:
 
 
 def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
-                    description: str) -> bool:
+                    description: str, show_cmd: int = 0) -> bool:
     import ctypes
     import uuid
     from ctypes import POINTER, byref, c_void_p, c_wchar_p, wintypes
@@ -81,6 +143,8 @@ def _write_shortcut(path: Path, target: str, arguments: str, workdir: str,
                 call(link, 9, workdir, argtypes=(c_wchar_p,))
             if description:
                 call(link, 7, description, argtypes=(c_wchar_p,))
+            if show_cmd:
+                call(link, 15, show_cmd, argtypes=(ctypes.c_int,))
             persist = c_void_p()
             call(link, 0, byref(IID_IPersistFile), byref(persist),
                  argtypes=(POINTER(GUID), POINTER(c_void_p)))
@@ -115,7 +179,8 @@ def create_startup_shortcut() -> bool:
     target, arguments = _launch_parts()
     workdir = os.path.dirname(target) or ""
     return _write_shortcut(path, target, arguments, workdir,
-                           "Запуск Centurio при входе в Windows")
+                           "Запуск Centurio при входе в Windows",
+                           show_cmd=SW_SHOWMINNOACTIVE)
 
 
 def remove_startup_shortcut() -> bool:
@@ -132,18 +197,41 @@ def remove_startup_shortcut() -> bool:
         return False
 
 
-def _run_key_set() -> bool:
+def _run_key_value() -> str | None:
     try:
         import winreg
 
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_QUERY_VALUE) as key:
-            winreg.QueryValueEx(key, APP_NAME)
-        return True
+            value, _kind = winreg.QueryValueEx(key, APP_NAME)
+        return str(value)
     except FileNotFoundError:
-        return False
+        return None
     except Exception:
         log.exception("не удалось прочитать значение реестра автозапуска")
+        return None
+
+
+def _run_key_set() -> bool:
+    return _run_key_value() is not None
+
+
+def has_stale_arguments() -> bool:
+    """Автозапуск от прошлой версии передаёт собранному exe `--hidden`.
+
+    Такой ярлык (его ставил и инсталлятор) запускает Flutter-оболочку без
+    Python — см. `_embedded`. Аргументы ярлык хранит строкой UTF-16LE, так что
+    для проверки его не нужно разбирать целиком.
+    """
+    if not _embedded():
         return False
+    path = startup_shortcut()
+    try:
+        if path and path.exists() and _HIDDEN_ARG.encode("utf-16-le") in path.read_bytes():
+            return True
+    except OSError:
+        pass
+    value = _run_key_value() if os.name == "nt" else None
+    return bool(value and _HIDDEN_ARG in value)
 
 
 def is_enabled() -> bool:
@@ -208,6 +296,6 @@ def sync(preference: bool) -> bool:
     if os.name != "nt":
         return bool(preference)
     preference = bool(preference)
-    if needs_write(preference, is_enabled()):
+    if needs_write(preference, is_enabled()) or (preference and has_stale_arguments()):
         set_autostart(preference)
     return preference

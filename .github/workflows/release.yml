@@ -34,6 +34,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Токен в .git/config сборке не нужен; ни к чему ему и лежать рядом
+          # с исходниками, которые упаковываются в дистрибутив.
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -69,6 +73,24 @@ jobs:
 
       - name: Build the application
         run: flet build windows --verbose
+
+      # До подписи: правка ресурса подпись ломает. Без этого собранный exe
+      # у пользователя с кириллицей в имени профиля закрывается за секунду,
+      # не оставив ни строчки лога, — см. scripts/utf8_manifest.ps1.
+      - name: Switch the exe to the UTF-8 code page
+        shell: pwsh
+        run: ./scripts/utf8_manifest.ps1 -Path "${{ env.BUILD_DIR }}/Centurio.exe"
+
+      # Собранный exe обязан реально запуститься: тесты гоняют Python-код
+      # напрямую и склейку Flutter со встроенным Python не видят — сборка,
+      # которая «сразу вылетает», уже уезжала к пользователю.
+      - name: Smoke test the built app
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}"
+
+      - name: Smoke test the built app under a Cyrillic user profile
+        shell: pwsh
+        run: ./scripts/smoke.ps1 -BuildDir "${{ env.BUILD_DIR }}" -NonAsciiProfile
 
       - name: Sign the application
         shell: pwsh
