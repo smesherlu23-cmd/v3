@@ -3896,6 +3896,77 @@ def test_search_field_keeps_focus_and_order():
            "Enter goes by what is in the field even if its on_change is still queued")
 
 
+def test_background_redraw_waits_for_the_field_being_edited():
+    """Фоновая перерисовка не стирает то, что человек сейчас печатает.
+
+    Монитор процессов перерисовывает окно, когда что-то запустилось или
+    закрылось. Поле «Аргументы» или имя в панели справа собирается при этом
+    заново — с фокусом и набранным текстом пропадало и то, и другое.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("deferred redraw test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        app_id = store.add_app({"name": "A", "path": "/x/a", "category_id": "work"})["id"]
+        ui, _ = _ui_for(store)
+        ui.view.select_one(app_id)
+        ui.refresh()
+        calls = []
+        real = ui.refresh
+        ui.refresh = lambda content_only=False: calls.append(content_only)
+
+        ui.view.start_typing("app_args")
+        ui.set_running([app_id])
+        ui.safe_refresh()
+        ok(calls == [], "while a rebuilt field has the cursor, background redraws wait")
+        ui.view.stop_typing("app_args")
+        ok(calls == [False], "and run once, in full, when the cursor leaves it")
+
+        calls.clear()
+        ui.view.start_typing("search")
+        ui.set_running([])
+        ok(calls == [True], "the search row survives redraws, so typing there doesn't block them")
+        ui.refresh = real
+
+
+def test_drag_reorder_reaches_the_end():
+    """Перетаскиванием можно поставить категорию или программу набора последней.
+
+    Перетащенное всегда вставало перед целью, так что вниз оно не доходило
+    до последнего места никогда.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("drag reorder test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+        for name in ("B", "C"):
+            store.add_category(name)
+        ids = [c["id"] for c in ui.categories()]
+        ui._reorder_category(ids[0], ids[-1])
+        ok([c["id"] for c in ui.categories()] == ids[1:] + ids[:1],
+           "a category dragged onto the last one lands after it")
+        ui._reorder_category(ids[0], ids[1])
+        ok([c["id"] for c in ui.categories()] == [ids[0], ids[1], ids[2]],
+           "and dragged back up it lands before its target")
+
+        apps = [store.add_app({"name": n, "path": f"/x/{n}"})["id"] for n in "abc"]
+        rec = store.add_set("S", apps)
+        src = types_ns(data=apps[0])
+        ui.page.get_control = lambda _id: src
+        ui.chrome.drop_set_item(rec["id"], apps[2], types_ns(src_id="x"), types_ns(update=lambda: None))
+        ok(store.get_set(rec["id"])["apps"] == [apps[1], apps[2], apps[0]],
+           "a set member dragged onto the last one starts last")
+
+
 def test_search_forgives_layout_and_cyrillic():
     """Поиск понимает не ту раскладку, русское написание и первые буквы.
 

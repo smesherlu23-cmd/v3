@@ -14,7 +14,7 @@ from ..core import queries
 from ..core.hotkeys import resolve_accels
 from ..core.store import Store
 from ..core.text import plu_apps, plu_windows, split_args
-from ..core.view_state import SEARCH_FIELD, ViewState
+from ..core.view_state import PERSISTENT_FIELDS, SEARCH_FIELD, ViewState
 from ..infra import log
 from ..platform import windows as W
 from . import colors as C
@@ -71,6 +71,8 @@ class CenturioUI:
         self._rail_scroll = 0.0
         self._header_key = None
         self._palette_keyed_at = 0.0
+        self._deferred = None
+        self.view.on_typing_done = self._run_deferred_refresh
 
         self.toast = ToastHost(page)
         self.notify = Notifier(self.toast)
@@ -248,10 +250,33 @@ class CenturioUI:
         self.running = set(ids)
         with self._win_lock:
             self._win_at = 0.0
+        self.background_refresh(content_only=True)
+
+    def _editing_rebuilt_field(self) -> bool:
+        return bool(self.view.typing) and self.view.typing not in PERSISTENT_FIELDS
+
+    def background_refresh(self, content_only: bool = False):
+        """Перерисовка не по действию пользователя: монитор процессов, фоновые потоки.
+
+        Пока курсор в поле, которое перерисовка собирает заново (имя или
+        аргументы в панели справа, имя набора или категории), она стёрла бы
+        набираемое вместе с полем. Тогда перерисовка ждёт, пока поле не
+        потеряет фокус.
+        """
+        if self._editing_rebuilt_field():
+            # None — ничего не ждёт; True — только содержимое; False — всё.
+            self._deferred = content_only if self._deferred is None \
+                else (self._deferred and content_only)
+            return
         try:
-            self.refresh(content_only=True)
+            self.refresh(content_only=content_only)
         except Exception:
-            log.exception("сбой при обновлении интерфейса после изменения запущенных приложений")
+            log.exception("сбой при фоновом обновлении")
+
+    def _run_deferred_refresh(self):
+        pending, self._deferred = self._deferred, None
+        if pending is not None:
+            self.background_refresh(content_only=pending)
 
     def refresh(self, content_only=False):
         if not self._visible:
@@ -889,8 +914,9 @@ class CenturioUI:
         ids = [c["id"] for c in self.categories()]
         if dragged_id not in ids or target_id not in ids:
             return
+        moving_down = ids.index(target_id) > ids.index(dragged_id)
         ids.remove(dragged_id)
-        ids.insert(ids.index(target_id), dragged_id)
+        ids.insert(ids.index(target_id) + (1 if moving_down else 0), dragged_id)
         self.store.reorder_categories(ids)
         self.refresh()
 
@@ -1111,10 +1137,7 @@ class CenturioUI:
         self.popover_layer.visible = True
 
     def safe_refresh(self):
-        try:
-            self.refresh()
-        except Exception:
-            log.exception("сбой при фоновом обновлении")
+        self.background_refresh()
 
     def backup(self):
         try:

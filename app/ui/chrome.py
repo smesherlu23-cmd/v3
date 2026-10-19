@@ -336,10 +336,12 @@ class Chrome:
         rec = self.ui.store.get_set(set_id)
         if not rec or not isinstance(moved, str) or moved == target_id:
             return
-        order = [i["app_id"] for i in rec["items"] if i["app_id"] != moved]
-        if target_id not in order:
+        current = [i["app_id"] for i in rec["items"]]
+        if moved not in current or target_id not in current:
             return
-        order.insert(order.index(target_id), moved)
+        moving_down = current.index(target_id) > current.index(moved)
+        order = [i for i in current if i != moved]
+        order.insert(order.index(target_id) + (1 if moving_down else 0), moved)
         self.ui.store.reorder_set_items(set_id, order)
         self.ui.refresh()
 

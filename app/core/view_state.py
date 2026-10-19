@@ -43,6 +43,8 @@ class ViewState:
         # двигали выделение в сетке, а `Escape` в переименовании набора
         # закрывал редактор. `Keymap` читает этот признак и молчит.
         self.typing: str | None = None
+        # Зовётся, когда курсор покинул поле, — отложенная перерисовка.
+        self.on_typing_done = None
 
         self.select_mode = False
         self.selection_anchor: str | None = None
@@ -111,6 +113,8 @@ class ViewState:
         # успел отработать раньше, чем `on_blur` покинутого.
         if self.typing == field:
             self.typing = None
+            if self.on_typing_done:
+                self.on_typing_done()
 
     def stop_typing_in_rebuilt_fields(self) -> None:
         if self.typing not in PERSISTENT_FIELDS:
