@@ -293,12 +293,11 @@ def test_store_set_layout():
            "but a member that starts minimised is left out of it")
 
         s.update_set(rec["id"], {"layout": {"split": 9.0}, "delay_seconds": 99,
-                                 "monitor": -3, "hotkey": "  "})
+                                 "monitor": -3})
         fresh = s.get_set(rec["id"])
         ok(fresh["layout"]["split"] == L.MAX_SPLIT, "an impossible share is clamped")
         ok(fresh["delay_seconds"] == 30.0, "so is an absurd pause")
-        ok(fresh["monitor"] == 0 and fresh["hotkey"] is None,
-           "and a negative monitor or a blank hotkey become the defaults")
+        ok(fresh["monitor"] == 0, "and a negative monitor becomes the default")
 
         s.move_set_item(rec["id"], three, -2)
         ok(s.get_set(rec["id"])["apps"][0] == three,
@@ -1800,41 +1799,6 @@ def test_settings_screen_has_theme_controls():
         theme.reset_theme()
 
 
-def test_hotkey_rejection():
-    """A single bad accelerator must not take the other hotkeys down with it.
-
-    Exercises the mapping builder directly: it is a pure function over the
-    binding list, so no window, message loop or RegisterHotKey call is
-    involved and a headless run can never hang.
-    """
-    from app.core.hotkeys import (
-        MOD_CONTROL,
-        MOD_SHIFT,
-        HotkeyManager,
-        normalize_accel,
-    )
-
-    mgr = HotkeyManager(on_trigger=lambda _aid: None)
-
-    mapping, rejected = mgr._build_mapping(
-        [("Ctrl+Shift+G", "good"), ("Ctrl+Пробел", "bad"), ("F8", "also-good")])
-    ok(rejected == ["Ctrl+Пробел"], "only the unbindable accelerator is rejected")
-    ok(len(mapping) == 2, "the surviving hotkeys are still registered")
-    by_accel = {normalize_accel(b.accel): b for b in mapping.values()}
-    ok(by_accel["ctrl+shift+g"].flags == (MOD_CONTROL | MOD_SHIFT)
-       and by_accel["ctrl+shift+g"].vk == ord("G"),
-       "good combos carry the right Win32 modifiers and virtual key")
-    ok(by_accel["f8"].flags == 0 and by_accel["f8"].vk == 0x77,
-       "a bare F-key needs no modifier and maps to its VK code")
-
-    mapping, rejected = mgr._build_mapping([("Ctrl+G", "one"), ("ctrl+g", "two")])
-    ok(rejected == ["ctrl+g"], "a duplicate accelerator is rejected, not silently overwritten")
-    ok(len(mapping) == 1, "the first binding of a duplicated combo wins")
-
-    mapping, rejected = mgr._build_mapping([(None, "x"), ("", "y")])
-    ok(not mapping and not rejected, "empty accelerators are skipped quietly")
-
-
 def test_ci_skip_escalation():
     """A Flet skip is fine for a local run and a failure under CI.
 
@@ -1863,26 +1827,6 @@ def test_ci_skip_escalation():
 
     code, line = _summarize(10, 2, [], is_ci=True)
     ok(code == 1 and "2 failed" in line, "a genuine failure with no skips isn't inflated by escalation")
-
-
-def test_hotkey_no_double_launch():
-    """A globally registered combo must be ignored by the in-window handler.
-
-    A global hotkey and the in-window Ctrl+N handler could both fire on one
-    press; `handles()` is what tells the window handler to stand down for a
-    combo the global manager owns.
-    """
-    from app.core.hotkeys import HotkeyManager
-
-    mgr = HotkeyManager(on_trigger=lambda _aid: None)
-    mgr._build_mapping([("Ctrl+1", "a"), ("Ctrl+2", "b")])
-    ok(mgr.bound == {"ctrl+1", "ctrl+2"}, "accepted accelerators are recorded")
-    ok(mgr.handles("Ctrl+1") is False, "no listener running -> the window handles the key")
-    mgr.available = True
-    ok(mgr.handles("Ctrl+1") is True and mgr.handles("ctrl+1") is True,
-       "a registered combo is claimed by the global listener")
-    ok(mgr.handles("Ctrl+7") is False, "an unregistered combo falls back to the window")
-    ok(mgr.handles("") is False, "an empty accelerator is never claimed")
 
 
 def _completes(fn, seconds=2.0) -> bool:
@@ -2524,15 +2468,13 @@ def test_readme_points_at_files_that_exist():
     ok(not missing, f"README ссылается на несуществующее: {missing}")
 
 
-def test_global_hotkeys_avoid_the_keylogger_signature():
-    """Никаких хуков клавиатуры и pynput — только RegisterHotKey.
+def test_no_global_hotkeys():
+    """Ни хуков клавиатуры, ни системных сочетаний.
 
-    `SetWindowsHookEx(WH_KEYBOARD_LL)` (а это и есть pynput.GlobalHotKeys)
-    получает каждое нажатие в системе — по этому признаку эвристики
-    антивирусов опознают кейлоггер, и неподписанный Centurio ловил детект.
-    Глобальные клавиши берутся документированным `RegisterHotKey`, которому
-    ОС отдаёт только зарегистрированные сочетания. Тест не даёт хуку
-    вернуться незамеченным.
+    `SetWindowsHookEx(WH_KEYBOARD_LL)` (pynput.GlobalHotKeys) получает каждое
+    нажатие в системе — по этому признаку антивирусы опознают кейлоггер.
+    `RegisterHotKey` отбирал Ctrl+1…9 у браузеров и офиса, а Ctrl+Alt+N на
+    раскладках с AltGr — символы. Клавиши Centurio работают только в его окне.
     """
     import io
     import re
@@ -2562,6 +2504,8 @@ def test_global_hotkeys_avoid_the_keylogger_signature():
             offenders.append(f"{rel}: uses pynput GlobalHotKeys")
         if re.search(r"SetWindowsHookEx|WH_KEYBOARD", code):
             offenders.append(f"{rel}: installs a keyboard hook")
+        if re.search(r"RegisterHotKey|WM_HOTKEY", code):
+            offenders.append(f"{rel}: registers a system-wide hotkey")
     ok(not offenders, "keyboard-hook signatures crept back in: " + "; ".join(offenders))
 
     pyproject = _read("pyproject.toml")
@@ -2939,62 +2883,32 @@ def test_discovery():
 
 def test_hotkeys():
     from app.core.hotkeys import (
-        MOD_ALT,
-        MOD_CONTROL,
-        MOD_SHIFT,
-        app_for_accel,
+        free_quick_slot,
         quick_accels,
-        quick_bindings,
-        to_win_hotkey,
+        resolve_accels,
+        set_accels,
+        slot_target,
     )
-    ok(to_win_hotkey("Ctrl+Shift+1") == (MOD_CONTROL | MOD_SHIFT, ord("1")),
-       "hotkey -> Win32 (modifiers, vk)")
-    ok(to_win_hotkey("Alt+G") == (MOD_ALT, ord("G")), "hotkey letter")
-    ok(to_win_hotkey("F5") == (0, 0x74), "hotkey F-key")
-    ok(to_win_hotkey("Ctrl+Space") == (MOD_CONTROL, 0x20), "named key mapped to its VK")
-    ok(to_win_hotkey("Ctrl+Пробел") is None, "an unmappable key yields no binding")
-    apps = [{"id": "a", "quick": True, "hotkey": None},
-            {"id": "b", "quick": True, "hotkey": "Ctrl+Shift+X"},
-            {"id": "c", "quick": True, "hotkey": None}]
-    binds = dict((aid, acc) for acc, aid in quick_bindings(apps))
-    ok(binds["b"] == "Ctrl+Shift+X", "explicit hotkey kept")
-    ok(binds["a"] == "Ctrl+1" and binds["c"] == "Ctrl+2", "auto Ctrl+N assigned")
+    apps = [{"id": "a", "quick": True}, {"id": "b", "quick": False},
+            {"id": "c", "quick": True}]
+    accels = quick_accels(apps)
+    ok(accels == {"a": "Ctrl+1", "c": "Ctrl+2"}, "pinned programs are numbered in order")
+    ok(slot_target(accels, "1") == "a" and slot_target(accels, "2") == "c",
+       "Ctrl+N resolves to the program its badge shows")
+    ok(slot_target(accels, "9") is None, "an unassigned slot resolves to nothing")
+    ok(free_quick_slot(apps) == 3, "the next free number follows the pinned ones")
 
-    # The quick-row badge, the global listener and the in-window fallback used
-    # to count slots independently and disagree about what Ctrl+N launches.
-    ok(quick_accels(apps) == binds, "badge labels and global bindings share one map")
-    ok(quick_accels(apps)["a"] == "Ctrl+1",
-       "an app with its own hotkey doesn't shift the Ctrl+N numbering")
-    ok(app_for_accel(apps, "ctrl+1") == "a", "Ctrl+N resolves to the app its badge shows")
-    ok(app_for_accel(apps, "Ctrl+9") is None, "an unassigned slot resolves to nothing")
-    ok(app_for_accel(apps, "") is None, "an empty accelerator resolves to nothing")
-
-    taken = [{"id": "x", "quick": True, "hotkey": "Ctrl+1"},
-             {"id": "y", "quick": True, "hotkey": None}]
-    ok(quick_accels(taken).get("y") == "Ctrl+2",
-       "a slot claimed by an explicit hotkey is skipped, not burned")
-
-    many = [{"id": str(i), "quick": True, "hotkey": None} for i in range(12)]
-    slots = quick_accels(many)
-    ok(len(slots) == 9 and "9" not in slots, "only nine quick slots are handed out")
-    ok(quick_accels([{"id": "n", "quick": False, "hotkey": None}]) == {},
-       "non-quick apps without a hotkey get no accelerator")
+    many = [{"id": str(i), "quick": True} for i in range(12)]
+    ok(len(quick_accels(many)) == 9, "only nine quick slots are handed out")
+    ok(free_quick_slot(many) == 0, "and none is left over")
+    ok(quick_accels([{"id": "n", "quick": False}]) == {}, "unpinned programs get no number")
 
     # Наборы — своя строка клавиатуры, чтобы цифра на плитке всегда значила
     # ровно Ctrl+N и запускала программу, а не набор.
-    from app.core.hotkeys import SET_PREFIX, set_accels, set_bindings, split_binding
-    sets = [{"id": "s1", "hotkey": None}, {"id": "s2", "hotkey": "Ctrl+Alt+7"},
-            {"id": "s3", "hotkey": None}]
-    accels = set_accels(sets)
-    ok(accels["s1"] == "Ctrl+Alt+1" and accels["s3"] == "Ctrl+Alt+2",
-       "sets take Ctrl+Alt+1…9")
-    ok(accels["s2"] == "Ctrl+Alt+7", "an explicit combination is kept")
-    ok(not set(accels.values()) & set(quick_accels(apps).values()),
-       "and never collides with what a pinned program answers to")
-    ok(("Ctrl+Alt+1", SET_PREFIX + "s1") in set_bindings(sets),
-       "bindings carry the prefix that tells a set from an app")
-    ok(split_binding(SET_PREFIX + "s1") == ("set", "s1"), "which splits back off")
-    ok(split_binding("app-id") == ("app", "app-id"), "leaving plain app ids alone")
+    sets = [{"id": "s1"}, {"id": "s2"}]
+    ok(set_accels(sets) == {"s1": "Ctrl+Alt+1", "s2": "Ctrl+Alt+2"}, "sets take Ctrl+Alt+1…9")
+    ok(resolve_accels(apps, sets) == (accels, set_accels(sets)),
+       "one call gives both maps the window and the badges share")
 
 
 def test_launcher_monitor_lifecycle():
@@ -3154,36 +3068,23 @@ def test_color_parsing():
        "and falls back to the theme's white when nothing was chosen")
 
 
-def test_tray_and_hints_show_the_hotkeys_that_are_bound():
-    """Меню трея и подсказка пустого слота считают ту же раскладку, что биндер.
+def test_tray_lists_pinned_programs_without_keys():
+    """Меню трея — закреплённые программы по именам, без Ctrl+N.
 
-    Биндится результат `resolve_accels`, который резервирует клавишу вызова
-    Centurio. Трей же звал `quick_accels` без `reserved` и показывал клавиши
-    на позицию раньше настоящих, а `free_quick_slot` предлагал слот, уже
-    занятый соседним приложением.
+    Ctrl+N работают только в окне Centurio, а меню трея открыто, когда окна
+    нет: подпись с клавишей обещала бы то, чего нажатие не сделает.
     """
-    from app.core.hotkeys import free_quick_slot, resolve_accels
     from app.ui import screens
 
     with tempfile.TemporaryDirectory() as d:
         store = Store(os.path.join(d, "data.json"))
-        store.set_setting("launch_hotkey", "Ctrl+1")
         ids = [store.add_app({"name": n, "path": f"/x/{n}", "category_id": "work"})["id"]
-               for n in ("A", "B")]
-        for app_id in ids:
+               for n in ("A", "B", "C")]
+        for app_id in ids[:2]:
             store.update_app(app_id, {"quick": True})
-
-        state = store.state()
-        bound, _sets = resolve_accels(state["apps"], state["sets"], "Ctrl+1")
-        ok(bound[ids[0]] == "Ctrl+2" and bound[ids[1]] == "Ctrl+3",
-           f"Ctrl+1 занят вызовом Centurio, приложения начинают с Ctrl+2 ({bound})")
-
-        labels = {item["id"]: item["label"] for item in screens.tray_items(store)}
-        ok(labels[ids[0]].endswith("Ctrl+2") and labels[ids[1]].endswith("Ctrl+3"),
-           f"трей показывает ровно назначенное ({list(labels.values())})")
-
-        free = free_quick_slot(state["apps"], reserved=["Ctrl+1"])
-        ok(free == 4, f"подсказка пустого слота предлагает первый действительно свободный ({free})")
+        items = screens.tray_items(store)
+        ok([i["id"] for i in items] == ids[:2], "only pinned programs are listed")
+        ok([i["label"] for i in items] == ["A", "B"], "labelled by name alone")
 
 
 def test_launch_arguments_keep_quoted_paths_intact():
@@ -3467,8 +3368,8 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
     """Отказ трея, клавиш или значков не должен мешать окну открыться.
 
     Centurio — панель запуска: окно без трея нужнее, чем «exe вылетает сразу».
-    Платформенные шаги (RegisterHotKey, pystray, монитор процессов, запись
-    значков рядом с exe) на чужой машине могут отказать по причинам, которые
+    Платформенные шаги (pystray, монитор процессов, запись значков рядом
+    с exe) на чужой машине могут отказать по причинам, которые
     нам не подвластны, — тогда их надо записать в лог и идти дальше.
     """
     import importlib
@@ -3481,7 +3382,6 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
         return
     importlib.reload(main_mod)
 
-    from app.core import hotkeys as hk_mod
     from app.platform import launcher as la_mod
     from app.platform import tray as tr_mod
 
@@ -3489,7 +3389,7 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
         raise OSError("симулированный отказ платформы")
 
     saved = (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             la_mod.Launcher.start_monitor, tr_mod.TrayController.refresh,
              main_mod._report_startup_failure)
     with tempfile.TemporaryDirectory() as d:
         prev = os.environ.get("APPDATA")
@@ -3498,7 +3398,7 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
             main_mod.ensure_icons = boom
             tr_mod.TrayController.start = boom
             la_mod.Launcher.start_monitor = boom
-            hk_mod.HotkeyManager.register = boom
+            tr_mod.TrayController.refresh = boom
             # Страховка: если старт всё же упадёт, модальное окно не должно
             # подвесить прогон — см. _run_bounded.
             main_mod._report_startup_failure = lambda: None
@@ -3518,7 +3418,7 @@ def test_optional_startup_steps_degrade_instead_of_killing_the_app():
                f"and each skipped step is written down, not swallowed ({len(degraded)})")
         finally:
             (main_mod.ensure_icons, tr_mod.TrayController.start,
-             la_mod.Launcher.start_monitor, hk_mod.HotkeyManager.register,
+             la_mod.Launcher.start_monitor, tr_mod.TrayController.refresh,
              main_mod._report_startup_failure) = saved
             _drop_log_handlers(_log)
             if prev is None:
@@ -4473,9 +4373,9 @@ def test_ui_inspector_replaces_the_modal_form():
         ok("Показать в папке" in [c.tooltip for c in _walk(ui.inspector_container)
                                   if getattr(c, "tooltip", None)],
            "opening the containing folder is a button here now, not a menu item")
-        ok("Категория" in shown and "Быстрый запуск" in shown
-           and "Своя горячая клавиша" in shown and "В наборах" in shown,
+        ok("Категория" in shown and "Быстрый запуск" in shown and "В наборах" in shown,
            "the properties are there")
+        ok("Своя горячая клавиша" not in shown, "and no system-wide hotkey field any more")
         ok("В набор" in shown,
            "«В наборах» stays even for an app in none — that's how it joins the first one")
         ok("ПАРАМЕТРЫ ЗАПУСКА" in shown, "and the collapsed launch options")
@@ -4487,7 +4387,7 @@ def test_ui_inspector_replaces_the_modal_form():
         ui._toggle_quick(app_id, True)
         ok(store.get_app(app_id)["quick"] is True, "the pin toggle writes through")
         ui.refresh()
-        ok("Сейчас место 1" in _texts(ui.inspector_container),
+        ok("Место 1 · Ctrl+1 в окне" in _texts(ui.inspector_container),
            "and its slot shows up under «Быстрый запуск» right away")
         ui._set_args(app_id, "--profile work")
         ok(store.get_app(app_id)["args"] == ["--profile", "work"], "so do the arguments")
@@ -5132,7 +5032,7 @@ def test_ui_calm_mode():
         ok("Ctrl+1" in quiet, "item 1: the tile's own hotkey still shows")
         ok(any(t.startswith("C:\\") for t in quiet),
            "item 2: the inspector's technical block (path) is untouched")
-        ok(any("Сейчас место" in t for t in quiet),
+        ok(any(t.startswith("Место 1") for t in quiet),
            "item 3: and its quick-launch slot note")
         ok("Ctrl+1…9" not in quiet, "but the quick-row key-hint legend stays gone (group 1)")
         ok("Notion" in quiet, "the name was of course never hidden either way")
@@ -5338,111 +5238,25 @@ def test_ui_keyboard():
         ok(not ui.view.select_mode and not ui.view.sel,
            "Esc leaves the mode and drops the selection")
 
-        ui.view.select_one(ids[0])
-        ui._begin_capture()
-        ok(ui.view.capture, "clicking the hotkey field starts listening")
-        ui.keymap.handle_key(_key("Control", ctrl=True))
-        ok(ui.view.capture, "a lone modifier isn't a combination")
-        ui.keymap.handle_key(_key("G", ctrl=True, shift=True))
-        ok(store.get_app(ids[0])["hotkey"] == "Ctrl+Shift+G", "the combination is recorded")
+        # Ctrl+1…9 и Ctrl+Alt+1…9 — только в окне, системных сочетаний нет.
+        launched, sets_run = [], []
+        ui._launch = lambda app_id, **kw: launched.append(app_id)
+        ui.set_ops.launch_set = lambda set_id, **kw: sets_run.append(set_id)
+        store.update_app(ids[1], {"quick": True})
+        rec = store.add_set("S", ids[:2])
+        ui.refresh()
+        ui.keymap.handle_key(_key("1", ctrl=True))
+        ok(launched == [ids[1]], "Ctrl+1 runs the first pinned program")
+        ui.keymap.handle_key(_key("2", ctrl=True))
+        ok(launched == [ids[1]], "an empty slot does nothing")
+        ui.keymap.handle_key(_key("1", ctrl=True, alt=True))
+        ok(sets_run == [rec["id"]], "Ctrl+Alt+1 runs the first set")
 
-        ui.view.select_one(ids[1])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("G", ctrl=True, shift=True))
-        ok(store.get_app(ids[1])["hotkey"] is None, "a combination already in use is refused")
-        ok("занята" in ui.toast.text.value, "and says so")
-
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("Escape"))
-        ok(not ui.view.capture, "Esc cancels the capture")
-
-        # Комбинации, которыми в Windows уже что-то делают, не назначаются
-        # никому — ни программе, ни общему вызову Centurio.
-        ui.view.select_one(ids[2])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("F4", alt=True))
-        ok(store.get_app(ids[2])["hotkey"] is None, "a Windows shortcut is refused")
-        ok(ui.view.capture, "capture stays open so another combination can be tried")
-        ok("Windows" in ui.toast.text.value, "and the toast says why")
-        ui.keymap.handle_key(_key("Escape"))
-
-        # Общая комбинация — тот же захват, но по-другому именованная цель:
-        # начинается через _begin_capture("launch"), а не через выбранную плитку.
-        start = store.state()["settings"]["launch_hotkey"]
-        ui._begin_capture("launch")
-        ok(ui.view.capture and ui.view.capture_target == "launch",
-           "the launch hotkey uses the same capture machinery")
-        ui.keymap.handle_key(_key("F4", alt=True))
-        ok(store.state()["settings"]["launch_hotkey"] == start,
-           "a Windows shortcut is refused here too")
-        ui.keymap.handle_key(_key("Space", ctrl=True, shift=True))
-        ok(store.state()["settings"]["launch_hotkey"] == "Ctrl+Shift+Space",
-           "any other combination the user presses is accepted")
-
-        ui.view.select_one(ids[0])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("Space", ctrl=True, shift=True))
-        ok(store.get_app(ids[0])["hotkey"] == "Ctrl+Shift+G",
-           "a combination already claimed by the launch hotkey is refused for a program")
-        ok("Centurio" in ui.toast.text.value, "and the toast names what already has it")
-
-        # Пока идёт запись, общий слушатель приостановлен: он глобальный и не
-        # смотрит, какое окно в фокусе, так что старая комбинация (включая ту
-        # самую, что сейчас меняют) могла бы сработать посреди набора новой.
-        calls = []
-        ui.controllers["suspend_hotkeys"] = lambda: calls.append("suspend")
-        ui.controllers["resume_hotkeys"] = lambda: calls.append("resume")
-        ui.view.select_one(ids[1])
-        ui._begin_capture()
-        ok(calls == ["suspend"], "starting a capture suspends the global listener")
-        ui.keymap.handle_key(_key("H", ctrl=True))
-        ok(calls == ["suspend", "resume"],
-           "finishing it resumes it — whether or not the combination was accepted")
-
-        calls.clear()
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("Escape"))
-        ok(calls == ["suspend", "resume"], "cancelling with Esc resumes it too")
-
-        calls.clear()
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("F4", alt=True))
-        ok(calls == ["suspend"],
-           "a refused Windows combination does not resume it — capture is still open")
-        ui.keymap.handle_key(_key("Escape"))
-
-        # Любые клавиши: без модификатора тоже, и Win считается модификатором.
-        ui.view.select_one(ids[2])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("F9"))
-        ok(store.get_app(ids[2])["hotkey"] == "F9",
-           "a bare key with no modifier at all is accepted now")
-
-        ui.view.select_one(ids[0])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("K", meta=True))
-        ok(store.get_app(ids[0])["hotkey"] == "Win+K", "and Win counts as a modifier too")
-
-        # Flet сообщает пробел как буквальный " ", а не именем "Space", как
-        # остальные именованные клавиши (Enter, Tab, Escape). Без нормализации
-        # это " " схлопывалось до пустой строки везде ниже по цепочке (и
-        # format_accel, и to_win_hotkey отбрасывают пустые токены), так что
-        # «Ctrl+Пробел» на экране превращался просто в «Ctrl».
-        ui.view.select_one(ids[1])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key(" ", ctrl=True))
-        ok(store.get_app(ids[1])["hotkey"] == "Ctrl+Space",
-           "the space bar is recorded by name, not as a literal space")
-
-        # Записанный хоткей программы сразу перерегистрируется — раньше только
-        # запись сохранялась, а глобальный слушатель обновлялся лишь при
-        # следующем случайном изменении библиотеки.
-        registered = []
-        ui.controllers["on_library_changed"] = lambda: registered.append(1)
-        ui.view.select_one(ids[1])
-        ui._begin_capture()
-        ui.keymap.handle_key(_key("J", ctrl=True))
-        ok(registered, "setting a program's hotkey re-registers the global listener")
+        ui.view.typing = "search"
+        ui.keymap.handle_key(_key("1", ctrl=True, alt=True))
+        ok(sets_run == [rec["id"]],
+           "inside a text field Ctrl+Alt+digit is AltGr typing, not a set")
+        ui.view.typing = None
 
         hidden = []
         ui.controllers["hide_to_tray"] = lambda: hidden.append(1)
@@ -5651,7 +5465,7 @@ def test_ui_settings_screen():
 
         # Каждая настройка живёт ровно в одном разделе и ничего не свёрнуто.
         expected = {
-            "keys": ("Вызов Centurio",),
+            "keys": ("Поиск по библиотеке", "Программы из «Быстрого запуска»", "Наборы"),
             "startup": ("Запускать с Windows", "Крестик сворачивает в трей",
                         "Прятать окно после запуска"),
             "library": ("Складывать новое в разбор", "Проверять новое раз в 15 минут",
@@ -5674,14 +5488,10 @@ def test_ui_settings_screen():
             ui.set_setting(key, not before)
             ok(store.state()["settings"][key] is (not before), f"«{key}» writes through")
 
-        # Вызов Centurio — свободный захват, а не выбор из готового списка.
         ui.set_settings_tab("keys")
-        start = store.state()["settings"]["launch_hotkey"]
-        ui._begin_capture("launch")
-        ui.keymap.handle_key(_key("Space", ctrl=True, alt=True))
-        ok(store.state()["settings"]["launch_hotkey"] == "Ctrl+Alt+Space",
-           "the combination becomes whatever was pressed")
-        ok(store.state()["settings"]["launch_hotkey"] != start, "not stuck with the default")
+        here = " ".join(_texts(ui.content_col.controls[0]))
+        ok("только когда открыто окно Centurio" in here,
+           "the keys tab says the shortcuts are window-only")
 
         ui.set_settings_tab("library")
         ui.backup()
@@ -5942,11 +5752,10 @@ def test_shutdown_releases_resources():
     shutdown(store=types_ns(flush=Recorder("flush")),
              tray=types_ns(stop=Recorder("tray")),
              launcher=types_ns(stop_monitor=Recorder("monitor")),
-             hotkeys=types_ns(stop=Recorder("hotkeys")),
              geometry_flush=types_ns(cancel=Recorder("geometry")),
              toast=types_ns(stop=Recorder("toast")),
              stop_event=types_ns(set=Recorder("bg")))
-    ok(set(calls) == {"flush", "bg", "geometry", "hotkeys", "monitor", "tray", "toast"},
+    ok(set(calls) == {"flush", "bg", "geometry", "monitor", "tray", "toast"},
        f"every resource is released ({calls})")
     ok(calls[0] == "flush", "the store is flushed before anything is torn down")
     ok("bg" in calls, "the background-jobs loop is signalled to stop, not left running")
@@ -5981,7 +5790,8 @@ def test_tray_mini_launcher():
                            "quick": i < 7})
         items = dialogs.tray_items(store)
         ok(len(items) == 6, "the menu offers at most six pinned programs")
-        ok(all("Ctrl+" in i["label"] for i in items), "each shows the key that runs it")
+        ok(all("Ctrl+" not in i["label"] for i in items),
+           "no key in the labels: Ctrl+N only works inside the window")
         ok("8 приложений" in dialogs.library_summary(store), "and the menu sizes the library")
 
         store.queue_inbox([{"name": "New", "path": "C:/new.exe"}])

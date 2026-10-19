@@ -3,7 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from ..core import queries
-from ..core.hotkeys import format_accel, free_quick_slot
+from ..core.hotkeys import free_quick_slot
 from . import colors as C
 from . import screens
 from . import widgets as Wg
@@ -123,7 +123,7 @@ class GridView:
                    (cat.get("color"), cat.get("icon")) if cat else None)
             cards.append(self._cached_piece(("qcard", app["id"]), sig,
                                              lambda a=app, ac=accel: self._quick_card(a, ac)))
-        free = free_quick_slot(self.ui.apps(), reserved=[self.ui.launch_hotkey()])
+        free = free_quick_slot(self.ui.apps())
         if free and (not cards or self._fits_in_row(len(cards))):
             cards.append(self._cached_piece(("qempty",), free,
                                              lambda f=free: self._quick_empty(f)))
@@ -160,7 +160,7 @@ class GridView:
             ft.Stack(layers), width=C.QUICK_W, height=QUICK_H, bgcolor=C.PANEL,
             border=ft.border.all(1, C.CONTROL), border_radius=12,
             padding=ft.padding.all(12),
-            tooltip=f"{app['name']} · {format_accel(accel)}" if accel else app["name"],
+            tooltip=f"{app['name']} · {accel}" if accel else app["name"],
             on_click=lambda e, i=app["id"]: self.ui._launch(i))
         Wg.hoverable(card, C.PANEL, C.SELECTED_BG)
         return ft.GestureDetector(card,

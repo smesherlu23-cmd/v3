@@ -3,7 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from ..core import queries
-from ..core.hotkeys import is_bindable
+from ..core.hotkeys import slot_target
 
 
 def _survives_typing(e, key: str) -> bool:
@@ -16,8 +16,7 @@ class Keymap:
 
     def handle_key(self, e: ft.KeyboardEvent) -> None:
         key = e.key or ""
-        if self.ui.view.capture:
-            self._capture_key(e)
+        if self._slot_key(e, key):
             return
         if self.ui.menu.open and key == "Escape":
             self.ui.menu.close()
@@ -111,24 +110,22 @@ class Keymap:
             return True
         return False
 
-    def _capture_key(self, e):
-        key = "Space" if e.key == " " else (e.key or "")
-        if key in ("Control", "Alt", "Shift", "Meta"):
-            return
-        if key == "Escape" and not (e.ctrl or e.alt or e.shift or e.meta):
-            self.ui._stop_capture()
-            self.ui.refresh()
-            return
-        parts = [name for flag, name in ((e.ctrl, "Ctrl"), (e.alt, "Alt"),
-                                         (e.shift, "Shift"), (e.meta, "Win")) if flag]
-        accel = "+".join(parts + [key if len(key) > 1 else key.upper()])
-        ok, reason = is_bindable(accel)
-        if not ok:
-            self.ui.toast.error(f"{accel}: {reason}")
-            return
-        target = self.ui.view.capture_target
-        self.ui._stop_capture()
-        if target == "launch":
-            self.ui._set_launch_hotkey(accel)
-        else:
-            self.ui._set_hotkey(self.ui.view.inspector, accel)
+    def _slot_key(self, e, key: str) -> bool:
+        """Ctrl+1…9 — программа из «Быстрого запуска», Ctrl+Alt+1…9 — набор.
+
+        В поле ввода Ctrl+Alt не трогаем: на раскладках с AltGr это обычные
+        символы вроде `{` и `@`.
+        """
+        if not e.ctrl or e.shift or e.meta or len(key) != 1 or not key.isdigit():
+            return False
+        if e.alt:
+            if self.ui.view.typing:
+                return False
+            set_id = slot_target(self.ui._set_accels, key)
+            if set_id:
+                self.ui.set_ops.launch_set(set_id)
+            return True
+        app_id = slot_target(self.ui._accels, key)
+        if app_id:
+            self.ui._launch(app_id)
+        return True

@@ -3,7 +3,6 @@ from __future__ import annotations
 import flet as ft
 
 from ... import __version__
-from ...core.hotkeys import format_accel
 from .. import colors as C
 from .. import theme
 from .. import widgets as Wg
@@ -254,29 +253,31 @@ def _settings_view(ui):
     ]
 
 
-def _launch_hotkey_field(ui):
-    capturing = ui.view.capture and ui.view.capture_target == "launch"
-    explicit = ui.setting("launch_hotkey")
-    label = "нажмите…" if capturing else format_accel(explicit)
-    return ft.Container(
-        ft.Row([T(label, size=11.5, color=C.TEXT, font_family="monospace"),
-                ft.Icon(ft.Icons.EDIT, size=14, color=C.MUTED_2)],
-               spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=32, padding=ft.padding.symmetric(0, 12), bgcolor=C.PANEL,
-        border=ft.border.all(1, ui._accent() if capturing else C.TOAST_BORDER),
-        border_radius=8, alignment=ft.alignment.center,
-        tooltip="Нажмите комбинацию" if capturing else "Другая комбинация",
-        on_click=lambda e: ui._begin_capture("launch"))
+KEY_HINTS = (
+    ("Ctrl+K", "Поиск по библиотеке"),
+    ("Ctrl+1…9", "Программы из «Быстрого запуска»"),
+    ("Ctrl+Alt+1…9", "Наборы"),
+    ("Стрелки, Enter", "Выбрать плитку и запустить"),
+    ("Ctrl+A", "Выбрать все плитки на экране"),
+    ("Del", "Убрать выбранное (можно вернуть)"),
+    ("Ctrl+,", "Настройки"),
+    ("Esc", "Закрыть панель, а на главном экране — спрятать окно"),
+)
+
+
+def _key_hint(keys, text):
+    return _row(text, ft.Container(T(keys, size=11.5, color=C.TEXT, font_family="monospace"),
+                                   height=28, padding=ft.padding.symmetric(0, 10),
+                                   bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL),
+                                   border_radius=7, alignment=ft.alignment.center))
 
 
 def _settings_keys(ui):
-    return [
-        _row("Вызов Centurio", _launch_hotkey_field(ui)),
+    return [_key_hint(keys, text) for keys, text in KEY_HINTS] + [
         ft.Container(height=1, bgcolor=C.LINE_2),
-        _settings_note("Своя комбинация для отдельной программы задаётся в панели "
-                       "справа от неё, а Ctrl+1…9 раздаются закреплённым в "
-                       "«Быстром запуске» сами. Комбинации, которые уже что-то "
-                       "делают в Windows — Alt+F4, Win+L и подобные — назначить нельзя."),
+        _settings_note("Клавиши работают, только когда открыто окно Centurio: в других "
+                       "программах те же сочетания делают то, что делали. Открыть окно "
+                       "можно щелчком по значку в трее или повторным запуском Centurio."),
     ]
 
 

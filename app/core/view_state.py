@@ -35,8 +35,6 @@ class ViewState:
         self.inspector: str | None = None
         self.sel: list[str] = []
         self.adv = False
-        self.capture = False
-        self.capture_target = "app"
 
         # Ключ поля, в котором сейчас стоит курсор, или None.
         # `page.on_keyboard_event` в Flet — глобальный обработчик: он
@@ -207,7 +205,6 @@ class ViewState:
     def enter_select_mode(self):
         self.select_mode = True
         self.inspector = None
-        self.capture = False
         self.close_palette()
 
     def leave_select_mode(self):
@@ -221,12 +218,9 @@ class ViewState:
             self.selection_anchor = None
         if self.inspector not in live:
             self.inspector = None
-            if self.capture_target == "app":
-                self.capture = False
 
     def close_inspector(self):
         self.inspector = None
-        self.capture = False
         self.clear_selection()
 
     def toggle_section(self, cid: str):
@@ -264,9 +258,6 @@ class ViewState:
     def escape(self) -> bool:
         if self.popover:
             self.close_popover()
-            return True
-        if self.capture:
-            self.capture = False
             return True
         if self.palette_open:
             self.close_palette()

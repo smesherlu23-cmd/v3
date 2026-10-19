@@ -25,7 +25,6 @@ class Settings(TypedDict, total=False):
     win_y: int | None
     win_max: bool
     icon_schema: int
-    launch_hotkey: str
     hide_after: bool
     triage: bool
     debug_log: bool
@@ -49,7 +48,6 @@ class App(TypedDict, total=False):
     favorite: bool
     quick: bool
     hidden: bool
-    hotkey: str | None
     track_exe: str | None
     order: int
     last_launched: int
@@ -85,7 +83,6 @@ class AppSet(TypedDict, total=False):
     order: int
     quick: bool
     layout: SetLayout
-    hotkey: str | None
     monitor: int
     close_together: bool
     delay_seconds: float

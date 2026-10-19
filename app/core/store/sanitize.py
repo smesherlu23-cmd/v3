@@ -8,7 +8,6 @@ DEFAULT_CATEGORIES = [
     {"id": "work", "name": "Новая", "icon": "folder", "color": "#ffffff", "order": 0},
 ]
 
-DEFAULT_LAUNCH_HOTKEY = "Ctrl+Space"
 DEFAULT_SET_DELAY = 2.0
 MAX_SET_DELAY = 30.0
 
@@ -40,7 +39,6 @@ DEFAULT_SETTINGS = {
     "win_y": None,
     "win_max": False,
     "icon_schema": 0,
-    "launch_hotkey": DEFAULT_LAUNCH_HOTKEY,
     "hide_after": True,
     "triage": True,
     "debug_log": False,
@@ -71,6 +69,7 @@ def clean_app(item, index: int) -> dict | None:
     rec["path"] = rec["path"] if isinstance(rec.get("path"), str) else ""
     rec["order"] = as_int(rec.get("order"), index)
     rec["hidden"] = bool(rec.get("hidden"))
+    rec.pop("hotkey", None)
     for key in ("added_at", "last_launched", "launch_count"):
         rec[key] = as_int(rec.get(key))
     hue = as_int(rec.get("hue"), -1)
@@ -132,8 +131,7 @@ def clean_set(item, index: int) -> dict | None:
     rec["order"] = as_int(rec.get("order"), index)
     rec["quick"] = bool(rec.get("quick"))
     rec["layout"] = clean_layout(rec.get("layout"))
-    hotkey = rec.get("hotkey")
-    rec["hotkey"] = hotkey.strip() if isinstance(hotkey, str) and hotkey.strip() else None
+    rec.pop("hotkey", None)
     rec["monitor"] = max(0, as_int(rec.get("monitor")))
     rec["close_together"] = bool(rec.get("close_together"))
     delay = rec.get("delay_seconds", DEFAULT_SET_DELAY)
@@ -227,7 +225,7 @@ _BOOL_SETTINGS = {
 }
 
 _STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
-                 "view_mode", "launch_hotkey"}
+                 "view_mode"}
 
 _INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y", "bg_tint"}
 # `bg_tint` — тон фона в градусах (0-359); значение вне диапазона не портит

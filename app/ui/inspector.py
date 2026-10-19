@@ -74,7 +74,6 @@ class InspectorPanel:
                                     lambda v: self.ui._toggle_quick(app["id"], v),
                                     self.ui._accent()),
                            sub=self._quick_sub(app)),
-            self._insp_row("Своя горячая клавиша", self._hotkey_field(app)),
             self._insp_row("В наборах", self._set_chips(app)),
         ]
         props.append(ft.Container(height=1, bgcolor=C.LINE_2))
@@ -157,33 +156,10 @@ class InspectorPanel:
     def _quick_sub(self, app) -> str:
         accel = self.ui._accels.get(app["id"])
         if app.get("quick") and accel:
-            return f"Сейчас место {accel.split('+')[-1]}"
+            return f"Место {accel.split('+')[-1]} · {accel} в окне"
         if app.get("quick"):
             return "Свободных мест не осталось"
         return "Появится в ленте сверху"
-
-    def _hotkey_field(self, app):
-        explicit = app.get("hotkey")
-        label = "нажмите…" if self.ui.view.capture else (explicit or "не задана")
-        row = [T(label, size=11.5, font_family="monospace",
-                 color=C.TEXT if (explicit or self.ui.view.capture) else C.MUTED_2),
-               ft.Icon(ft.Icons.EDIT, size=14, color=C.MUTED_2)]
-        field = ft.Container(
-            ft.Row(row, spacing=8, tight=True,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=32, padding=ft.padding.symmetric(0, 10), bgcolor=C.PANEL,
-            border=ft.border.all(1, self.ui._accent() if self.ui.view.capture else C.CONTROL),
-            border_radius=8, alignment=ft.alignment.center,
-            tooltip="Нажмите комбинацию" if self.ui.view.capture
-            else "Своя комбинация, работает из любого окна",
-            on_click=lambda e: self.ui._begin_capture())
-        if app.get("hotkey") and not self.ui.view.capture:
-            return ft.Row([field,
-                           ft.Container(ft.Icon(ft.Icons.CLOSE, size=14, color=C.MUTED_2),
-                                        tooltip="Убрать комбинацию",
-                                        on_click=lambda e: self.ui._set_hotkey(app["id"], None))],
-                          spacing=6, tight=True)
-        return field
 
     def _insp_advanced(self, app):
         args_value = " ".join(app.get("args") or []) if isinstance(app.get("args"), list) \

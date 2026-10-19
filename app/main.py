@@ -8,15 +8,7 @@ from pathlib import Path
 
 import flet as ft
 
-from app.core.hotkeys import (
-    SET_PREFIX,
-    TOGGLE_LAUNCH,
-    HotkeyManager,
-    normalize_accel,
-    resolve_accels,
-    split_binding,
-)
-from app.core.store import DEFAULT_LAUNCH_HOTKEY, Store
+from app.core.store import Store
 from app.infra import log, paths
 from app.infra.debounce import Debounce
 from app.platform import autostart, single_instance
@@ -34,14 +26,13 @@ GEOMETRY_FLUSH_DELAY = 0.5
 AUTO_RESCAN_INTERVAL = 900
 
 
-def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=None,
+def shutdown(store=None, tray=None, launcher=None, geometry_flush=None,
              toast=None, stop_event=None):
     for label, step in (("flushing the store", getattr(store, "flush", None)),
                         ("stopping background jobs", getattr(stop_event, "set", None)),
                         ("cancelling the geometry flush",
                          getattr(geometry_flush, "cancel", None)),
                         ("stopping the toast timer", getattr(toast, "stop", None)),
-                        ("stopping the hotkey listener", getattr(hotkeys, "stop", None)),
                         ("stopping the process monitor",
                          getattr(launcher, "stop_monitor", None)),
                         ("stopping the tray icon", getattr(tray, "stop", None)),
@@ -150,14 +141,13 @@ def _start(page: ft.Page):
         page.window.prevent_close = True
 
     launcher = Launcher()
-    hotkeys = None
     geometry_flush = None
     ui_holder = {}
     bg_stop = threading.Event()
 
     def quit_app():
         ui = ui_holder.get("ui")
-        shutdown(store=store, tray=tray, launcher=launcher, hotkeys=hotkeys,
+        shutdown(store=store, tray=tray, launcher=launcher,
                  geometry_flush=geometry_flush, toast=getattr(ui, "toast", None),
                  stop_event=bg_stop)
         _quit(page)
@@ -215,16 +205,6 @@ def _start(page: ft.Page):
         if ui is not None:
             ui.open_library()
 
-    def toggle_launch():
-        ui = ui_holder.get("ui")
-        if ui is None:
-            return
-        visible = True if is_web else bool(page.window.visible)
-        if visible:
-            hide_to_tray()
-        else:
-            open_library()
-
     def minimize():
         if store.state()["settings"].get("minimize_to_tray") and tray.available:
             hide_to_tray()
@@ -256,55 +236,25 @@ def _start(page: ft.Page):
     def on_setting(key, value):
         if key == "autostart":
             autostart.set_autostart(bool(value))
-        elif key == "launch_hotkey":
-            refresh_runtime()
-
-    def on_hotkey(binding_id):
-        if binding_id == TOGGLE_LAUNCH:
-            toggle_launch()
-            return
-        ui = ui_holder.get("ui")
-        if ui is None:
-            return
-        kind, target = split_binding(binding_id)
-        if kind == "set":
-            ui.set_ops.launch_set(target)
-        else:
-            ui._launch(target)
-
-    hotkeys = HotkeyManager(on_trigger=on_hotkey)
-    last_rejected = set()
 
     def refresh_runtime():
-        nonlocal last_rejected
-        state = store.state()
-        launcher.set_apps(state["apps"])
+        launcher.set_apps(store.state()["apps"])
         tray.refresh()
-        if not is_web:
-            launch = state["settings"].get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
-            app_accels, set_slots = resolve_accels(state["apps"],
-                                                   _ordered_sets(state), launch)
-            bindings = ([(launch, TOGGLE_LAUNCH)]
-                        + [(accel, aid) for aid, accel in app_accels.items()]
-                        + [(accel, SET_PREFIX + sid) for sid, accel in set_slots.items()])
-            hotkeys.register(bindings)
-            rejected = set(hotkeys.rejected)
-            if rejected and rejected != last_rejected:
-                ui = ui_holder.get("ui")
-                if ui is not None:
-                    ui.notify_hotkey_rejects(sorted(rejected))
-            last_rejected = rejected
 
     controllers = {
         "minimize": minimize, "toggle_maximize": toggle_maximize, "close": close,
         "hide_to_tray": hide_to_tray, "on_setting": on_setting,
         "on_library_changed": refresh_runtime,
-        "suspend_hotkeys": hotkeys.stop, "resume_hotkeys": refresh_runtime,
     }
+
+    def launch_from_tray(app_id):
+        ui = ui_holder.get("ui")
+        if ui is not None:
+            ui._launch(app_id)
 
     def tray_menu():
         from app.ui import screens
-        items = [(item["label"], (lambda aid=item["id"]: on_hotkey(aid)))
+        items = [(item["label"], (lambda aid=item["id"]: launch_from_tray(aid)))
                  for item in screens.tray_items(store)]
         return items, screens.library_summary(store)
 
@@ -320,25 +270,6 @@ def _start(page: ft.Page):
             ui.keymap.handle_key(e)
         except Exception:
             log.exception("управление нажатием клавиши ошибка")
-        if e.ctrl and (e.key or "").isdigit():
-            accel = f"Ctrl+Alt+{e.key}" if e.alt else f"Ctrl+{e.key}"
-            if hotkeys.handles(accel):
-                return
-            state = store.state()
-            app_accels, set_slots = resolve_accels(
-                state["apps"], _ordered_sets(state),
-                state["settings"].get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY)
-            want = normalize_accel(accel)
-            if e.alt:
-                set_id = next((sid for sid, ac in set_slots.items()
-                               if normalize_accel(ac) == want), None)
-                if set_id:
-                    ui.set_ops.launch_set(set_id)
-                return
-            app_id = next((aid for aid, ac in app_accels.items()
-                           if normalize_accel(ac) == want), None)
-            if app_id:
-                ui._launch(app_id)
     page.on_keyboard_event = on_key
 
     def _flush_geometry():
@@ -402,10 +333,7 @@ def _start(page: ft.Page):
         except Exception:
             log.exception("сбой при заполнении значков")
     threading.Thread(target=_backfill, daemon=True).start()
-    # Регистрация глобальных клавиш идёт через Win32 (RegisterHotKey) и трогает
-    # трей — оба места платформенные и на чужой машине могут повести себя как
-    # угодно. Без них панель остаётся рабочей мышью и внутренними клавишами.
-    _optional("горячие клавиши и трей", refresh_runtime)
+    _optional("меню трея", refresh_runtime)
     _optional("монитор запущенных программ", launcher.start_monitor)
 
     def _auto_rescan_loop():
@@ -437,10 +365,6 @@ def _start(page: ft.Page):
                 hide_window()
             else:
                 log.warning("трея нет — открываю окно, несмотря на --hidden")
-
-
-def _ordered_sets(state) -> list[dict]:
-    return sorted(state["sets"], key=lambda s: s.get("order", 0))
 
 
 def app_paths_dir(store):

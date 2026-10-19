@@ -11,8 +11,8 @@ from ..controllers.scan import ScanController
 from ..controllers.sets import SetsController
 from ..controllers.triage import TriageController
 from ..core import queries
-from ..core.hotkeys import normalize_accel, resolve_accels
-from ..core.store import DEFAULT_LAUNCH_HOTKEY, Store
+from ..core.hotkeys import resolve_accels
+from ..core.store import Store
 from ..core.text import plu_apps, plu_windows, split_args
 from ..core.view_state import SEARCH_FIELD, ViewState
 from ..infra import log
@@ -61,7 +61,6 @@ class CenturioUI:
         self._icon_size_at = 0.0
         self._visible = True
         self._dirty = False
-        self._capture_active = False
         self._rail_scroll = 0.0
 
         self.toast = ToastHost(page)
@@ -156,9 +155,6 @@ class CenturioUI:
     def setting(self, key, default=None):
         return self._settings.get(key, default)
 
-    def launch_hotkey(self) -> str:
-        return self.setting("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
-
     def _accent(self):
         return C.parse_hex(self._settings.get("accent")) or C.ACCENT
 
@@ -250,15 +246,12 @@ class CenturioUI:
         if not self._visible:
             self._dirty = True
             self._settings = self.store.settings()
-            self._sync_capture()
             return
         with self._refresh_lock:
             self._snapshot = self.store.state()
             self._settings = self._snapshot["settings"]
             theme.apply_theme(self._settings)
-            self._accels, self._set_accels = resolve_accels(
-                self._snapshot["apps"], self.sets(),
-                self._settings.get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY)
+            self._accels, self._set_accels = resolve_accels(self._snapshot["apps"], self.sets())
             self._cat_index = {c["id"]: c for c in self._snapshot["categories"]}
             self._tile_epoch = (
                 self._settings.get("tile_size"),
@@ -290,7 +283,6 @@ class CenturioUI:
             finally:
                 self._snapshot = None
             self.page.update()
-        self._sync_capture()
 
     def _trim_tile_cache(self):
         cap = max(TILE_CACHE_MAX, len(self._tiles_used))
@@ -349,7 +341,6 @@ class CenturioUI:
             finally:
                 self._snapshot = None
             self.page.update()
-        self._sync_capture()
 
     def cat_of(self, app) -> dict | None:
         cid = app.get("category_id")
@@ -573,31 +564,6 @@ class CenturioUI:
         self.view.adv = not self.view.adv
         self.refresh()
 
-    def _begin_capture(self, target: str = "app"):
-        if self.view.capture and self.view.capture_target == target:
-            self._stop_capture()
-        else:
-            self._start_capture(target)
-        self.refresh()
-
-    def _start_capture(self, target: str):
-        self.view.capture = True
-        self.view.capture_target = target
-        self._capture_active = True
-        cb = self.controllers.get("suspend_hotkeys")
-        if cb:
-            cb()
-
-    def _stop_capture(self):
-        self.view.capture = False
-
-    def _sync_capture(self):
-        if self._capture_active and not self.view.capture:
-            self._capture_active = False
-            cb = self.controllers.get("resume_hotkeys")
-            if cb:
-                cb()
-
     def _toast_hint_quick(self):
         self.toast.show("Закрепить можно правой кнопкой по плитке — «В быстрый запуск»",
                         icon=ft.Icons.BOLT, icon_color=C.MUTED)
@@ -710,36 +676,6 @@ class CenturioUI:
                         action=lambda: self._hide_apps(ids, not hidden),
                         action_label="Отменить")
         self.on_library_changed()
-
-    def _hotkey_clash(self, accel, skip_app_id=None, check_launch=True):
-        want = normalize_accel(accel)
-        if check_launch and want == normalize_accel(self.launch_hotkey()):
-            return "вызовом Centurio"
-        clash = next((a for a in self.apps()
-                      if a["id"] != skip_app_id
-                      and normalize_accel(a.get("hotkey") or "") == want), None)
-        if clash:
-            return f"«{clash['name']}»"
-        sets = self.sets()
-        _apps, set_slots = resolve_accels(self.apps(), sets, self.launch_hotkey())
-        set_clash = next((rec for rec in sets
-                          if normalize_accel(set_slots.get(rec["id"]) or "") == want), None)
-        return f"набором «{set_clash['name']}»" if set_clash else None
-
-    def _set_hotkey(self, app_id, accel):
-        if not app_id:
-            self.refresh()
-            return
-        if accel:
-            holder = self._hotkey_clash(accel, skip_app_id=app_id)
-            if holder:
-                self.toast.error(f"{accel} уже занята — {holder}")
-                self.refresh()
-                return
-        self.store.update_app(app_id, {"hotkey": accel})
-        self.on_library_changed()
-        self.toast.show(f"Горячая клавиша: {accel}" if accel else "Горячая клавиша убрана",
-                        icon=ft.Icons.BOLT, icon_color=C.MUTED)
 
     def _set_args(self, app_id, value):
         text = (value or "").strip()
@@ -991,13 +927,6 @@ class CenturioUI:
         self.view.set_screen("grid")
         self.refresh()
 
-    def notify_hotkey_rejects(self, rejected):
-        accels = [a for a in dict.fromkeys(rejected) if a]
-        if not accels:
-            return
-        self.toast.error("Не удалось назначить: " + ", ".join(accels)
-                         + " — комбинация занята или недоступна")
-
     def open_library(self):
         self.view.close_palette()
         self.view.set_screen("grid")
@@ -1018,17 +947,6 @@ class CenturioUI:
             if cb:
                 cb(key, value)
         self.refresh()
-
-    def _set_launch_hotkey(self, accel):
-        if not accel:
-            self.refresh()
-            return
-        holder = self._hotkey_clash(accel, check_launch=False)
-        if holder:
-            self.toast.error(f"{accel} уже занята — {holder}")
-            self.refresh()
-            return
-        self.set_setting("launch_hotkey", accel)
 
     def on_library_changed(self):
         self.view.revalidate(self.categories())

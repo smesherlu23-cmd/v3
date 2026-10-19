@@ -223,7 +223,6 @@ class Store:
             "favorite": bool(app.get("favorite")),
             "quick": bool(app.get("quick")),
             "hidden": bool(app.get("hidden")),
-            "hotkey": app.get("hotkey") or None,
             "track_exe": app.get("track_exe") or None,
             "order": app["order"] if isinstance(app.get("order"), int) else len(self.data["apps"]),
             "last_launched": 0,
@@ -265,7 +264,7 @@ class Store:
         Каждое сохранение переписывает файл целиком — на библиотеке в 500
         программ это ~8.5 мс синхронно в потоке интерфейса. Массовые операции
         уже батчатся через `update_apps`, а одиночные переключатели
-        («избранное», «от администратора», горячая клавиша, аргументы) били по
+        («избранное», «от администратора», аргументы) били по
         диску на каждый щелчок. Отсрочка та же, что у `mark_launched`;
         `flush()` на выходе досохраняет отложенное.
 
@@ -278,7 +277,7 @@ class Store:
                 return None
             for key in ("name", "path", "args", "working_dir", "run_as_admin", "sub", "category_id",
                         "hue", "icon", "icon_fit", "poster", "favorite", "quick", "hidden",
-                        "hotkey", "track_exe", "order"):
+                        "track_exe", "order"):
                 if key in patch:
                     app[key] = patch[key]
             if persist == "debounce":
@@ -503,9 +502,6 @@ class Store:
                 rec["name"] = (patch["name"] or "").strip() or rec["name"]
             if "quick" in patch:
                 rec["quick"] = bool(patch["quick"])
-            if "hotkey" in patch:
-                hk = (patch["hotkey"] or "").strip() if isinstance(patch["hotkey"], str) else ""
-                rec["hotkey"] = hk or None
             if "monitor" in patch:
                 rec["monitor"] = max(0, sanitize.as_int(patch["monitor"]))
             if "close_together" in patch:
