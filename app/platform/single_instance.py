@@ -26,11 +26,22 @@ _listening = threading.Event()
 _lock = threading.Lock()
 
 
+_k32 = None
+
+
 def _kernel32():
+    """Свой экземпляр kernel32 с объявленными типами.
+
+    Типы, выставленные на общем `ctypes.windll.kernel32`, поменялись бы для
+    всех остальных модулей.
+    """
+    global _k32
+    if _k32 is not None:
+        return _k32
     import ctypes
     from ctypes import wintypes
 
-    k = ctypes.windll.kernel32
+    k = ctypes.WinDLL("kernel32")
     k.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
     k.CreateMutexW.restype = wintypes.HANDLE
     k.CreateEventW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR)
@@ -44,6 +55,7 @@ def _kernel32():
     k.CloseHandle.argtypes = (wintypes.HANDLE,)
     k.CloseHandle.restype = wintypes.BOOL
     k.GetLastError.restype = wintypes.DWORD
+    _k32 = k
     return k
 
 
