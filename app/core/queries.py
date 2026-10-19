@@ -152,6 +152,10 @@ def current_title(view: str, categories: list[dict]) -> str:
         next((c["name"] for c in categories if view == f"category:{c['id']}"), "Все программы"))
 
 PALETTE_LIMIT = 8
+SET_LIMIT = 3
+# Категория и подпись («Steam», «Работа») — подсказка слабее имени и только
+# от трёх букв: иначе одна «р» выводила бы всю категорию «Работа».
+CATEGORY_RANK = 9
 
 
 def search_rows(apps: list[dict], query: str, running: set,
@@ -169,13 +173,13 @@ def search_rows(apps: list[dict], query: str, running: set,
         scored = []
         for a in pool:
             rank = match_rank(a["name"], q)
-            if rank is None and match_rank(
+            if rank is None and len(q) >= 3 and match_rank(
                     f"{a.get('sub') or ''} {names.get(a.get('category_id'), '')}", q) is not None:
-                rank = 4
+                rank = CATEGORY_RANK
             if rank is not None:
                 scored.append(((rank, -int(a.get("launch_count") or 0), a["name"].lower()), a))
         scored.sort(key=lambda pair: pair[0])
-        for _key, app in scored:
+        for _key, app in scored[:recent_limit]:
             add(app, "открыто" if app["id"] in running else "")
         return out
 
@@ -202,7 +206,7 @@ def set_rows(sets: list[dict], apps: list[dict], query: str) -> list[dict]:
                 and not any(match_rank(m, q) is not None for m in members):
             continue
         out.append({"set": rec, "members": members})
-    return out
+    return out[:SET_LIMIT] if q else out
 
 
 def has_layout(rec: dict) -> bool:
@@ -239,25 +243,6 @@ def palette_actions(app: dict | None) -> list[dict]:
         return []
     return [dict(a) for a in PALETTE_ACTIONS]
 
-
-def match_spans(name: str, query: str) -> list[tuple[str, bool]]:
-    q = (query or "").strip()
-    if not q:
-        return [(name, False)]
-    parts: list[tuple[str, bool]] = []
-    low, ql = name.lower(), q.lower()
-    i = 0
-    while True:
-        j = low.find(ql, i)
-        if j < 0:
-            break
-        if j > i:
-            parts.append((name[i:j], False))
-        parts.append((name[j:j + len(q)], True))
-        i = j + len(q)
-    if i < len(name):
-        parts.append((name[i:], False))
-    return parts or [(name, False)]
 
 def suggest_category(item: dict, categories: list[dict]) -> str | None:
     if not categories:

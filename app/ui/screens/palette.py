@@ -3,6 +3,7 @@ from __future__ import annotations
 import flet as ft
 
 from ...core import queries
+from ...core.text import match_spans
 from .. import colors as C
 from .. import widgets as Wg
 from ..format import T
@@ -23,7 +24,7 @@ def build_palette(ui, rows):
     if not rows:
         children.append(_palette_empty(ui))
 
-    actions = queries.palette_actions(ui._palette_app())
+    actions = queries.palette_actions(ui._palette_app(rows))
     if actions:
         children.append(_group_head("ДЕЙСТВИЯ"))
         children.append(ft.Container(
@@ -72,7 +73,7 @@ def _palette_app_row(ui, row):
     sub = queries.app_palette_sub(row, ui.window_count(app))
     lines = [T(spans=[
         ft.TextSpan(text, ft.TextStyle(bgcolor=C.MATCH_BG) if hit else None)
-        for text, hit in queries.match_spans(app["name"], ui.view.query)
+        for text, hit in match_spans(app["name"], ui.view.query)
     ], size=14, weight=ft.FontWeight.W_500, color=C.WHITE if active else C.TEXT,
         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
     if sub:

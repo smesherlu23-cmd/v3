@@ -3816,6 +3816,86 @@ def test_log_level_follows_the_debug_setting():
                 _log._LOGGER.removeHandler(h)
 
 
+def test_search_ranks_without_noise():
+    """Короткий запрос не тащит пол-библиотеки, чужая раскладка не обгоняет прямое.
+
+    Первая версия «умного» поиска сверяла каждый запрос и в другой
+    раскладке, и с транслитом имени: «t» → «е» находило «е» почти в любом
+    имени по-русски (469 из 500 программ), а «v» → «м» ставило первым
+    Manager («менеджер»).
+    """
+    from app.core import queries
+    from app.core.text import match_rank, match_spans
+
+    ok(match_rank("Steam", "t") is None, "one letter inside a word is not a match")
+    ok(match_rank("Telegram", "t") == 0, "one letter at the start is")
+    ok(match_rank("Manager", "v") is None, "a Latin letter is not read as Cyrillic")
+    ok(match_rank("Telegram", "еуд") == match_rank("Telegram", "tel") + 5,
+       "the other keyboard layout still finds it, but ranks below a direct match")
+    ok(match_rank("Google Chrome", "хром") == 1, "Cyrillic spelling of a Latin name is direct")
+
+    apps = [{"id": str(i), "name": f"Tool {i}", "category_id": "work"} for i in range(30)]
+    cats = [{"id": "work", "name": "Работа"}]
+    ok(len(queries.search_rows(apps, "tool", set(), cats)) == queries.PALETTE_LIMIT,
+       "the palette shows a screenful of the best matches, not all thirty")
+    ok(queries.search_rows(apps, "р", set(), cats) == [],
+       "one letter of a category name does not list the whole category")
+    ok(len(queries.search_rows(apps, "раб", set(), cats)) == queries.PALETTE_LIMIT,
+       "three letters of it do")
+
+    def lit(name, q):
+        return "".join(t for t, hit in match_spans(name, q) if hit)
+    ok(lit("VS Code", "code") == "Code", "a plain hit is highlighted")
+    ok(lit("Telegram", "еуд") == "Tel", "so is a hit typed in the other layout")
+    ok(lit("Visual Studio Code", "vsc") == "VSC", "and the first letters of an acronym hit")
+
+
+def test_search_field_keeps_focus_and_order():
+    """Строка поиска не теряет фокус, выделение не уезжает за мышью.
+
+    Щелчок по строке открывал палитру полной перерисовкой: шапка собиралась
+    заново, строка поиска на стороне Flutter создавалась новой — без фокуса,
+    и набранное шло в никуда. Палитра лежала поверх шапки и забирала
+    повторный щелчок по строке. А строки палитры, перестроенные под
+    неподвижным курсором, «наводились» и уводили выделение с лучшего
+    совпадения — Enter запускал не то.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("search focus test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        for name in ("Telegram", "Teams", "Notion"):
+            store.add_app({"name": name, "path": f"/x/{name}", "category_id": "work"})
+        ui, _ = _ui_for(store)
+        header = ui.header_holder.content
+        ui._open_palette()
+        ui.refresh()
+        ok(ui.header_holder.content is header,
+           "opening the palette and redrawing keep the very same header and search row")
+        ui.set_setting("accent", "#5ea2ff")
+        ok(ui.header_holder.content is not header, "only a theme change rebuilds it")
+
+        ui._on_search(types_ns(control=types_ns(value="te")))
+        ok(ui.view.palette_index == 0, "typing puts the best match first")
+        ui.palette_hover(1, types_ns(data="true"))
+        ok(ui.view.palette_index == 0,
+           "a row that appeared under a resting pointer does not steal the selection")
+        ui._palette_keyed_at = 0.0
+        ui.palette_hover(1, types_ns(data="true"))
+        ok(ui.view.palette_index == 1, "a real move of the mouse still does")
+
+        launched = []
+        ui._launch = lambda app_id, **kw: launched.append(store.get_app(app_id)["name"])
+        ui.search_field.value = "not"
+        ui.keymap.handle_key(_key("Enter"))
+        ok(launched == ["Notion"],
+           "Enter goes by what is in the field even if its on_change is still queued")
+
+
 def test_search_forgives_layout_and_cyrillic():
     """Поиск понимает не ту раскладку, русское написание и первые буквы.
 
@@ -4298,8 +4378,9 @@ def test_ui_matches_the_design_sizes():
         ok(_sized(ui.palette_layer, C.PALETTE_W, None) and C.PALETTE_W == 640,
            "the palette is 640 wide")
         ok(_sized(ui.palette_layer, None, 48), "its result rows are 48 tall")
-        ok(ui.palette_scrim.top == 52,
-           "and the scrim starts under the header, which stays above it")
+        ok(ui.palette_layer.top == 52 and ui.palette_scrim.top == 0,
+           "and the whole layer starts under the header, which stays above it — "
+           "covering the search row it stole the click that should focus the field")
         ui._close_palette()
 
         ui.toggle_select_mode()

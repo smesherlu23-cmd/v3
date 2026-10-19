@@ -34,8 +34,11 @@ class Keymap:
         self._library_key(e, key)
 
     def _palette_key(self, e, key):
+        if key in ("Arrow Down", "Arrow Up", "Tab", "Enter", "Numpad Enter"):
+            self.ui.note_palette_keys()
+            self.ui.sync_query()
         rows = self.ui._palette_rows()
-        actions = queries.palette_actions(self.ui._palette_app())
+        actions = queries.palette_actions(self.ui._palette_app(rows))
         count = len(actions) if self.ui.view.palette_focus == "actions" else len(rows)
         if key in ("Arrow Down", "Arrow Up"):
             self.ui.view.move_palette(1 if key == "Arrow Down" else -1, count)
@@ -44,18 +47,18 @@ class Keymap:
             self.ui.view.focus_palette_actions(len(rows))
             self.ui._refresh_palette_only()
         elif key in ("Enter", "Numpad Enter"):
-            self._palette_activate(admin=bool(e.ctrl))
+            self._palette_activate(admin=bool(e.ctrl), rows=rows)
         elif key == "Escape":
             self.ui._close_palette()
 
-    def _palette_activate(self, admin: bool = False):
+    def _palette_activate(self, admin: bool = False, rows=None):
+        rows = self.ui._palette_rows() if rows is None else rows
         if self.ui.view.palette_focus == "actions":
-            actions = queries.palette_actions(self.ui._palette_app())
+            actions = queries.palette_actions(self.ui._palette_app(rows))
             if actions:
                 index = min(self.ui.view.palette_index, len(actions) - 1)
                 self.ui.run_palette_action(actions[index]["key"])
             return
-        rows = self.ui._palette_rows()
         if not rows:
             return
         row = rows[min(self.ui.view.palette_index, len(rows) - 1)]

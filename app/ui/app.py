@@ -29,6 +29,11 @@ from .menus import MenuHost
 from .toast import Notifier, ToastHost
 
 WINDOW_TTL = 2.0
+PALETTE_GAP = 8
+# Сколько после нажатия клавиши не верить «наведению» мыши: строки палитры
+# перестраиваются под неподвижным курсором, Flutter честно сообщает, что
+# курсор «вошёл» в новую строку, — и выделение уезжало с лучшего совпадения.
+PALETTE_HOVER_GRACE = 0.6
 TILE_CACHE_MAX = 600
 ICON_SIZE_TTL = 30.0
 
@@ -64,6 +69,8 @@ class CenturioUI:
         self._visible = True
         self._dirty = False
         self._rail_scroll = 0.0
+        self._header_key = None
+        self._palette_keyed_at = 0.0
 
         self.toast = ToastHost(page)
         self.notify = Notifier(self.toast)
@@ -114,14 +121,16 @@ class CenturioUI:
             animate_opacity=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             animate_offset=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT))
         self.palette_scrim = ft.Container(
-            left=0, top=C.HEADER_H, right=0, bottom=0, bgcolor=C.SCRIM_BODY,
+            left=0, top=0, right=0, bottom=0, bgcolor=C.SCRIM_BODY,
             on_click=lambda e: self._close_palette())
+        # Слой начинается под шапкой: накрыв строку поиска, он забирал щелчок
+        # по ней, и поле теряло фокус посреди набора.
         self.palette_layer = ft.Container(
             ft.Stack([self.palette_scrim,
                       ft.Container(ft.Row([self.palette_card],
                                           alignment=ft.MainAxisAlignment.CENTER),
-                                   left=0, right=0, top=60)]),
-            left=0, top=0, right=0, bottom=0, visible=False)
+                                   left=0, right=0, top=PALETTE_GAP)]),
+            left=0, top=C.HEADER_H, right=0, bottom=0, visible=False)
         self.bulk_card = ft.Container(
             opacity=0, offset=ft.Offset(0, 0.3),
             animate_opacity=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT),
@@ -299,7 +308,14 @@ class CenturioUI:
     def _refresh_library(self, content_only: bool):
         self.view.stop_typing_in_rebuilt_fields()
         if not content_only:
-            self.header_holder.content = self.chrome.build_header()
+            # Шапку не пересобирать без нужды: строка поиска в ней, и новая
+            # шапка — новое поле на стороне Flutter, без фокуса и с потерей
+            # набранного. Меняется она только вместе с темой.
+            header_key = (self._settings.get("accent"), self._settings.get("bg_tint"),
+                          self._settings.get("contrast"))
+            if self.header_holder.content is None or header_key != self._header_key:
+                self._header_key = header_key
+                self.header_holder.content = self.chrome.build_header()
             self.rail_container.width = self.rail()["rail"]
             self.rail_container.content = self.chrome.build_rail()
         show_sidebar = self._show_sidebar()
@@ -367,10 +383,13 @@ class CenturioUI:
                                       self.view.sort, self.running)
 
     def _palette_rows(self):
-        apps = self.apps()
+        state = self.state()
+        apps = state["apps"]
+        cats = sorted(state["categories"], key=lambda c: c.get("order", 0))
+        sets = sorted(state["sets"], key=lambda r: r.get("order", 0))
         rows = [dict(r, kind="app") for r in
-                queries.search_rows(apps, self.view.query, self.running, self.categories())]
-        for entry in queries.set_rows(self.sets(), apps, self.view.query):
+                queries.search_rows(apps, self.view.query, self.running, cats)]
+        for entry in queries.set_rows(sets, apps, self.view.query):
             rows.append({"kind": "set", "set": entry["set"], "members": entry["members"]})
         for index, row in enumerate(rows):
             row["index"] = index
@@ -384,8 +403,8 @@ class CenturioUI:
             return next((r for r in rows if r["kind"] == "app"), None)
         return rows[min(self.view.palette_index, len(rows) - 1)]
 
-    def _palette_app(self):
-        rows = self._palette_rows()
+    def _palette_app(self, rows=None):
+        rows = self._palette_rows() if rows is None else rows
         current = self.palette_current(rows)
         if current is not None and current["kind"] == "app":
             return current["app"]
@@ -472,7 +491,7 @@ class CenturioUI:
         if self.view.palette_open:
             return
         self.view.open_palette()
-        self.refresh()
+        self._refresh_palette_only()
 
     def _close_palette(self):
         self.view.close_palette()
@@ -499,7 +518,23 @@ class CenturioUI:
         self.view.toggle_section(cid)
         self.refresh()
 
+    def note_palette_keys(self):
+        self._palette_keyed_at = time.monotonic()
+
+    def sync_query(self):
+        """Запрос из поля, а не из последнего обработанного on_change.
+
+        Обработчики Flet идут в пуле потоков: Enter сразу после последней
+        буквы мог обработаться раньше её on_change и запустить лучшее
+        совпадение для запроса без этой буквы. Значение поля Flet обновляет
+        до того, как раздаёт события, — оно всегда свежее.
+        """
+        value = self.search_field.value or ""
+        if value != self.view.query:
+            self.view.set_query(value)
+
     def _on_search(self, e):
+        self.note_palette_keys()
         self.view.set_query(e.control.value)
         if not self.view.palette_open:
             self.view.open_palette()
@@ -636,6 +671,8 @@ class CenturioUI:
             self._launch(row["app"]["id"], from_palette=True)
 
     def palette_hover(self, index: int, e):
+        if time.monotonic() - self._palette_keyed_at < PALETTE_HOVER_GRACE:
+            return
         if e.data == "true" and (self.view.palette_index != index
                                  or self.view.palette_focus != "results"):
             self.view.palette_index = index

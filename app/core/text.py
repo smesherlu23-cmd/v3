@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 import shlex
 import time
@@ -120,40 +121,101 @@ def _translit_word(word: str) -> str:
     return "".join(out)
 
 
-def query_variants(query: str) -> list[str]:
-    q = (query or "").strip().lower()
-    if not q:
-        return []
-    return list(dict.fromkeys(v for v in (q, q.translate(_TO_RU), q.translate(_TO_EN)) if v))
+def _swap_layout(text: str) -> str:
+    """Тот же набор клавиш в другой раскладке: «еуд» и «tel»."""
+    return text.translate(_TO_EN if _CYRILLIC.search(text) else _TO_RU)
+
+
+_CYRILLIC = re.compile("[а-яё]")
+
+
+@functools.lru_cache(maxsize=4096)
+def _name_index(name: str):
+    words = tuple(_words_of(name))
+    translit = tuple(_translit_word(w) for w in words)
+    return " ".join(words), words, " ".join(translit), translit, "".join(w[0] for w in words)
+
+
+def _rank(flat: str, plain: str, words, acronym: str, substring: bool) -> int | None:
+    if plain.startswith(flat):
+        return 0
+    if any(w.startswith(flat) for w in words):
+        return 1
+    if acronym and len(flat) >= 2 and " " not in flat and acronym.startswith(flat):
+        return 2
+    if substring and flat in plain:
+        return 3
+    return None
+
+
+def _best(*ranks):
+    found = [r for r in ranks if r is not None]
+    return min(found) if found else None
+
+
+SWAPPED_PENALTY = 5
 
 
 def match_rank(name: str, query: str) -> int | None:
     """Насколько хорошо `name` подходит под запрос; меньше — лучше, None — мимо.
 
     0 — имя начинается с запроса, 1 — какое-то слово, 2 — первые буквы слов
-    («vsc» → Visual Studio Code), 3 — просто вхождение. Каждый уровень
-    проверяется и для запроса в другой раскладке, и для имени, прочитанного
-    русскими буквами.
+    («vsc» → Visual Studio Code), 3 — вхождение (от двух букв: одна буква
+    внутри слова ничего не говорит). Запрос кириллицей сверяется ещё и с
+    именем, прочитанным русскими буквами («хром» → Chrome). Запрос в другой
+    раскладке («еуд» → Telegram) — только если прямо ничего не подошло, и с
+    понижением, чтобы не обгонять настоящие совпадения.
     """
-    words = _words_of(name)
+    flat = " ".join(_words_of(query or ""))
+    if not flat:
+        return None
+    plain, words, translit, translit_words, acronym = _name_index(name or "")
     if not words:
         return None
-    plain = " ".join(words)
-    translit_words = [_translit_word(w) for w in words]
-    translit = " ".join(translit_words)
-    acronym = "".join(w[0] for w in words)
-    best = None
-    for q in query_variants(query):
-        flat = " ".join(_words_of(q)) or q
-        if plain.startswith(flat) or translit.startswith(flat):
-            rank = 0
-        elif any(w.startswith(flat) for w in words + translit_words):
-            rank = 1
-        elif len(flat) >= 2 and " " not in flat and acronym.startswith(flat):
-            rank = 2
-        elif flat in plain or flat in translit:
-            rank = 3
-        else:
+    longer = len(flat) >= 2
+    best = _rank(flat, plain, words, acronym, longer)
+    if _CYRILLIC.search(flat):
+        best = _best(best, _rank(flat, translit, translit_words, "", longer))
+    if best is not None or not longer:
+        return best
+    swapped = " ".join(_words_of(_swap_layout(flat)))
+    if not swapped or swapped == flat:
+        return None
+    rank = _rank(swapped, plain, words, acronym, len(swapped) >= 3)
+    return None if rank is None else rank + SWAPPED_PENALTY
+
+
+def match_spans(name: str, query: str) -> list[tuple[str, bool]]:
+    """Куски имени для подсветки того, что совпало с запросом."""
+    name = name or ""
+    low = name.lower()
+    flat = " ".join(_words_of(query or ""))
+    if not flat or len(low) != len(name):
+        return [(name, False)]
+    spans = []
+    for needle in (flat, " ".join(_words_of(_swap_layout(flat)))):
+        if not needle:
             continue
-        best = rank if best is None else min(best, rank)
-    return best
+        for part in needle.split(" "):
+            start = low.find(part)
+            if start >= 0:
+                spans.append((start, start + len(part)))
+        if spans:
+            break
+    if not spans and len(flat) >= 2 and " " not in flat:
+        starts = [m.start() for m in re.finditer(r"[0-9a-zа-яё+#]+", low)]
+        if "".join(low[i] for i in starts).startswith(flat):
+            spans = [(i, i + 1) for i in starts[:len(flat)]]
+    if not spans:
+        return [(name, False)]
+    out, pos = [], 0
+    for start, end in sorted(set(spans)):
+        if start < pos:
+            continue
+        if start > pos:
+            out.append((name[pos:start], False))
+        out.append((name[start:end], True))
+        pos = end
+    if pos < len(name):
+        out.append((name[pos:], False))
+    return out
