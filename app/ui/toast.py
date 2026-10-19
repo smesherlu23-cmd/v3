@@ -22,6 +22,7 @@ class ToastHost:
         self._token = 0
         self._left = 0
         self._action = None
+        self._queued: dict | None = None
 
         self.icon = ft.Icon(ft.Icons.CHECK, size=18, color=C.GREEN)
         self.text = T("", size=13, color=C.TEXT, max_lines=2,
@@ -59,8 +60,20 @@ class ToastHost:
 
     def show(self, text: str, icon=ft.Icons.CHECK, icon_color=C.GREEN,
              action=None, action_label: str | None = None, error: bool = False,
-             detail: str | None = None):
+             detail: str | None = None, wait_for_undo: bool = False):
+        """`wait_for_undo` — для новостей из фона: они не затирают «Вернуть».
+
+        Иначе «Нашлось нового» от автопроверки молча отнимало отмену удаления,
+        сделанного секунду назад. Ответ на действие самого человека, как и
+        ошибка, показывается сразу.
+        """
         with self._lock:
+            if wait_for_undo and self._action and not error:
+                self._queued = {"text": text, "icon": icon, "icon_color": icon_color,
+                                "detail": detail, "action": action,
+                                "action_label": action_label}
+                return
+            self._queued = None
             self._cancel_timer()
             self._token += 1
             token = self._token
@@ -95,12 +108,21 @@ class ToastHost:
             self._action = None
             self._cancel_timer()
             self.control.visible = False
+            token = self._token
         self._safe_update()
         if action:
             try:
                 action()
             except Exception:
                 log.exception("отменить тост не удалось")
+        if self._token == token:
+            self._show_queued()
+
+    def _show_queued(self):
+        with self._lock:
+            queued, self._queued = self._queued, None
+        if queued:
+            self.show(**queued)
 
     def dismiss(self):
         with self._lock:
@@ -113,6 +135,7 @@ class ToastHost:
         with self._lock:
             self._cancel_timer()
             self._action = None
+            self._queued = None
 
     def _arm(self, delay: float, token: int):
         timer = threading.Timer(delay, self._tick, args=(token,))
@@ -130,6 +153,7 @@ class ToastHost:
             if token != self._token:
                 return
             self._timer = None
+            expired = False
             if not self._action:
                 self.control.visible = False
             else:
@@ -137,10 +161,13 @@ class ToastHost:
                 if self._left <= 0:
                     self._action = None
                     self.control.visible = False
+                    expired = True
                 else:
                     self.countdown.value = str(self._left)
                     self._arm(1.0, token)
         self._safe_update()
+        if expired:
+            self._show_queued()
 
     def _safe_update(self):
         try:
@@ -175,10 +202,12 @@ class Notifier:
         self.toast = toast
 
     def show(self, text: str, icon: str = "check", tone: str = "good",
-             action=None, action_label: str | None = None, detail: str | None = None):
+             action=None, action_label: str | None = None, detail: str | None = None,
+             wait_for_undo: bool = False):
         self.toast.show(text, icon=NOTE_ICONS.get(icon, ft.Icons.CHECK),
                         icon_color=NOTE_TONES.get(tone, C.GREEN),
-                        action=action, action_label=action_label, detail=detail)
+                        action=action, action_label=action_label, detail=detail,
+                        wait_for_undo=wait_for_undo)
 
     def error(self, text: str, action=None, action_label: str | None = None,
               detail: str | None = None):

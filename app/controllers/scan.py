@@ -335,13 +335,15 @@ class ScanController:
                     self.ui.on_library_changed()
                     if queued:
                         word = "новая программа ждёт" if queued == 1 else "новые программы ждут"
-                        self.notify.show(f"{queued} {word} в разборе", icon="inbox", tone="good", action=self.ui.open_triage,
-                                          action_label="Разобрать")
+                        self.notify.show(f"{queued} {word} в разборе", icon="inbox", tone="good",
+                                         action=self.ui.open_triage, action_label="Разобрать",
+                                         wait_for_undo=True)
                     return
                 self.ui.on_library_changed()
                 if new:
-                    self.notify.show(f"Нашлось нового: {len(new)}", icon="search", tone="muted", action=self.ui.open_add,
-                                       action_label="Показать")
+                    self.notify.show(f"Нашлось нового: {len(new)}", icon="search", tone="muted",
+                                     action=self.ui.open_add, action_label="Показать",
+                                     wait_for_undo=True)
                 elif not silent:
                     self.notify.show("Иконки обновлены" if changed else "Всё актуально")
             except Exception:

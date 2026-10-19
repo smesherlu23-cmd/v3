@@ -6149,10 +6149,30 @@ def test_toast_lifecycle():
 
     host.show("Первый", action=lambda: None)
     stale = host._token
-    host.show("Второй")
+    host.show("Второй", action=lambda: None)
     host._tick(stale)
     ok(host.text.value == "Второй" and host.control.visible,
        "a stale timer doesn't clear the toast that replaced it")
+
+    # Обычная новость не затирает «Вернуть» — иначе фоновое «Нашлось нового»
+    # молча отнимало отмену удаления.
+    undone = []
+    host.show("Убрано 3", action=lambda: undone.append(1))
+    host.show("Нашлось нового: 2", wait_for_undo=True)
+    ok(host.text.value == "Убрано 3" and host.action_btn.visible,
+       "background news waits while an undo is still on offer")
+    for _ in range(8):
+        host._tick(host._token)
+    ok(host.text.value == "Нашлось нового: 2" and not host.action_btn.visible,
+       "and shows once the undo has run out")
+    host.show("Убрано 2", action=lambda: undone.append(3))
+    host.show("Telegram открыт")
+    ok(host.text.value == "Telegram открыт",
+       "the answer to the user's own action is shown at once")
+    host.show("Убрано 1", action=lambda: undone.append(2))
+    host.error("Не удалось сохранить данные")
+    ok(host.text.value == "Не удалось сохранить данные",
+       "an error does not wait — it replaces the undo")
     host.stop()
 
 

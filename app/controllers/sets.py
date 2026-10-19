@@ -147,7 +147,7 @@ class SetsController:
         elif wait and missing:
             self.notify.show("Не дождался окон: " + ", ".join(missing)
                              + " — «Расставить окна» в меню набора разложит их позже",
-                             icon="arrange", tone="muted")
+                             icon="arrange", tone="muted", wait_for_undo=True)
         elif not quiet:
             self.notify.show(f"Окна расставлены: {len(placed)}" if placed
                                else "Ни одно окно набора не открыто",
