@@ -54,6 +54,37 @@ class ScanController:
     def _remember_discovery(self, found):
         self._discovered = found
         self._discovered_at = time.monotonic()
+        self._repair_bare_shortcuts(found)
+
+    def _repair_bare_shortcuts(self, found) -> int:
+        """Дописать аргументы ярлыка программам, добавленным до того, как их читали.
+
+        Раньше из ярлыка брался только exe: у Discord это `Update.exe` без
+        `--processStart Discord.exe`, и запуск ничего не открывал.
+        """
+        by_path: dict[str, list[dict]] = {}
+        for item in found:
+            if item.get("args"):
+                by_path.setdefault((item.get("path") or "").lower(), []).append(item)
+        repaired = 0
+        for app in self.store.state()["apps"]:
+            if app.get("args"):
+                continue
+            candidates = by_path.get((app.get("path") or "").lower()) or []
+            named = [c for c in candidates if c.get("name", "").lower() == app["name"].lower()]
+            match = named[0] if named else (candidates[0] if len(candidates) == 1 else None)
+            if match is None:
+                continue
+            patch = {"args": list(match["args"]),
+                     "working_dir": app.get("working_dir") or match.get("working_dir") or ""}
+            if match.get("track_exe") and not app.get("track_exe"):
+                patch["track_exe"] = match["track_exe"]
+            self.store.update_app(app["id"], patch, persist=False)
+            repaired += 1
+        if repaired:
+            self.store.flush()
+            log.info("ярлыкам вернули аргументы: %s", repaired)
+        return repaired
 
     def scanning(self) -> bool:
         with self._scan_lock:

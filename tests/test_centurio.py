@@ -518,6 +518,21 @@ def test_shortcut_arguments_survive_discovery():
         item = next(i for i in store.state()["inbox"] if i["name"] == "Discord")
         ok(item["args"] == ["--processStart", "Discord.exe"], "and keeps its arguments there")
 
+    # Библиотека, собранная до этого исправления: Discord без аргументов.
+    from unittest.mock import MagicMock
+
+    from app.controllers.scan import ScanController
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        old = store.add_app({"name": "Discord", "path": by_name["Discord"]["path"]})
+        ui = MagicMock()
+        ui.store = store
+        ScanController(ui)._remember_discovery(found)
+        fixed = store.get_app(old["id"])
+        ok(fixed["args"] == ["--processStart", "Discord.exe"]
+           and fixed["track_exe"] == "Discord.exe",
+           "the next scan gives an old bare entry its shortcut arguments back")
+
 
 def test_dismissed_programs_stay_dismissed():
     """«Не нужно» в разборе и удаление из библиотеки запоминаются.
