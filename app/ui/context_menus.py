@@ -258,4 +258,4 @@ class ContextMenus:
                                 tone="muted")
             return
         x, y = self.menu_at(e)
-        self.ui.menu.show(x, y, rows[:14], header=menus.text_header("Добавить в набор"))
+        self.ui.menu.show(x, y, rows, header=menus.text_header("Добавить в набор"))

@@ -84,19 +84,20 @@ class MenuHost:
     def _render(self):
         width = C.MENU_W if self._header else SUBMENU_W + 22
         height = height_of(self._rows) + (HEADER_H if self._header else 0) + 16
+        height = min(height, self._window()[1] - 16)
         left, top = self._place(self._x, self._y, width, height)
 
-        self.card.content = self._card(self._rows, self._header, width)
+        self.card.content = self._card(self._rows, self._header, width, height)
         self.card.left, self.card.top = left, top
         self.card.width = width
         self.card.visible = True
 
         if self._submenu:
             rows = self._submenu["rows"]
-            sub_h = height_of(rows) + 16
+            sub_h = min(height_of(rows) + 16, self._window()[1] - 16)
             sub_left, sub_top = self._place(left + width + 6, self._submenu["y"],
                                             SUBMENU_W, sub_h)
-            self.sub_card.content = self._card(rows, None, SUBMENU_W)
+            self.sub_card.content = self._card(rows, None, SUBMENU_W, sub_h)
             self.sub_card.left, self.sub_card.top = sub_left, sub_top
             self.sub_card.width = SUBMENU_W
             self.sub_card.visible = True
@@ -106,7 +107,7 @@ class MenuHost:
         self.control.visible = True
         self._safe_update()
 
-    def _card(self, rows, header, width):
+    def _card(self, rows, header, width, height=None):
         children = []
         if header is not None:
             children += [header, ft.Container(height=1, bgcolor=C.LINE_2,
@@ -115,8 +116,14 @@ class MenuHost:
             children.append(self._row(row) if row["kind"] == "item" else
                             ft.Container(height=1, bgcolor=C.LINE_2,
                                          margin=ft.margin.symmetric(5, 4)))
+        full = height_of(rows) + (HEADER_H if header is not None else 0) + 16
+        # Длинный список (много программ или категорий) не уходит за край окна,
+        # а прокручивается внутри меню.
+        scroll = height is not None and full > height
         return ft.Container(
-            ft.Column(children, spacing=1, tight=True),
+            ft.Column(children, spacing=1, tight=not scroll,
+                      scroll=ft.ScrollMode.AUTO if scroll else None),
+            height=height if scroll else None,
             width=width, bgcolor=C.PANEL, border=ft.border.all(1, C.MENU_BORDER),
             border_radius=14, padding=ft.padding.all(8),
             shadow=ft.BoxShadow(blur_radius=60, offset=ft.Offset(0, 24),

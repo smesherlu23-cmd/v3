@@ -3967,6 +3967,32 @@ def test_drag_reorder_reaches_the_end():
            "a set member dragged onto the last one starts last")
 
 
+def test_long_menus_scroll_instead_of_cutting_off():
+    """«Добавить программу» в набор предлагает всю библиотеку, а не первые 14.
+
+    Список молча обрезался до четырнадцати по алфавиту: «Zoom» в набор с
+    его экрана добавить было нельзя. Длинное меню теперь прокручивается и не
+    уходит за край окна.
+    """
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("long menu test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ids = [store.add_app({"name": f"App {i:02d}", "path": f"/x/{i}"})["id"] for i in range(40)]
+        rec = store.add_set("S", ids[:2])
+        ui, _ = _ui_for(store)
+        ui.context_menus.add_to_set_picker(rec["id"])
+        labels = _menu_labels(ui)
+        ok(len(labels) == 38 and "App 39" in labels, "every program not yet in the set is offered")
+        card = ui.menu.card.content
+        ok(card.height is not None and card.height <= ui._window_height(),
+           "and the menu stays inside the window, scrolling instead")
+
+
 def test_search_forgives_layout_and_cyrillic():
     """Поиск понимает не ту раскладку, русское написание и первые буквы.
 
