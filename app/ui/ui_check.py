@@ -43,8 +43,45 @@ def snapshot(ui, launched: list[str]) -> dict:
     }
 
 
+def _trace(ui) -> None:
+    """Что поле поиска получает из окна и что в нём после запуска — в лог.
+
+    Набранное приходит из Flutter, очистка — из Python; если на раннере
+    они расходятся, порядок событий в логе показывает, кто кого перебил.
+    """
+    field, page = ui.search_field, ui.page
+
+    def wrap(name, describe):
+        inner = getattr(field, name)
+
+        def traced(e):
+            log.info("ui-check: поле %s %s", name, describe(e))
+            if inner:
+                return inner(e)
+        setattr(field, name, traced)
+    wrap("on_change", lambda e: repr(e.control.value))
+    wrap("on_focus", lambda e: "")
+    wrap("on_blur", lambda e: "")
+
+    keys = page.on_keyboard_event
+
+    def traced_key(e):
+        log.info("ui-check: клавиша %s%s", "Ctrl+" if e.ctrl else "", e.key)
+        if keys:
+            return keys(e)
+    page.on_keyboard_event = traced_key
+
+    after = ui.after_launch
+
+    def traced_after(from_palette=False):
+        after(from_palette)
+        log.info("ui-check: после запуска поле = %r", field.value)
+    ui.after_launch = traced_after
+
+
 def start(ui, launcher, path: str, stop: threading.Event) -> None:
     launched: list[str] = []
+    _trace(ui)
 
     def record_launch(app):
         launched.append(app["name"])

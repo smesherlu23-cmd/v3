@@ -45,7 +45,7 @@ def make_library(folder: Path) -> None:
     for key, value in (("win_w", 1280), ("win_h", 800), ("win_x", 40), ("win_y", 40),
                        ("hide_after", False), ("tray_hint_shown", True),
                        ("first_run_done", True), ("autostart_adopted", True),
-                       ("check_updates", False)):
+                       ("check_updates", False), ("debug_log", True)):
         store.set_setting(key, value, persist=False)
     store.flush()
 
@@ -323,9 +323,9 @@ def main() -> int:
     own_log = out_dir / "centurio.log"
     if failed and own_log.exists():
         # Хвост лога прямо в выводе: в CI это видно без скачивания артефакта.
-        print("--- centurio.log (хвост) ---")
-        print("\n".join(own_log.read_text(encoding="utf-8", errors="replace")
-                        .splitlines()[-30:]))
+        print("--- centurio.log: поле поиска и ошибки ---")
+        lines = own_log.read_text(encoding="utf-8", errors="replace").splitlines()
+        print("\n".join([ln for ln in lines if "ui-check:" in ln or "ERROR" in ln][-60:]))
     print("Проверка интерфейса: " + ("всё прошло" if not failed else f"провалено {failed}"))
     return 1 if failed else 0
 
