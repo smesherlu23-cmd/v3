@@ -83,8 +83,10 @@ jobs:
           CI: "1"
         run: python -m pytest -q
 
+      # --yes: с Flet 1.0 `flet build` спрашивает, ставить ли Flutter SDK, и
+      # без ответа на раннере падает на чтении ввода.
       - name: Build the application
-        run: flet build windows --verbose
+        run: flet build windows --yes --verbose
 
       # До подписи: правка ресурса подпись ломает. Без этого собранный exe
       # у пользователя с кириллицей в имени профиля закрывается за секунду,

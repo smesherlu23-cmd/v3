@@ -234,6 +234,8 @@ def test_packaging_metadata():
     cli = re.search(r"flet-cli==([\d.]+)", _read(".github", "workflows", "release.yml"))
     ok(flet and cli and flet.group(1) == cli.group(1),
        "the release builds with flet-cli of the same version as flet itself")
+    ok(re.search(r"flet build windows .*--yes", _read(".github", "workflows", "release.yml")),
+       "and answers its «install Flutter SDK?» up front: the runner has no one to ask")
 
 
 def test_release_fixes_the_code_page_and_runs_the_built_exe():

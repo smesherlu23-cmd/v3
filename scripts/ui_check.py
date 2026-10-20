@@ -56,7 +56,6 @@ class Session:
         self.state_path = workdir / "state.json"
         self.log_path = workdir / "app.log"
         self.proc = None
-        self.wid = ""
         self.geometry = {}
 
     def start(self) -> None:
@@ -69,20 +68,31 @@ class Session:
                                      env=env, stdout=open(self.log_path, "w"),
                                      stderr=subprocess.STDOUT, start_new_session=True)
         self.wait(lambda s: True, "приложение пишет состояние", START_TIMEOUT)
+        # Клиент Flet 1.0 может пересоздать окно после первого показа, и номер,
+        # найденный слишком рано, к запросу размеров уже недействителен. Окно
+        # считается готовым, когда два замера подряд совпали.
         deadline = time.monotonic() + START_TIMEOUT
+        last = {}
         while time.monotonic() < deadline:
-            out = self.xdo("search", "--onlyvisible", "--name", "^Centurio$", check=False)
-            if out:
-                self.wid = out.split()[0]
-                break
-            time.sleep(0.5)
-        if not self.wid:
-            raise CheckFailed("окно Centurio так и не появилось")
-        time.sleep(2)
-        for line in self.xdo("getwindowgeometry", "--shell", self.wid).splitlines():
+            time.sleep(1)
+            current = self.window_geometry()
+            if current and current == last:
+                self.geometry = current
+                return
+            last = current
+        raise CheckFailed("окно Centurio так и не появилось")
+
+    def window_geometry(self) -> dict:
+        found = self.xdo("search", "--onlyvisible", "--name", "^Centurio$", check=False)
+        if not found:
+            return {}
+        geometry = {}
+        out = self.xdo("getwindowgeometry", "--shell", found.split()[0], check=False)
+        for line in out.splitlines():
             key, _, value = line.partition("=")
             if value.isdigit():
-                self.geometry[key] = int(value)
+                geometry[key] = int(value)
+        return geometry if "WIDTH" in geometry else {}
 
     def stop(self) -> None:
         if not self.proc:
