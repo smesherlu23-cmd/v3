@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 DATA_FILENAME = "centurio-data.json"
 PERSIST_DEBOUNCE_DELAY = 1.5
 SCHEMA_VERSION = 3
+# Автокопии: не чаще раза в сутки (с запасом на «включил утром, а вчера —
+# чуть позже»), последние семь, в папке `backups` рядом с библиотекой.
+AUTO_BACKUP_EVERY = 20 * 3600
+AUTO_BACKUP_KEEP = 7
 
 
 def default_data_path() -> Path:
@@ -780,6 +784,83 @@ class Store:
             n += 1
             dest = self.path.with_name(f"centurio-backup-{stamp}-{n}.json")
         return self.export_data(dest)
+
+    def backups_dir(self) -> Path:
+        return self.path.parent / "backups"
+
+    def auto_backups(self) -> list[Path]:
+        """Автокопии, новые первыми."""
+        try:
+            found = [p for p in self.backups_dir().glob("auto-*.json") if p.is_file()]
+        except OSError:
+            return []
+        return sorted(found, key=lambda p: p.name, reverse=True)
+
+    @staticmethod
+    def _library_part(data: dict) -> dict:
+        # Настройки (вплоть до положения окна) меняются постоянно и копию
+        # «новой» не делают.
+        return {k: v for k, v in data.items() if k != "settings"}
+
+    def auto_backup(self, now: float | None = None) -> Path | None:
+        """Сохранить автокопию, если прошли сутки и библиотека изменилась."""
+        if self.read_only:
+            return None
+        with self._lock:
+            if not self.data["apps"] and not self.data["sets"]:
+                return None
+            snapshot = _clone(self.data)
+        now = time.time() if now is None else now
+        existing = self.auto_backups()
+        if existing:
+            newest = existing[0]
+            try:
+                if now - newest.stat().st_mtime < AUTO_BACKUP_EVERY:
+                    return None
+                with open(newest, encoding="utf-8") as fh:
+                    previous = json.load(fh)
+                if self._library_part(previous) == self._library_part(snapshot):
+                    return None
+            except (OSError, ValueError):
+                pass
+        folder = self.backups_dir()
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+        # Номер фиксированной ширины и всегда больше прежних: по имени копии
+        # сортируются по времени, даже если две пришлись на одну секунду.
+        taken = [p.stem.rsplit("-", 1)[-1] for p in self.auto_backups()
+                 if p.name.startswith(f"auto-{stamp}-")]
+        n = max((int(t) for t in taken if t.isdigit()), default=0) + 1
+        dest = folder / f"auto-{stamp}-{n:02d}.json"
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(snapshot, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, dest)
+        except (OSError, ValueError, TypeError):
+            log.exception("не удалось сохранить автокопию: %s", dest)
+            self._discard_temp(tmp)
+            return None
+        for old in self.auto_backups()[AUTO_BACKUP_KEEP:]:
+            try:
+                old.unlink()
+            except OSError:
+                log.exception("не удалось удалить старую автокопию: %s", old)
+        return dest
+
+    @staticmethod
+    def backup_summary(path: str | Path) -> dict | None:
+        """Сколько в копии программ и наборов — чтобы выбрать нужную из списка."""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        apps, sets = data.get("apps"), data.get("sets")
+        return {"apps": len(apps) if isinstance(apps, list) else 0,
+                "sets": len(sets) if isinstance(sets, list) else 0}
 
     def import_data(self, src: str | Path, merge: bool = False) -> bool:
         if self.read_only:

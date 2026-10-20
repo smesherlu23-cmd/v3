@@ -72,8 +72,8 @@ def _report_startup_failure() -> None:
 def _optional(label: str, step) -> bool:
     """Необязательный шаг запуска: сбой записываем, но окно всё равно открываем.
 
-    Centurio — панель запуска. Ни трей, ни глобальные клавиши, ни монитор
-    процессов не стоят того, чтобы из-за них программа не открылась вовсе:
+    Centurio — панель запуска. Ни трей, ни монитор процессов, ни автокопия
+    не стоят того, чтобы из-за них программа не открылась вовсе:
     окно без трея нужнее, чем «exe вылетает сразу». Обязательные шаги (Store,
     сборка интерфейса, mount) намеренно не заворачиваются — без них показывать
     нечего, и о таком сбое сообщает `main()`.
@@ -347,14 +347,19 @@ def _start(page: ft.Page):
     _optional("монитор запущенных программ", launcher.start_monitor)
     _optional("предложения на пустой библиотеке", ui.scan.offer_first_run)
 
-    def _auto_rescan_loop():
+    def _background_loop():
+        # Автокопия проверяется при запуске и потом каждые 15 минут: сама она
+        # пишется не чаще раза в сутки, а компьютер с Centurio в трее могут
+        # не выключать неделями.
+        _optional("автокопия библиотеки", store.auto_backup)
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
+            _optional("автокопия библиотеки", store.auto_backup)
             try:
                 if store.state()["settings"].get("auto_rescan"):
                     ui.scan.rescan(silent=True)
             except Exception:
                 log.exception("ошибка автоматической повторной проверки галочки")
-    threading.Thread(target=_auto_rescan_loop, daemon=True).start()
+    threading.Thread(target=_background_loop, daemon=True).start()
 
     if not is_web:
         def _adopt_autostart():

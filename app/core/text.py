@@ -109,6 +109,25 @@ def short_ago(ms: int) -> str:
     return f"{days} {_plural(days, 'день', 'дня', 'дней')} назад"
 
 
+_MONTHS = ("янв.", "февр.", "марта", "апр.", "мая", "июня", "июля", "авг.", "сент.",
+           "окт.", "нояб.", "дек.")
+
+
+def moment_label(ts: float, now: float | None = None) -> str:
+    """«сегодня, 09:14», «вчера, 21:40» или «20 окт., 09:14» — для списка копий."""
+    when = time.localtime(ts)
+    today = time.localtime(time.time() if now is None else now)
+    clock = time.strftime("%H:%M", when)
+    days = (time.mktime(today[:3] + (0, 0, 0, 0, 0, -1))
+            - time.mktime(when[:3] + (0, 0, 0, 0, 0, -1))) // 86400
+    if days == 0:
+        return f"сегодня, {clock}"
+    if days == 1:
+        return f"вчера, {clock}"
+    year = f" {when.tm_year}" if when.tm_year != today.tm_year else ""
+    return f"{when.tm_mday} {_MONTHS[when.tm_mon - 1]}{year}, {clock}"
+
+
 def plu_apps(n):
     return _plural(n, "приложение", "приложения", "приложений")
 

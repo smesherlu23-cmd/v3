@@ -6070,6 +6070,77 @@ def test_ui_keyboard():
         ok(hidden == [1], "Esc with nothing left to close hides the window")
 
 
+def test_auto_backups():
+    """Раз в сутки — автокопия, если библиотека менялась; хранятся семь последних."""
+    from app.core.store import store as store_mod
+
+    hour = 3600
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ok(store.auto_backup() is None, "an empty library is not worth a copy")
+
+        store.add_app({"name": "Editor", "path": "C:/e.exe"})
+        first = store.auto_backup()
+        ok(first is not None and first.parent.name == "backups"
+           and first.name.startswith("auto-"), "the first copy lands in «backups»")
+        ok(store.backup_summary(first) == {"apps": 1, "sets": 0},
+           "and a copy can say what is in it")
+        ok(store.auto_backup() is None, "a second one the same day is not made")
+
+        later = time.time() + 21 * hour
+        store.set_setting("win_x", 120)
+        ok(store.auto_backup(now=later) is None,
+           "a day later, a moved window alone does not make a new copy")
+
+        made = [first]
+        for n in range(store_mod.AUTO_BACKUP_KEEP + 2):
+            store.add_app({"name": f"App {n}", "path": f"C:/a{n}.exe"})
+            # Время файла — «вчера», чтобы следующая копия не считалась слишком частой.
+            past = time.time() - 21 * hour
+            os.utime(made[-1], (past, past))
+            made.append(store.auto_backup())
+        ok(all(made), "each day with changes gets its own copy")
+        kept = store.auto_backups()
+        ok(len(kept) == store_mod.AUTO_BACKUP_KEEP,
+           f"only the latest {store_mod.AUTO_BACKUP_KEEP} are kept ({len(kept)})")
+        ok(kept[0] == made[-1] and first not in kept, "newest first, oldest pruned")
+
+        store.newer_version = store_mod.SCHEMA_VERSION + 1
+        store.data["apps"].append(dict(store.data["apps"][0], id="x"))
+        os.utime(kept[0], (time.time() - 21 * hour,) * 2)
+        ok(store.auto_backup() is None, "a library opened read-only is never copied")
+
+
+def test_ui_restore_from_auto_backup():
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI auto-backup restore test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        store.add_app({"name": "Editor", "path": "C:/e.exe"})
+        ui, _ = _ui_for(store)
+        asked = []
+        ui.ask_for_file = lambda *a, **kw: asked.append(a)
+        ui.restore_menu()
+        ok(asked and not ui.menu.open, "without auto copies, «Восстановить…» asks for a file")
+
+        copy = store.auto_backup()
+        store.add_app({"name": "Later", "path": "C:/l.exe"})
+        ui.restore_menu()
+        labels = _menu_labels(ui)
+        ok(ui.menu.open and labels[0].startswith("сегодня, ") and labels[-1] == "Из файла…",
+           f"with them, it lists the copies and still offers a file ({labels})")
+        row = next(r for r in ui.menu._rows if r["kind"] == "item")
+        ok(row["hint"] == "1 программа", "each copy says how much is in it")
+        row["on_click"]()
+        ok([a["name"] for a in store.state()["apps"]] == ["Editor"],
+           "picking a copy restores the library from it")
+        ok(copy.exists(), "and the copy itself stays")
+
+
 def test_rename_icon_and_restore_from_backup():
     """Программу можно переименовать и дать ей свою картинку; копию — восстановить.
 

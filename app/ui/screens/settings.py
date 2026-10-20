@@ -311,14 +311,21 @@ def _settings_library(ui):
              ft.Row([T(cache_label, size=11, color=C.MUTED_2, font_family="monospace"),
                      Wg.link_btn("Очистить", ui.clear_icon_cache)], spacing=10, tight=True)),
         _row("Копия библиотеки",
-             ft.Row([Wg.outline_btn("Восстановить…", ui.pick_backup, ft.Icons.RESTORE,
+             ft.Row([Wg.outline_btn("Восстановить…", ui.restore_menu, ft.Icons.RESTORE,
                                     height=32),
                      Wg.outline_btn("Сохранить", ui.backup, ft.Icons.BACKUP, height=32)],
                     spacing=8, tight=True)),
+        T(_auto_backup_note(ui), size=11, color=C.MUTED_2),
         _row("Файл библиотеки", Wg.link_btn("Показать в папке", ui.show_data_folder)),
         ft.Container(height=1, bgcolor=C.LINE_2),
         _switch(ui, "Подробный лог", "debug_log"),
     ]
+
+
+def _auto_backup_note(ui):
+    last = ui.last_auto_backup()
+    note = "Раз в день Centurio сам сохраняет копию и хранит 7 последних."
+    return f"{note} Последняя — {last}." if last else note
 
 
 def _settings_note(text):

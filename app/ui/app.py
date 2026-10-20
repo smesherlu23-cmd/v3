@@ -14,7 +14,7 @@ from ..controllers.triage import TriageController
 from ..core import queries
 from ..core.hotkeys import resolve_accels
 from ..core.store import Store
-from ..core.text import plu_apps, plu_windows, split_args
+from ..core.text import moment_label, plu_apps, plu_programs, plu_windows, split_args
 from ..core.view_state import PERSISTENT_FIELDS, SEARCH_FIELD, ViewState
 from ..infra import log
 from ..platform import windows as W
@@ -1175,6 +1175,37 @@ class CenturioUI:
 
     def pick_backup(self):
         self.ask_for_file("Копия библиотеки", self.restore_backup, extensions=["json"])
+
+    def restore_menu(self):
+        """Восстановить из автокопии — или выбрать файл, если их ещё нет."""
+        copies = self.store.auto_backups()
+        if not copies:
+            self.pick_backup()
+            return
+        rows = []
+        for path in copies:
+            summary = self.store.backup_summary(path)
+            if summary is None:
+                continue
+            try:
+                when = moment_label(path.stat().st_mtime)
+            except OSError:
+                continue
+            count = summary["apps"]
+            rows.append(menus.item(ft.Icons.HISTORY, when,
+                                   lambda p=path: self.restore_backup(str(p)),
+                                   hint=f"{count} {plu_programs(count)}"))
+        rows += [menus.separator(),
+                 menus.item(ft.Icons.FOLDER_OPEN, "Из файла…", self.pick_backup)]
+        self.menu.show(self._window_width() / 2 - 120, 180.0, rows,
+                       header=menus.text_header("Восстановить библиотеку"))
+
+    def last_auto_backup(self) -> str:
+        copies = self.store.auto_backups()
+        try:
+            return moment_label(copies[0].stat().st_mtime) if copies else ""
+        except OSError:
+            return ""
 
     def restore_backup(self, src):
         """Заменить библиотеку копией. Текущая сначала сама уходит в копию."""
