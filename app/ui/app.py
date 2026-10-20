@@ -11,6 +11,7 @@ import flet as ft
 from ..controllers.scan import ScanController
 from ..controllers.sets import SetsController
 from ..controllers.triage import TriageController
+from ..controllers.updates import UpdatesController
 from ..core import queries
 from ..core.hotkeys import resolve_accels
 from ..core.store import Store
@@ -86,6 +87,7 @@ class CenturioUI:
         self.set_ops = SetsController(self)
         self.scan = ScanController(self)
         self.triage = TriageController(self)
+        self.updates = UpdatesController(self)
 
         self.search_field = Wg.track_typing(ft.TextField(
             value="", hint_text="Найти или запустить", border=ft.InputBorder.NONE,
@@ -1175,6 +1177,11 @@ class CenturioUI:
 
     def pick_backup(self):
         self.ask_for_file("Копия библиотеки", self.restore_backup, extensions=["json"])
+
+    def open_url(self, url: str):
+        import webbrowser
+
+        threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
 
     def restore_menu(self):
         """Восстановить из автокопии — или выбрать файл, если их ещё нет."""

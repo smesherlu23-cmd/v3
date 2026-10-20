@@ -47,8 +47,9 @@ VersionInfoProductName={#MyAppName}
 VersionInfoCopyright=© {#MyAppPublisher}
 
 [Languages]
+; Программа только на русском — и установщик тоже: со вторым языком он
+; первым делом спрашивал, на каком языке продолжать.
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked

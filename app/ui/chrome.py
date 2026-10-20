@@ -365,8 +365,14 @@ class Chrome:
             self.ui.set_ops.make_set(ids)
 
     def _sidebar_footer(self):
+        newer = self.ui.updates.available()
+        notice = ft.Container(
+            ft.Row([ft.Icon(ft.Icons.DOWNLOAD, size=13, color=C.TEXT_2),
+                    T(f"Вышла {newer}", size=11.5, color=C.TEXT_2)], spacing=5, tight=True),
+            tooltip="Скачать новую версию",
+            on_click=lambda e: self.ui.open_url(self.ui.updates.url())) if newer else ft.Container()
         return ft.Container(
-            ft.Row([ft.Container(),
+            ft.Row([notice,
                     T(f"v{__version__}", size=11, color=C.MUTED_3, font_family="monospace")],
                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)),

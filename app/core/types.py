@@ -10,6 +10,11 @@ class Settings(TypedDict, total=False):
     close_to_tray: bool
     tray_hint_shown: bool
     first_run_done: bool
+    check_updates: bool
+    update_checked_at: int
+    update_version: str
+    update_url: str
+    update_seen: str
     accent: str
     bg_tint: int | None
     contrast: str

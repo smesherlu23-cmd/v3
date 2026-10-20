@@ -191,6 +191,7 @@ NOTE_ICONS = {
     "monitor": ft.Icons.DESKTOP_WINDOWS,
     "delete": ft.Icons.DELETE_OUTLINE,
     "magic": ft.Icons.AUTO_AWESOME,
+    "download": ft.Icons.DOWNLOAD,
 }
 
 NOTE_TONES = {"muted": C.MUTED, "good": C.GREEN}

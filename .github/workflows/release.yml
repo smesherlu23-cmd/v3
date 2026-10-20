@@ -63,6 +63,15 @@ jobs:
           }
           "версия $version" | Write-Host
 
+      # Описание релиза — раздел версии из CHANGELOG.md. Без него тег падает
+      # здесь, до получасовой сборки, а не на публикации.
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          python scripts/release_notes.py "${{ github.ref_name }}" installer/Output/RELEASE_NOTES.md
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Lint
         run: python -m ruff check .
 
@@ -134,6 +143,19 @@ jobs:
             Set-Content -Encoding ascii installer/Output/SHA256SUMS.txt
           Get-Content installer/Output/SHA256SUMS.txt | Write-Host
 
+      # Манифесты winget и scoop с адресом и хешем этого установщика: их
+      # остаётся отправить в каталоги (см. README, «Релиз»).
+      - name: Package manifests
+        shell: pwsh
+        run: |
+          $version = (python -c "from app import __version__; print(__version__)").Trim()
+          $hash = (Get-FileHash "${{ env.SETUP_EXE }}" -Algorithm SHA256).Hash
+          python scripts/package_manifests.py --version $version --sha256 $hash `
+            --out installer/Output/manifests
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path installer/Output/manifests/* -Force `
+            -DestinationPath installer/Output/package-manifests.zip
+
       # Инсталлятор — единственное, что имеет смысл раздавать: `flet build`
       # кладёт рядом с Centurio.exe набор DLL, и без них голый exe не
       # запустится. Каталог сборки уезжает архивом только для разбора проблем.
@@ -143,6 +165,7 @@ jobs:
           path: |
             ${{ env.SETUP_EXE }}
             installer/Output/SHA256SUMS.txt
+            installer/Output/package-manifests.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -157,4 +180,6 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" `
             "${{ env.SETUP_EXE }}" installer/Output/SHA256SUMS.txt `
-            --title "Centurio ${{ github.ref_name }}" --generate-notes
+            installer/Output/package-manifests.zip `
+            --title "Centurio ${{ github.ref_name }}" `
+            --notes-file installer/Output/RELEASE_NOTES.md

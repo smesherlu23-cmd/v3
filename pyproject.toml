@@ -1,7 +1,7 @@
 [project]
 name = "centurio"
 version = "1.2.0"
-description = "Centurio — персональная, всегда доступная из трея горячая панель приложений."
+description = "Centurio — панель запуска приложений для Windows, всегда доступная из трея."
 readme = "README.md"
 requires-python = ">=3.9"
 

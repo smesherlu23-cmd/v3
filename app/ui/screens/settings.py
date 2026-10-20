@@ -296,7 +296,24 @@ def _settings_startup(ui):
         _switch(ui, "Крестик сворачивает в трей", "close_to_tray"),
         _switch(ui, "Сворачивание прячет в трей", "minimize_to_tray"),
         _switch(ui, "Прятать окно после запуска", "hide_after"),
+        ft.Container(height=1, bgcolor=C.LINE_2),
+        _switch(ui, "Проверять обновления", "check_updates"),
+        _row(_update_status(ui), _update_action(ui)),
+        T("Раз в день Centurio спрашивает GitHub, вышла ли новая версия. "
+          "Ничего о компьютере и библиотеке не отправляется.", size=11, color=C.MUTED_2),
     ]
+
+
+def _update_status(ui):
+    newer = ui.updates.available()
+    return f"Вышла версия {newer}" if newer else f"Установлена версия {__version__}"
+
+
+def _update_action(ui):
+    if ui.updates.available():
+        return Wg.outline_btn("Скачать", lambda: ui.open_url(ui.updates.url()),
+                              ft.Icons.DOWNLOAD, height=32)
+    return Wg.link_btn("Проверить сейчас", ui.updates.check_now)
 
 
 def _settings_library(ui):

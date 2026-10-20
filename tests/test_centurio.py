@@ -2702,6 +2702,58 @@ def test_domain_types_match_runtime_shapes():
     ok(set(inbox) == keys(types.InboxItem), "InboxItem matches clean_inbox output")
 
 
+def test_release_notes_and_package_manifests():
+    """Релиз по тегу берёт описание из CHANGELOG.md и выкладывает манифесты winget/scoop."""
+    import importlib.util
+    import json as _json
+
+    from app import __version__
+
+    def load(name):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(_ROOT, "scripts",
+                                                                          f"{name}.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    notes = load("release_notes")
+    ok(notes.notes_for(__version__), f"CHANGELOG.md has a section for {__version__}, "
+                                     "or a tag for this version would stop the release")
+    sample = "# x\n\n## 2.0.0\n\n- новое\n\n## 1.0.0\n\n- старое\n"
+    ok(notes.notes_for("2.0.0", sample) == "- новое", "only that version's section is taken")
+    ok(notes.notes_for("3.0.0", sample) is None, "and a missing one is reported, not invented")
+
+    manifests = load("package_manifests")
+    with tempfile.TemporaryDirectory() as d:
+        written = manifests.build("1.2.3", "AB" * 32, Path(d))
+        names = sorted(p.name for p in written)
+        ok(names == ["Centurio.Centurio.installer.yaml", "Centurio.Centurio.locale.ru-RU.yaml",
+                     "Centurio.Centurio.yaml", "centurio.json"],
+           f"winget gets its three files, scoop its one ({names})")
+        scoop = _json.loads((Path(d) / "scoop" / "centurio.json").read_text(encoding="utf-8"))
+        url = scoop["architecture"]["64bit"]["url"]
+        ok(url.endswith("/releases/download/v1.2.3/CenturioSetup.exe")
+           and scoop["architecture"]["64bit"]["hash"] == "ab" * 32,
+           "scoop points at this release's installer and its hash")
+        installer = next(p for p in written if p.name.endswith(".installer.yaml"))
+        text = installer.read_text(encoding="utf-8")
+        ok(url in text and "AB" * 32 in text and "_is1" in text,
+           "winget gets the same installer, hash and the Inno Setup product code")
+        try:
+            import yaml
+        except ImportError:
+            yaml = None
+        if yaml is not None:
+            for path in written:
+                if path.suffix == ".yaml":
+                    yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        manifests.build("1.2.3", "not-a-hash", Path(tempfile.gettempdir()))
+        ok(False, "a broken hash must stop the release")
+    except SystemExit:
+        ok(True, "a broken hash stops the release")
+
+
 def test_packaging_metadata():
     """The version and the dependency list live in files that can't import
     each other, so the check that they agree belongs here."""
@@ -6215,6 +6267,83 @@ def test_ui_restore_from_auto_backup():
         ok([a["name"] for a in store.state()["apps"]] == ["Editor"],
            "picking a copy restores the library from it")
         ok(copy.exists(), "and the copy itself stays")
+
+
+def test_update_check():
+    """Раз в сутки — вопрос GitHub о новой версии; о каждой версии говорится один раз."""
+    import io
+    import json as _json
+    import urllib.error
+    from unittest.mock import patch
+
+    from app import __version__
+    from app.infra import updates
+
+    ok(updates.parse_version("v1.10.2") == (1, 10, 2) and updates.parse_version("beta") is None,
+       "versions are read from tags, junk is not")
+    ok(updates.is_newer("1.10.0", "1.9.9") and not updates.is_newer("1.2", "1.2.0")
+       and not updates.is_newer("x", "1.0.0"), "and compared as numbers, not text")
+
+    def reply(payload):
+        return io.BytesIO(_json.dumps(payload).encode())
+
+    with patch("urllib.request.urlopen",
+               lambda req, timeout: reply({"tag_name": "v9.9.9",
+                                           "html_url": "https://example/r/9"})):
+        ok(updates.fetch_latest() == {"version": "9.9.9", "url": "https://example/r/9"},
+           "the latest release is read from the GitHub API")
+    with patch("urllib.request.urlopen",
+               lambda req, timeout: reply({"tag_name": "v9.9.9", "prerelease": True})):
+        ok(updates.fetch_latest() is None, "a pre-release is not offered")
+
+    def missing(req, timeout):
+        raise urllib.error.HTTPError(updates.API_URL, 404, "Not Found", {}, None)
+    with patch("urllib.request.urlopen", missing):
+        ok(updates.fetch_latest() is None, "no releases yet is not an error")
+
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI update check test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ui, _ = _ui_for(store)
+        opened = []
+        ui.open_url = opened.append
+        ok(ui.updates.due(), "a fresh install is due for a check")
+
+        ui.updates.fetch = lambda: {"version": "9.9.9", "url": "https://example/r/9"}
+        ui.updates.check(quiet=True)
+        ok(ui.toast.text.value == "Вышла Centurio 9.9.9" and ui.toast.action_btn.visible,
+           "a newer release is announced with a way to get it")
+        ui.toast.fire_action()
+        ok(opened == ["https://example/r/9"], "«Скачать» opens the release page")
+        ok(not ui.updates.due(), "and the next check waits a day")
+        ui.refresh()
+        ok(any("Вышла 9.9.9" in t for t in _texts(ui.sidebar_container)),
+           "the sidebar keeps a quiet reminder")
+
+        ui.toast.dismiss()
+        ui.toast.text.value = ""
+        ui.updates.check(quiet=True)
+        ok(ui.toast.text.value == "", "the same version is not announced twice")
+
+        ui.updates.fetch = lambda: {"version": __version__, "url": "u"}
+        ui.updates.check(quiet=False)
+        ok(ui.updates.available() == "" and __version__ in ui.toast.text.value,
+           "«Проверить сейчас» says when this is the latest version")
+
+        def offline():
+            raise OSError("no network")
+        ui.updates.fetch = offline
+        ui.updates.check(quiet=False)
+        ok(ui.toast.icon.color == C.DANGER, "and says so when GitHub can't be reached")
+
+        store.set_setting("check_updates", False)
+        store.set_setting("update_checked_at", 0)
+        ok(not ui.updates.due(), "with the switch off, nothing is ever asked")
 
 
 def test_rename_icon_and_restore_from_backup():

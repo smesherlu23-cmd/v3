@@ -43,7 +43,8 @@ def make_library(folder: Path) -> None:
                        "category_id": "work"})
     for key, value in (("win_w", 1280), ("win_h", 800), ("win_x", 40), ("win_y", 40),
                        ("hide_after", False), ("tray_hint_shown", True),
-                       ("first_run_done", True), ("autostart_adopted", True)):
+                       ("first_run_done", True), ("autostart_adopted", True),
+                       ("check_updates", False)):
         store.set_setting(key, value, persist=False)
     store.flush()
 

@@ -27,6 +27,12 @@ DEFAULT_SETTINGS = {
     # Предложения «похоже, вы этим пользуетесь» на пустой библиотеке: после
     # «Добавить» или «Не сейчас» они больше не появляются.
     "first_run_done": False,
+    # Раз в сутки — вопрос GitHub, нет ли новой версии (см. infra/updates.py).
+    "check_updates": True,
+    "update_checked_at": 0,
+    "update_version": "",
+    "update_url": "",
+    "update_seen": "",
     "accent": "#f5f5f7",
     "bg_tint": None,
     "contrast": "normal",
@@ -258,12 +264,15 @@ def clean_records(raw, clean) -> list[dict]:
 
 _BOOL_SETTINGS = {
     "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
-    "first_run_done", "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
+    "first_run_done", "show_quick_row", "check_updates", "game_posters", "auto_rescan", "win_max", "hide_after",
     "triage", "debug_log",
 }
 
 _STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
                  "view_mode"}
+
+# Здесь пустая строка — законное значение («новой версии нет»).
+_TEXT_SETTINGS = {"update_version", "update_url", "update_seen"}
 
 _INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y", "bg_tint"}
 # `bg_tint` — тон фона в градусах (0-359); значение вне диапазона не портит
@@ -288,7 +297,9 @@ def clean_setting_value(key: str, value, default):
         if value is None:
             return None
         return value if isinstance(value, int) and not isinstance(value, bool) else default
-    if key in ("icon_schema", "ui_defaults_version"):
+    if key in _TEXT_SETTINGS:
+        return value if isinstance(value, str) else default
+    if key in ("icon_schema", "ui_defaults_version", "update_checked_at"):
         return value if isinstance(value, int) and not isinstance(value, bool) else default
     if key == "collapsed":
         return [c for c in value if isinstance(c, str)] if isinstance(value, list) else default

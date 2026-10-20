@@ -351,12 +351,14 @@ def _start(page: ft.Page):
         ui_check.start(ui, launcher, os.environ["CENTURIO_UI_CHECK"], bg_stop)
 
     def _background_loop():
-        # Автокопия проверяется при запуске и потом каждые 15 минут: сама она
-        # пишется не чаще раза в сутки, а компьютер с Centurio в трее могут
-        # не выключать неделями.
+        # Автокопия и обновления проверяются при запуске и потом каждые 15
+        # минут: сами они срабатывают не чаще раза в сутки, а компьютер с
+        # Centurio в трее могут не выключать неделями.
         _optional("автокопия библиотеки", store.auto_backup)
+        _optional("проверка обновлений", ui.updates.check_if_due)
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
             _optional("автокопия библиотеки", store.auto_backup)
+            _optional("проверка обновлений", ui.updates.check_if_due)
             try:
                 if store.state()["settings"].get("auto_rescan"):
                     ui.scan.rescan(silent=True)
