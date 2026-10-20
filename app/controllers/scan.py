@@ -29,6 +29,8 @@ class ScanController:
         self._scan_errors: list[dict] = []
         self._scan_lock = threading.Lock()
         self._manual_found: list[dict] = []
+        self._suggestions: list[dict] = []
+        self._suggest_off: set[str] = set()
 
     def _posters(self) -> bool:
         return bool(self.ui.setting("game_posters", True))
@@ -55,6 +57,69 @@ class ScanController:
         self._discovered = found
         self._discovered_at = time.monotonic()
         self._repair_bare_shortcuts(found)
+        if self.wants_suggestions():
+            # Хранится отдельно от найденного: тот устаревает через пару минут,
+            # а предложения должны дождаться, пока человек вернётся к окну.
+            self._suggestions = discovery.suggest_first_run(found)
+
+    def wants_suggestions(self) -> bool:
+        state = self.store.state()
+        return (not state["apps"] and not state["sets"]
+                and not state["settings"].get("first_run_done"))
+
+    def offer_first_run(self):
+        """На пустой библиотеке сразу посмотреть, что установлено."""
+        if self.wants_suggestions():
+            self.start_scan()
+
+    def suggestions(self) -> list[dict]:
+        if not self.wants_suggestions():
+            return []
+        return [{"key": launch_key(s["app"]), "item": s["app"], "hint": s["hint"],
+                 "on": launch_key(s["app"]) not in self._suggest_off}
+                for s in self._suggestions]
+
+    def toggle_suggestion(self, key: str):
+        self._suggest_off ^= {key}
+        self.ui.refresh()
+
+    def _payload(self, item, category_id):
+        return {"name": item.get("name"), "path": item.get("path"),
+                "args": item.get("args") or [], "working_dir": item.get("working_dir") or "",
+                "icon": item.get("icon"),
+                "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
+                "track_exe": item.get("track_exe"), "poster": item.get("poster"),
+                "category_id": category_id}
+
+    def add_suggestions(self):
+        chosen = [s["item"] for s in self.suggestions() if s["on"]]
+        if not chosen:
+            self.notify.show("Отметьте хотя бы одну программу", icon="check_circle", tone="muted")
+            return
+        cats = self.ui.categories()
+        added = self.store.add_apps([self._payload(item, queries.suggest_category(item, cats))
+                                     for item in chosen])
+        self.store.set_setting("first_run_done", True)
+        self.ui.view.filter = "all"
+        self.notify.show(f"Добавлено {len(added)} {plu_apps(len(added))}",
+                         action=lambda: self._undo_suggestions(added), action_label="Вернуть")
+        self.ui.on_library_changed()
+        self.backfill_icons_async()
+
+    def _undo_suggestions(self, added):
+        self.store.set_setting("first_run_done", False)
+        self._restore_added(added)
+
+    def dismiss_suggestions(self):
+        self.store.set_setting("first_run_done", True)
+        self.ui.refresh()
+
+    def review_suggestions(self):
+        """Открыть весь список найденного с уже отмеченными предложениями."""
+        picked = {s["key"] for s in self.suggestions() if s["on"]}
+        self.ui.open_add()
+        self.ui.view.add_sel |= picked
+        self.ui.refresh()
 
     def _repair_bare_shortcuts(self, found) -> int:
         """Дописать аргументы ярлыка программам, добавленным до того, как их читали.
@@ -212,18 +277,8 @@ class ScanController:
         if not chosen:
             self.notify.show("Отметьте хотя бы одну программу", icon="check_circle", tone="muted")
             return
-        payload = []
-        for row in chosen:
-            item = row["item"]
-            payload.append({
-                "name": item.get("name"), "path": item.get("path"),
-                "args": item.get("args") or [], "working_dir": item.get("working_dir") or "",
-                "icon": item.get("icon"),
-                "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
-                "track_exe": item.get("track_exe"), "poster": item.get("poster"),
-                "category_id": self.add_category_for(row),
-            })
-        added = self.store.add_apps(payload)
+        added = self.store.add_apps([self._payload(row["item"], self.add_category_for(row))
+                                     for row in chosen])
         self.ui.view.reset_add()
         self._manual_found = []
         self.ui.view.set_screen("grid")

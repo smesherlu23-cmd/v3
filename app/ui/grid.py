@@ -46,10 +46,7 @@ class GridView:
         apps = self.ui.apps()
         if not apps and not self.ui.sets():
             self.ui._sel_id = None
-            return [self._empty("Библиотека пуста",
-                                "Centurio посмотрит, что установлено, и предложит отметить "
-                                "нужное. Можно и указать файл вручную.",
-                                "Найти и добавить", self.ui.open_add)]
+            return [self._first_run()]
 
         sections = self.ui.sections()
         self.ui._sel_id = self.ui._selected_id(sections)
@@ -475,6 +472,66 @@ class GridView:
         self.ui._tile_cache[a["id"]] = (sig, built, ids_box)
         self.ui._tile_cache.move_to_end(a["id"])
         return built
+
+    def _first_run(self):
+        scan = self.ui.scan
+        if scan.wants_suggestions() and scan.scanning():
+            return ft.Container(
+                ft.Column([Wg.spinner(30),
+                           T("Смотрю, что установлено", size=15, weight=ft.FontWeight.W_600,
+                             color=C.TEXT_2),
+                           T("Это несколько секунд. Потом предложу то, чем вы, похоже, "
+                             "уже пользуетесь.", size=13, color=C.MUTED_2,
+                             text_align=ft.TextAlign.CENTER, width=380)],
+                          spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                alignment=ft.alignment.center, padding=ft.padding.only(0, 80, 0, 40))
+        found = scan.suggestions()
+        if not found:
+            return self._empty("Библиотека пуста",
+                               "Centurio посмотрит, что установлено, и предложит отметить "
+                               "нужное. Можно и указать файл вручную.",
+                               "Найти и добавить", self.ui.open_add)
+        picked = sum(1 for s in found if s["on"])
+        return ft.Container(
+            ft.Column([
+                T("Похоже, вы этим пользуетесь", size=15, weight=ft.FontWeight.W_600,
+                  color=C.TEXT_2),
+                ft.Container(height=8),
+                T("Эти программы закреплены на панели задач, открыты сейчас, стоят в "
+                  "автозагрузке или на рабочем столе. Снимите отметку с лишнего.",
+                  size=13, color=C.MUTED_2, text_align=ft.TextAlign.CENTER, width=440),
+                ft.Container(height=18),
+                ft.Container(ft.Row([self._suggestion_card(s) for s in found], wrap=True,
+                                    spacing=10, run_spacing=10,
+                                    alignment=ft.MainAxisAlignment.CENTER), width=710),
+                ft.Container(height=18),
+                ft.Row([Wg.primary_btn(f"Добавить {picked}" if picked else "Добавить",
+                                       scan.add_suggestions, self.ui._accent(), ft.Icons.ADD),
+                        Wg.outline_btn("Всё найденное", scan.review_suggestions,
+                                       ft.Icons.SEARCH)],
+                       spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Container(height=14),
+                Wg.link_btn("Не сейчас", scan.dismiss_suggestions),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+            alignment=ft.alignment.center, padding=ft.padding.only(0, 56, 0, 40))
+
+    def _suggestion_card(self, s):
+        on = s["on"]
+        return ft.Container(
+            ft.Row([self.ui.icon_slot(s["item"], 32, 8, glyph=16),
+                    ft.Column([T(s["item"].get("name") or "", size=13,
+                                 weight=ft.FontWeight.W_600, color=C.TEXT, max_lines=1,
+                                 overflow=ft.TextOverflow.ELLIPSIS),
+                               T(s["hint"], size=11.5, color=C.MUTED, max_lines=1)],
+                              spacing=2, tight=True, expand=True),
+                    ft.Icon(ft.Icons.CHECK_BOX if on else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                            size=18, color=C.ACCENT if on else C.MUTED)],
+                   spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            width=230, height=56, padding=ft.padding.symmetric(0, 12), border_radius=10,
+            bgcolor=C.PANEL if on else None,
+            border=ft.border.all(1, C.LINE_5 if on else C.LINE),
+            opacity=1 if on else 0.6,
+            on_click=lambda e, k=s["key"]: self.ui.scan.toggle_suggestion(k))
 
     def _empty(self, title, text, btn_label, on_click):
         controls = [

@@ -751,6 +751,9 @@ def test_discovery_sources():
     ok(merged[0]["source"] == "startmenu", "the first source it was seen in wins")
     ok(merged[0]["icon"] == "/i.png", "and an icon from the second is still adopted")
 
+    ok(not discovery._dedupe([{"name": "Centurio", "path": "C:/P/Centurio/Centurio.exe"}]),
+       "Centurio does not offer its own shortcut as a program to add")
+
     report = {}
     discovery.discover_apps(None, report=report)
     ok("errors" in report, "a scan reports which sources failed")
@@ -759,23 +762,39 @@ def test_discovery_sources():
         os.makedirs(os.path.join(d, "Desktop"))
         with open(os.path.join(d, "Desktop", "Visual Studio Code.lnk"), "w") as fh:
             fh.write("x")
-        old = os.environ.get("USERPROFILE")
+        pins = os.path.join(d, "Microsoft", "Internet Explorer", "Quick Launch",
+                            "User Pinned", "TaskBar")
+        os.makedirs(pins)
+        with open(os.path.join(pins, "Telegram.lnk"), "w") as fh:
+            fh.write("x")
+        saved = {k: os.environ.get(k) for k in ("USERPROFILE", "APPDATA")}
         os.environ["USERPROFILE"] = d
+        os.environ["APPDATA"] = d
         try:
             ok("visualstudiocode" in discovery.desktop_names(),
                "a desktop shortcut is recognised by name")
+            ok("telegram" in discovery.taskbar_names(), "and so is a taskbar pin")
             picked = discovery.suggest_first_run([
                 {"name": "Visual Studio Code", "path": "C:/x.exe", "source": "registry"},
-                {"name": "Nothing", "path": "C:/y.exe", "source": "startmenu"}])
-            ok(picked and picked[0]["hint"] == "на рабочем столе",
-               "and is offered first, with the reason it was picked")
-            ok(picked[1]["hint"] == "в меню «Пуск»",
-               "the rest are honestly labelled, not guessed at")
+                {"name": "Visual Studio Code", "path": "C:/x2.exe", "source": "startmenu"},
+                {"name": "Nothing", "path": "C:/y.exe", "source": "startmenu"},
+                {"name": "Steam", "path": "C:/Steam/steam.exe", "source": "startmenu"},
+                {"name": "Telegram", "path": "C:/t/Telegram.exe", "source": "startmenu"},
+                {"name": "Some Game", "path": "steam://rungameid/1", "source": "steam",
+                 "track_exe": "Game.exe"},
+            ], running={"steam.exe", "game.exe"})
+            ok([(p["app"]["name"], p["hint"]) for p in picked] == [
+                ("Telegram", "на панели задач"), ("Steam", "сейчас запущена"),
+                ("Some Game", "сейчас запущена"), ("Visual Studio Code", "на рабочем столе")],
+               f"suggestions come with evidence, strongest first ({picked})")
+            ok(all(p["app"]["name"] != "Nothing" for p in picked),
+               "a mere Start menu entry is no sign the program is used")
         finally:
-            if old is None:
-                os.environ.pop("USERPROFILE", None)
-            else:
-                os.environ["USERPROFILE"] = old
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 def test_store_icon_trim():
@@ -6161,8 +6180,10 @@ def test_ui_settings_screen():
 
 
 def test_ui_first_run():
-    """A first run drops straight into the plain empty-library grid.
+    """A first run drops straight into the empty-library grid, with no modal.
 
+    Suggestions, once a scan finds any, live inline in that empty state
+    (test_ui_first_run_suggestions) and reuse the Add screen's scan.
     There used to be a "чем пользуетесь каждый день" picker modal on top
     of it (auto-shown once, replayable from settings) — removed because it
     duplicated the Add screen's own checklist for no real benefit while
@@ -6191,6 +6212,77 @@ def test_ui_first_run():
         ok(not hasattr(ui, "onboarding_layer"), "and so is its overlay")
         ok("onboarded" not in store.state()["settings"],
            "along with the flag that used to gate it")
+
+
+def test_ui_first_run_suggestions():
+    """Пустая библиотека сама смотрит, что установлено, и предлагает то, чем
+    человек, судя по уликам, уже пользуется."""
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI first-run suggestions test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "Desktop"))
+        for name in ("Zeta Notes", "Qwerty Paint"):
+            with open(os.path.join(d, "Desktop", f"{name}.lnk"), "w") as fh:
+                fh.write("x")
+        saved = {k: os.environ.get(k) for k in ("USERPROFILE", "APPDATA")}
+        os.environ["USERPROFILE"] = d
+        os.environ["APPDATA"] = d
+        try:
+            store = Store(os.path.join(d, "data.json"))
+            ui, _ = _ui_for(store)
+            ui.scan.start_scan = lambda force=False: None
+            found = [{"name": "Zeta Notes", "path": "C:/z/zeta.exe", "source": "startmenu"},
+                     {"name": "Qwerty Paint", "path": "C:/q/qpaint.exe", "source": "startmenu"},
+                     {"name": "Unused Tool", "path": "C:/u/unused.exe", "source": "startmenu"}]
+            ui.scan._remember_discovery(found)
+            ui.refresh()
+            shown = _texts(ui.body)
+            ok("Похоже, вы этим пользуетесь" in shown, "suggestions replace the bare empty state")
+            ok("Zeta Notes" in shown and "Qwerty Paint" in shown and "Unused Tool" not in shown,
+               "only programs with evidence of use are offered")
+            ok("Добавить 2" in shown, "all of them start ticked")
+
+            from app.core.text import launch_key
+
+            ui.scan.toggle_suggestion(launch_key(found[1]))
+            ok("Добавить 1" in _texts(ui.body), "a card can be unticked")
+
+            ui.scan.review_suggestions()
+            ok(ui.view.screen == "add" and ui.view.add_sel == {launch_key(found[0])},
+               "«Всё найденное» opens the full list with the same picks")
+            ui.back_to_grid()
+
+            ui.scan.add_suggestions()
+            names = [a["name"] for a in store.state()["apps"]]
+            ok(names == ["Zeta Notes"], f"«Добавить» adds the ticked ones ({names})")
+            ok(store.state()["settings"]["first_run_done"], "and the offer is not repeated")
+
+            ui.toast.fire_action()
+            ok(not store.state()["apps"] and "Похоже, вы этим пользуетесь" in _texts(ui.body),
+               "«Вернуть» brings back the offer along with the empty library")
+            ui.scan.add_suggestions()
+            store.remove_apps([a["id"] for a in store.state()["apps"]])
+            ui.refresh()
+            ok("Библиотека пуста" in _texts(ui.body),
+               "an emptied library later shows the plain empty state")
+
+            store2 = Store(os.path.join(d, "data2.json"))
+            ui2, _ = _ui_for(store2)
+            ui2.scan.start_scan = lambda force=False: None
+            ui2.scan._remember_discovery(found)
+            ui2.scan.dismiss_suggestions()
+            ok("Библиотека пуста" in _texts(ui2.body) and store2.state()["settings"]["first_run_done"],
+               "«Не сейчас» puts the offer away for good")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 def test_toast_lifecycle():

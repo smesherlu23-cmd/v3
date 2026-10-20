@@ -23,6 +23,9 @@ DEFAULT_SETTINGS = {
     "minimize_to_tray": True,
     "close_to_tray": True,
     "tray_hint_shown": False,
+    # Предложения «похоже, вы этим пользуетесь» на пустой библиотеке: после
+    # «Добавить» или «Не сейчас» они больше не появляются.
+    "first_run_done": False,
     "accent": "#f5f5f7",
     "bg_tint": None,
     "contrast": "normal",
@@ -224,7 +227,7 @@ def clean_records(raw, clean) -> list[dict]:
 
 _BOOL_SETTINGS = {
     "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
-    "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
+    "first_run_done", "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
     "triage", "debug_log",
 }
 

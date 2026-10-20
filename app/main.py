@@ -345,6 +345,7 @@ def _start(page: ft.Page):
     threading.Thread(target=_backfill, daemon=True).start()
     _optional("меню трея", refresh_runtime)
     _optional("монитор запущенных программ", launcher.start_monitor)
+    _optional("предложения на пустой библиотеке", ui.scan.offer_first_run)
 
     def _auto_rescan_loop():
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):

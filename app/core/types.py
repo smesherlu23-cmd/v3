@@ -9,6 +9,7 @@ class Settings(TypedDict, total=False):
     minimize_to_tray: bool
     close_to_tray: bool
     tray_hint_shown: bool
+    first_run_done: bool
     accent: str
     bg_tint: int | None
     contrast: str
