@@ -162,6 +162,12 @@ def test_release_notes_and_package_manifests():
     sample = "# x\n\n## 2.0.0\n\n- новое\n\n## 1.0.0\n\n- старое\n"
     ok(notes.notes_for("2.0.0", sample) == "- новое", "only that version's section is taken")
     ok(notes.notes_for("3.0.0", sample) is None, "and a missing one is reported, not invented")
+    body = notes.release_body("- новое", unsigned=True)
+    ok(body.startswith("- новое") and "CenturioSetup.exe" in body
+       and "Выполнить в любом случае" in body,
+       "the release page says which file to take and how to get past the unsigned-build warning")
+    ok("Выполнить в любом случае" not in notes.release_body("- новое", unsigned=False),
+       "and drops that warning once the build is signed")
 
     manifests = load("package_manifests")
     with tempfile.TemporaryDirectory() as d:
@@ -192,6 +198,37 @@ def test_release_notes_and_package_manifests():
         ok(False, "a broken hash must stop the release")
     except SystemExit:
         ok(True, "a broken hash stops the release")
+
+
+def test_installer_respects_a_running_centurio():
+    """Обновление и удаление не трогают запущенный Centurio.
+
+    Он живёт в трее, а сообщение о новой версии ведёт ставить её, пока он
+    работает. AppMutex установщика — мьютекс единственного экземпляра, и
+    release.yml проверяет установщик (install_check.ps1) до публикации.
+    """
+    import re
+
+    from app.infra import updates
+    from app.platform import single_instance
+
+    iss = _read("installer", "centurio.iss")
+    m = re.search(r"^AppMutex=(.+)$", iss, re.M)
+    ok(m and m.group(1).strip() == single_instance.MUTEX_NAME,
+       "the installer's AppMutex is the app's single-instance mutex")
+    check = _read("scripts", "install_check.ps1")
+    ok(f'"{single_instance.MUTEX_NAME}"' in check,
+       "install_check.ps1 waits for the same mutex before trying the upgrade")
+    url = re.search(r'#define MyAppURL "([^"]+)"', iss)
+    ok(url and url.group(1) == f"https://github.com/{updates.REPO}",
+       "«Приложения» link to the repository the update check asks")
+
+    release = _read(".github", "workflows", "release.yml")
+    installer = release.find("ISCC.exe")
+    check_step = release.find("install_check.ps1")
+    publish = release.find("gh release create")
+    ok(-1 < installer < check_step < publish,
+       "release.yml installs, updates and removes the built installer before publishing it")
 
 
 def test_packaging_metadata():

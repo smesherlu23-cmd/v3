@@ -66,13 +66,18 @@ jobs:
           }
           "версия $version" | Write-Host
 
-      # Описание релиза — раздел версии из CHANGELOG.md. Без него тег падает
-      # здесь, до получасовой сборки, а не на публикации.
+      # Описание релиза — раздел версии из CHANGELOG.md и памятка по
+      # установке. Без раздела тег падает здесь, до получасовой сборки, а не
+      # на публикации. Пока подпись не настроена, памятка объясняет SmartScreen.
       - name: Release notes
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
+        env:
+          SIGNING_DLIB: ${{ secrets.SIGNING_DLIB }}
         run: |
-          python scripts/release_notes.py "${{ github.ref_name }}" installer/Output/RELEASE_NOTES.md
+          $flags = @()
+          if (-not $env:SIGNING_DLIB) { $flags += "--unsigned" }
+          python scripts/release_notes.py "${{ github.ref_name }}" installer/Output/RELEASE_NOTES.md @flags
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Lint
@@ -140,6 +145,15 @@ jobs:
           SIGNING_METADATA: ${{ secrets.SIGNING_METADATA }}
         run: ./scripts/sign.ps1 -Path "${{ env.SETUP_EXE }}"
 
+      # Путь человека, скачавшего релиз: установка, запуск установленного,
+      # обновление поверх запущенного и закрытого, удаление. Тот же
+      # установщик, что уедет в релиз, — уже подписанный.
+      - name: Install, update and uninstall
+        shell: pwsh
+        run: |
+          $version = (python -c "from app import __version__; print(__version__)").Trim()
+          ./scripts/install_check.ps1 -Setup "${{ env.SETUP_EXE }}" -Version $version
+
       - name: Checksums
         shell: pwsh
         run: |
@@ -183,7 +197,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" `
+          gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" `
             "${{ env.SETUP_EXE }}" installer/Output/SHA256SUMS.txt `
             installer/Output/package-manifests.zip `
             --title "Centurio ${{ github.ref_name }}" `

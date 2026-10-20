@@ -14,6 +14,8 @@
 #define MyAppPublisher "Centurio"
 #define MyAppExeName "Centurio.exe"
 #define MyAppDescription "Панель запуска приложений, всегда доступная из трея"
+; Тот же репозиторий, что REPO в app/infra/updates.py (сверяет test_packaging).
+#define MyAppURL "https://github.com/smesherlu23-cmd/v3"
 ; flet build windows output directory (relative to this script's parent):
 #define BuildDir "..\build\windows"
 
@@ -26,6 +28,15 @@ AppId={{5DB06D53-80BB-4A28-8A1C-869D1F09FD9F}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
+; Мьютекс единственного экземпляра (MUTEX_NAME в single_instance.py).
+; Centurio живёт в трее, и новую версию обычно ставят, пока он работает:
+; без этой проверки установщик перезаписывал бы файлы запущенной программы,
+; а с ней просит её закрыть (тихая установка — отказывается). Так же и
+; при удалении.
+AppMutex=Local\CenturioSingleInstanceMutex
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
