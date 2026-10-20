@@ -320,6 +320,12 @@ def main() -> int:
                 own = Path(tmp) / "Centurio" / name
                 if own.exists():
                     shutil.copy(own, out_dir / name)
+    own_log = out_dir / "centurio.log"
+    if failed and own_log.exists():
+        # Хвост лога прямо в выводе: в CI это видно без скачивания артефакта.
+        print("--- centurio.log (хвост) ---")
+        print("\n".join(own_log.read_text(encoding="utf-8", errors="replace")
+                        .splitlines()[-30:]))
     print("Проверка интерфейса: " + ("всё прошло" if not failed else f"провалено {failed}"))
     return 1 if failed else 0
 

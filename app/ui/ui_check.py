@@ -23,6 +23,8 @@ def snapshot(ui, launched: list[str]) -> dict:
     toast = ui.toast
     return {
         "screen": view.screen,
+        # Пока окно считается скрытым, перерисовки копятся и в окно не уходят.
+        "visible": ui._visible,
         "query": ui.search_field.value or "",
         "palette_open": view.palette_open,
         "palette": [r["app"]["name"] if r["kind"] == "app" else r["set"]["name"]

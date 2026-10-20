@@ -363,6 +363,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         if visible == self._visible:
             return
         self._visible = visible
+        log.info("окно %s", "показано" if visible else "скрыто — перерисовки ждут показа")
         if visible and self._dirty:
             self.refresh()
 

@@ -316,6 +316,7 @@ def _start(page: ft.Page):
         if kind in ("resized", "moved", "maximize", "unmaximize"):
             save_window()
         elif kind == "minimize":
+            log.info("событие окна: свёрнуто")
             set_visible(False)
         elif kind in ("restore", "focus"):
             set_visible(True)
