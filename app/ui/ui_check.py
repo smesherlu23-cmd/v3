@@ -28,6 +28,8 @@ def snapshot(ui, launched: list[str]) -> dict:
         "palette": [r["app"]["name"] if r["kind"] == "app" else r["set"]["name"]
                     for r in rows],
         "palette_index": view.palette_index,
+        "palette_focus": view.palette_focus,
+        "accent": ui.setting("accent"),
         "typing": view.typing,
         "inspector": view.inspector,
         "launched": list(launched),

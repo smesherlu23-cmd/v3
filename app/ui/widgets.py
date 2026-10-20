@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import flet as ft
 
+from ..core.view_state import SEARCH_FIELD
 from . import colors as C
 from .format import T, cat_icon
 from .images import icon_image
@@ -17,19 +18,40 @@ def safe_update(control) -> None:
 
 
 def track_typing(field: ft.TextField, view, key: str) -> ft.TextField:
-    prior_focus, prior_blur = field.on_focus, field.on_blur
+    prior_focus, prior_blur, prior_submit = field.on_focus, field.on_blur, field.on_submit
+    # Поле, в которое фокус попал при открытой палитре: туда его увёл Tab —
+    # Flutter передаёт фокус следующему полю окна. Набранное там (а это
+    # продолжение запроса) переименовывало программу из панели справа.
+    stray = {"on": False}
 
     def on_focus(e):
+        if view.palette_open and key != SEARCH_FIELD:
+            stray["on"] = True
+            if view.on_stray_focus:
+                view.on_stray_focus()
+            return
+        stray["on"] = False
         view.start_typing(key)
         if prior_focus:
             prior_focus(e)
 
     def on_blur(e):
+        if stray["on"]:
+            stray["on"] = False
+            return
         view.stop_typing(key)
         if prior_blur:
             prior_blur(e)
 
+    def on_submit(e):
+        if stray["on"]:
+            return
+        if prior_submit:
+            prior_submit(e)
+
     field.on_focus, field.on_blur = on_focus, on_blur
+    if prior_submit:
+        field.on_submit = on_submit
     return field
 
 

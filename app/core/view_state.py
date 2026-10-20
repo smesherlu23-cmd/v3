@@ -45,6 +45,8 @@ class ViewState:
         self.typing: str | None = None
         # Зовётся, когда курсор покинул поле, — отложенная перерисовка.
         self.on_typing_done = None
+        # Вызывается, когда фокус увели из открытой палитры в другое поле.
+        self.on_stray_focus = None
 
         self.select_mode = False
         self.selection_anchor: str | None = None

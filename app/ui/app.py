@@ -75,6 +75,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self._palette_keyed_at = 0.0
         self._deferred = None
         self.view.on_typing_done = self._run_deferred_refresh
+        self.view.on_stray_focus = lambda: self._focus(self.search_field)
 
         self.toast = ToastHost(page)
         self.notify = Notifier(self.toast)

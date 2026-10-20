@@ -907,6 +907,61 @@ def test_ui_keyboard():
         ok(hidden == [1], "Esc with nothing left to close hides the window")
 
 
+def test_tab_from_the_palette_does_not_type_into_the_inspector():
+    """Tab в палитре: Flutter уводит фокус в следующее поле окна.
+
+    Им оказывалось имя программы в панели справа, и продолжение запроса
+    («tel» + «zz») переименовывало программу в «zz».
+    """
+    try:
+        import flet as ft
+
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI stray focus test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        app_id = store.add_app({"name": "Figma", "path": "/x/figma.exe",
+                                "category_id": "work"})["id"]
+        store.add_app({"name": "Telegram", "path": "/x/tg.exe", "category_id": "work"})
+        ui, _ = _ui_for(store)
+        focused = []
+        ui._focus = focused.append
+        ui.view.select_one(app_id)
+        ui.refresh()
+        name = _find_control(ui.inspector_container,
+                             lambda n: isinstance(n, ft.TextField) and n.value == "Figma")
+        ok(name is not None, "the inspector shows the name field")
+
+        ui.toggle_search()
+        ui._on_search(types_ns(control=types_ns(value="tel")))
+        focused.clear()
+        ui.keymap.handle_key(_key("Tab"))
+        ok(focused[-1:] == [ui.search_field], "after Tab the cursor is put back into the search")
+
+        focused.clear()
+        name.on_focus(types_ns(control=name))
+        ok(focused[-1:] == [ui.search_field] and ui.view.typing != "app_name",
+           "a field that grabbed focus from the open palette hands it straight back")
+        name.value = "zz"
+        name.on_submit(types_ns(control=name))
+        name.on_blur(types_ns(control=name))
+        ok(store.get_app(app_id)["name"] == "Figma",
+           "and what landed in it by mistake does not rename the program")
+
+        ui._close_palette()
+        ui.refresh()
+        name = _find_control(ui.inspector_container,
+                             lambda n: isinstance(n, ft.TextField) and n.value == "Figma")
+        name.on_focus(types_ns(control=name))
+        ok(ui.view.typing == "app_name", "with the palette closed the field works as before")
+        name.value = "Figma Desktop"
+        name.on_blur(types_ns(control=name))
+        ok(store.get_app(app_id)["name"] == "Figma Desktop", "and renaming still works")
+
+
 def test_ui_keys_belong_to_the_focused_field():
     """Пока курсор в поле ввода, клавиши библиотеки молчат.
 
