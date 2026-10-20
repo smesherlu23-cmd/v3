@@ -655,10 +655,17 @@ def test_ui_reorder_apps_direction():
 def test_ui_click_launches_right_click_inspects():
     """ЛКМ по плитке запускает программу, ПКМ открывает инспектор."""
     try:
+        import flet as ft
+
         from app.ui.app import CenturioUI  # noqa: F401
     except Exception as exc:
         skip("UI click-behaviour test", exc)
         return
+
+    def tile_taps():
+        return [g for g in _walk(ft.Column(ui.content_col.controls))
+                if isinstance(g, ft.GestureDetector) and g.on_secondary_tap_down
+                and (g.on_tap or g.on_tap_down)]
 
     with tempfile.TemporaryDirectory() as d:
         store = Store(os.path.join(d, "data.json"))
@@ -668,7 +675,11 @@ def test_ui_click_launches_right_click_inspects():
         ui.launcher.launch.return_value = {"ok": True, "running": True}
         ui.launcher.running_ids.return_value = []
 
-        ui._tile_tap(ids[0], ids)
+        taps = tile_taps()
+        ok(len(taps) == 2 and all(g.on_tap and not g.on_tap_down for g in taps),
+           "tiles launch when the button is released, not pressed: a press may "
+           "start a drag, and dragging a tile must not launch the app")
+        taps[0].on_tap(types_ns(control=taps[0]))
         ok(ui.launcher.launch.called, "a plain click launches the app directly")
         ok(ui.view.inspector is None, "without opening the inspector")
 
@@ -682,7 +693,10 @@ def test_ui_click_launches_right_click_inspects():
         ui._set_mode("list")
         ui._close_inspector()
         ui.launcher.launch.reset_mock()
-        ui._tile_tap(ids[0], ids)
+        taps = tile_taps()
+        ok(len(taps) == 2 and all(g.on_tap and not g.on_tap_down for g in taps),
+           "list rows also wait for the release")
+        taps[0].on_tap(types_ns(control=taps[0]))
         ok(ui.launcher.launch.called, "list rows launch on a plain click too")
         ui.context_menus.app_menu(store.get_app(ids[1]), _tap())
         ok(ui.view.inspector == ids[1], "and open the inspector on the right click")

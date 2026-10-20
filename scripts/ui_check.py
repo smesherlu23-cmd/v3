@@ -136,6 +136,22 @@ class Session:
         time.sleep(0.1)
         self.xdo("click", "1")
 
+    def drag(self, start: tuple[int, int], end: tuple[int, int], steps: int = 8) -> None:
+        """Как человек: нажал, подержал, повёл и отпустил."""
+        ox, oy = self.geometry.get("X", 0), self.geometry.get("Y", 0)
+        (x0, y0), (x1, y1) = start, end
+        self.xdo("mousemove", str(ox + x0), str(oy + y0))
+        time.sleep(0.1)
+        self.xdo("mousedown", "1")
+        # Дольше 100 мс, после которых Flutter уже сообщает о нажатии.
+        time.sleep(0.3)
+        for i in range(1, steps + 1):
+            self.xdo("mousemove", str(ox + x0 + (x1 - x0) * i // steps),
+                     str(oy + y0 + (y1 - y0) * i // steps))
+            time.sleep(0.05)
+        time.sleep(0.2)
+        self.xdo("mouseup", "1")
+
     def click_search(self) -> None:
         self.click(self.geometry.get("WIDTH", 1280) // 2, 26)
 
@@ -234,9 +250,24 @@ def scenarios(s: Session):
         s.key("Escape")
         s.wait(lambda st: st["screen"] == "grid", "Esc вернул к библиотеке")
 
+    def dragging_a_tile_does_not_launch_it():
+        # Середина первой плитки (по алфавиту это Figma) в окне 1280×800:
+        # над ней ряд «Быстрый запуск» и заголовок категории.
+        tile = (408, 373)
+        before = s.state()["launched"]
+        s.drag(tile, (tile[0], tile[1] + 260))
+        time.sleep(1)
+        if s.state()["launched"] != before:
+            raise CheckFailed("плитку только перетащили, а программа запустилась")
+        # Щелчок по той же точке: убеждаемся, что тянули именно плитку.
+        s.click(*tile)
+        s.wait(lambda st: st["launched"] == [*before, "Figma"],
+               "щелчок по той же плитке запустил Figma")
+
     return [search_takes_text_after_click, enter_launches_first_row,
             second_click_keeps_focus, arrows_pick_the_row_to_launch,
-            ctrl_k_opens_search, tab_keeps_typing_in_the_search, settings_open_and_close]
+            ctrl_k_opens_search, tab_keeps_typing_in_the_search, settings_open_and_close,
+            dragging_a_tile_does_not_launch_it]
 
 
 def screenshot(path: Path) -> None:

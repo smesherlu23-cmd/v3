@@ -404,9 +404,11 @@ class GridView:
         return self._tile_gestures(tile, a, ids_box)
 
     def _tile_gestures(self, tile, a, ids_box):
+        # Запуск по отпусканию, а не по нажатию: нажатие ещё может оказаться
+        # началом перетаскивания плитки, и тогда программа запускаться не должна.
         return ft.GestureDetector(
             tile, mouse_cursor=ft.MouseCursor.CLICK,
-            on_tap_down=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
+            on_tap=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
             on_secondary_tap_down=lambda e, ap=a: self.ui.context_menus.app_menu(ap, e))
 
     def _list(self, apps, key):
@@ -467,7 +469,7 @@ class GridView:
             Wg.hoverable(row, C.PANEL, C.SELECTED_BG)
         built = ft.GestureDetector(
             row,
-            on_tap_down=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
+            on_tap=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
             on_secondary_tap_down=lambda e, ap=a: self.ui.context_menus.app_menu(ap, e))
         self.ui._tile_cache[a["id"]] = (sig, built, ids_box)
         self.ui._tile_cache.move_to_end(a["id"])
