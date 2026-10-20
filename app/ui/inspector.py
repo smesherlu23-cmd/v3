@@ -136,7 +136,7 @@ class InspectorPanel:
 
     def _aliases_field(self, app):
         return Wg.track_typing(ft.TextField(
-            value=", ".join(app.get("aliases") or []), hint_text="не заданы", width=160,
+            value=", ".join(app.get("aliases") or []), hint_text="сокращения", width=160,
             tooltip="Например, «пс, фотошоп» для Adobe Photoshop",
             height=32, text_size=12, color=C.TEXT, bgcolor=C.PANEL, border_color=C.CONTROL,
             focused_border_color=C.LINE_5, border_radius=8, cursor_color=C.TEXT,
