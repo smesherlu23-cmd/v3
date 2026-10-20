@@ -346,6 +346,9 @@ def _start(page: ft.Page):
     _optional("меню трея", refresh_runtime)
     _optional("монитор запущенных программ", launcher.start_monitor)
     _optional("предложения на пустой библиотеке", ui.scan.offer_first_run)
+    if os.environ.get("CENTURIO_UI_CHECK"):
+        from app.ui import ui_check
+        ui_check.start(ui, launcher, os.environ["CENTURIO_UI_CHECK"], bg_stop)
 
     def _background_loop():
         # Автокопия проверяется при запуске и потом каждые 15 минут: сама она

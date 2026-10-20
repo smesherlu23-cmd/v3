@@ -69,3 +69,37 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/sign.ps1 -Path README.md
+
+  # Тесты выше работают без окна и не видят, что делает Flutter: поле поиска,
+  # терявшее фокус после щелчка, они пропускали. Здесь запускается настоящее
+  # окно под виртуальным экраном, а щелчки и нажатия идут через xdotool.
+  ui:
+    name: Интерфейс · настоящее окно (Xvfb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool libgtk-3-0t64 libegl1 libgles2 libgl1-mesa-dri
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Clicks and typing in the real window
+        run: xvfb-run -a -s "-screen 0 1440x900x24" python scripts/ui_check.py
+
+      - name: Keep screenshots and the app log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-check
+          path: ui-check-output/

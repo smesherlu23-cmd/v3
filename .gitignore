@@ -24,3 +24,4 @@ htmlcov/
 centurio-data.json
 # Скачивается сборкой установщика, в репозитории ему не место.
 installer/vc_redist.x64.exe
+ui-check-output/
