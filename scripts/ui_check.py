@@ -59,13 +59,26 @@ class Session:
         self.geometry = {}
 
     def start(self) -> None:
+        # Клиент Flet под Linux на экране без видеокарты изредка (порядка
+        # одного запуска из двадцати) отваливается при первом изменении
+        # размера окна: «Session closed», и программа выходит с кодом 0.
+        # Повтор один, и он виден в выводе; второй провал — настоящий.
+        try:
+            self._start_once()
+        except CheckFailed as exc:
+            print(f"  запуск не удался ({exc}) — повторяю один раз")
+            self.stop()
+            self._start_once()
+
+    def _start_once(self) -> None:
+        self.state_path.unlink(missing_ok=True)
         env = dict(os.environ, APPDATA=str(self.workdir), CENTURIO_NO_DIALOG="1",
                    CENTURIO_UI_CHECK=str(self.state_path))
         env.pop("CENTURIO_WEB", None)
         # Своя группа процессов: клиент Flet — дочерний процесс Python, и при
         # остановке его надо гасить вместе с программой, иначе окна копятся.
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "main.py")], cwd=str(ROOT),
-                                     env=env, stdout=open(self.log_path, "w"),
+                                     env=env, stdout=open(self.log_path, "a"),
                                      stderr=subprocess.STDOUT, start_new_session=True)
         self.wait(lambda s: True, "приложение пишет состояние", START_TIMEOUT)
         # Клиент Flet 1.0 может пересоздать окно после первого показа, и номер,
@@ -75,6 +88,8 @@ class Session:
         last = {}
         while time.monotonic() < deadline:
             time.sleep(1)
+            if self.proc.poll() is not None:
+                raise CheckFailed(f"Centurio завершился (код {self.proc.returncode}) до окна")
             current = self.window_geometry()
             if current and current == last:
                 self.geometry = current
@@ -196,6 +211,9 @@ def scenarios(s: Session):
         s.key("Return")
         s.wait(lambda st: st["launched"][-1:] == [first] and not st["palette_open"],
                f"Enter запустил первую строку ({first}) и закрыл палитру")
+        # Enter сам снимает фокус с поля (так делает Flutter), а Python в тот же
+        # миг его очищает. Человек не щёлкает обратно в поиск через 0,2 с.
+        s.human_pause()
 
     def second_click_keeps_focus():
         s.click_search()
