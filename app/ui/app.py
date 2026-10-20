@@ -651,7 +651,7 @@ class CenturioUI:
                             icon_color=C.MUTED)
             self.after_launch(from_palette)
             return
-        payload = dict(app, run_as_admin=True) if as_admin else app
+        payload = dict(app, run_as_admin=True) if as_admin and not app.get("kind") else app
         try:
             res = self.launcher.launch(payload)
         except Exception as exc:
@@ -753,6 +753,13 @@ class CenturioUI:
             return
         self.store.update_app(app_id, {"name": name})
         self.on_library_changed()
+
+    def set_aliases(self, app_id, text):
+        app = self.store.get_app(app_id)
+        if not app or ", ".join(app.get("aliases") or []) == (text or "").strip():
+            return
+        self.store.update_app(app_id, {"aliases": text or ""})
+        self.refresh()
 
     def pick_app_icon(self, app_id):
         def picked(src):

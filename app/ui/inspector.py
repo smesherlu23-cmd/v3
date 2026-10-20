@@ -86,6 +86,8 @@ class InspectorPanel:
                                     self.ui._accent()),
                            sub=self._quick_sub(app)),
             self._insp_row("В наборах", self._set_chips(app)),
+            self._insp_row("Другие имена", self._aliases_field(app),
+                           sub="Для поиска, через запятую"),
         ]
         props.append(ft.Container(height=1, bgcolor=C.LINE_2))
         props.append(self._insp_tech(app))
@@ -131,6 +133,18 @@ class InspectorPanel:
         if not lines:
             return ft.Container(height=0)
         return ft.Column(lines, spacing=7, tight=True)
+
+    def _aliases_field(self, app):
+        return Wg.track_typing(ft.TextField(
+            value=", ".join(app.get("aliases") or []), hint_text="не заданы", width=160,
+            tooltip="Например, «пс, фотошоп» для Adobe Photoshop",
+            height=32, text_size=12, color=C.TEXT, bgcolor=C.PANEL, border_color=C.CONTROL,
+            focused_border_color=C.LINE_5, border_radius=8, cursor_color=C.TEXT,
+            content_padding=ft.padding.symmetric(0, 10),
+            hint_style=ft.TextStyle(color=C.MUTED_2, size=12),
+            on_blur=lambda e: self.ui.set_aliases(app["id"], e.control.value),
+            on_submit=lambda e: self.ui.set_aliases(app["id"], e.control.value)),
+            self.ui.view, "app_aliases")
 
     def _set_chips(self, app):
         members = [rec for rec in self.ui.sets() if app["id"] in rec.get("apps", [])]

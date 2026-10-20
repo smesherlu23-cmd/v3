@@ -61,6 +61,29 @@ def as_int(value, fallback: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else fallback
 
 
+MAX_ALIASES = 8
+# Столько последних запусков помнится для «частоты»: больше не нужно, чтобы
+# отличить «каждый день» от «раз в месяц».
+MAX_LAUNCHES = 10
+
+
+def clean_aliases(raw) -> list[str]:
+    """Другие имена записи: строка через запятую или список, без пустых и повторов."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for alias in raw:
+        if not isinstance(alias, str):
+            continue
+        alias = " ".join(alias.split())[:40]
+        if alias and alias.lower() not in seen:
+            seen.add(alias.lower())
+            out.append(alias)
+    return out[:MAX_ALIASES]
+
+
 def clean_app(item, index: int) -> dict | None:
     if not isinstance(item, dict):
         return None
@@ -75,9 +98,13 @@ def clean_app(item, index: int) -> dict | None:
     rec["order"] = as_int(rec.get("order"), index)
     rec["hidden"] = bool(rec.get("hidden"))
     rec["kind"] = rec["kind"] if str(rec.get("kind") or "") in KINDS else ""
+    rec["aliases"] = clean_aliases(rec.get("aliases"))
     rec.pop("hotkey", None)
     for key in ("added_at", "last_launched", "launch_count"):
         rec[key] = as_int(rec.get(key))
+    launches = rec.get("launches")
+    rec["launches"] = [t for t in launches if as_int(t) > 0][-MAX_LAUNCHES:] \
+        if isinstance(launches, list) else []
     hue = as_int(rec.get("hue"), -1)
     rec["hue"] = hue if 0 <= hue < 360 else hue_from_string(rec["name"] or rec["path"])
     return rec

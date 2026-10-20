@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from .text import launch_key, match_rank, plu_programs, plu_windows, short_ago
 
 SORT_KEYS = ("alpha", "recent", "added", "manual")
@@ -158,29 +160,76 @@ SET_LIMIT = 3
 CATEGORY_RANK = 9
 
 
+# Вес запуска по давности, как у «частоты» в Firefox: вчерашний запуск
+# весит больше десятка прошлогодних.
+_RECENCY_WEIGHTS = ((4, 100), (14, 70), (31, 50), (90, 30))
+_DAY_MS = 86_400_000
+
+
+def frecency(app: dict, now_ms: int | None = None) -> float:
+    """Насколько часто и недавно запускали: число запусков × средний вес давности."""
+    count = int(app.get("launch_count") or 0)
+    if not count:
+        return 0.0
+    stamps = [t for t in app.get("launches") or [] if isinstance(t, int)] \
+        or [int(app.get("last_launched") or 0)]
+    now = now_ms if now_ms is not None else int(time.time() * 1000)
+
+    def weight(ts):
+        days = (now - ts) / _DAY_MS
+        return next((w for limit, w in _RECENCY_WEIGHTS if days < limit), 10)
+    return count * sum(weight(t) for t in stamps) / len(stamps)
+
+
+def name_match(app: dict, query: str) -> tuple[int | None, str]:
+    """Лучшее совпадение запроса с именем или с одним из «других имён».
+
+    Возвращает ранг и другое имя, если сработало оно. Другое имя, набранное
+    целиком («пс» у Photoshop), — самое сильное совпадение: его человек
+    завёл ровно для этого.
+    """
+    best, via = match_rank(app.get("name") or "", query), ""
+    flat = " ".join(query.lower().split())
+    for alias in app.get("aliases") or []:
+        if " ".join(alias.lower().split()) == flat:
+            return -1, alias
+        rank = match_rank(alias, query)
+        if rank is not None and (best is None or rank < best):
+            best, via = rank, alias
+    return best, via
+
+
+def _tier(rank: int) -> int:
+    # Начало имени и начало любого слова — одинаково хорошие попадания:
+    # между ними решает то, чем человек пользуется чаще.
+    return 0 if rank in (0, 1) else rank
+
+
 def search_rows(apps: list[dict], query: str, running: set,
                 categories: list[dict], recent_limit: int = PALETTE_LIMIT) -> list[dict]:
     names = {c["id"]: c["name"] for c in categories}
     pool = visible(apps)
     out: list[dict] = []
 
-    def add(app, note):
-        out.append({"app": app, "index": len(out), "note": note,
+    def add(app, note, via=""):
+        out.append({"app": app, "index": len(out), "note": note, "via": via,
                     "cat": names.get(app.get("category_id"), "")})
 
     q = (query or "").strip().lower()
     if q:
         scored = []
+        now = int(time.time() * 1000)
         for a in pool:
-            rank = match_rank(a["name"], q)
+            rank, via = name_match(a, q)
             if rank is None and len(q) >= 3 and match_rank(
                     f"{a.get('sub') or ''} {names.get(a.get('category_id'), '')}", q) is not None:
                 rank = CATEGORY_RANK
             if rank is not None:
-                scored.append(((rank, -int(a.get("launch_count") or 0), a["name"].lower()), a))
-        scored.sort(key=lambda pair: pair[0])
-        for _key, app in scored[:recent_limit]:
-            add(app, "открыто" if app["id"] in running else "")
+                scored.append(((_tier(rank), -frecency(a, now), rank, a["name"].lower()),
+                               a, via))
+        scored.sort(key=lambda row: row[0])
+        for _key, app, via in scored[:recent_limit]:
+            add(app, "открыто" if app["id"] in running else "", via)
         return out
 
     for app in sorted([a for a in pool if a["id"] in running], key=lambda a: a["name"].lower()):
@@ -222,7 +271,8 @@ def set_palette_sub(rec: dict, members: list[str]) -> str:
 
 
 def app_palette_sub(row: dict, windows: int = 0) -> str:
-    parts = [row["cat"]] if row["cat"] else []
+    parts = [f"«{row['via']}»"] if row.get("via") else []
+    parts += [row["cat"]] if row["cat"] else []
     if row["note"] == "открыто":
         parts.append(f"открыто, {windows} {plu_windows(windows)}" if windows > 1 else "открыто")
     else:
@@ -241,7 +291,16 @@ PALETTE_ACTIONS = (
 def palette_actions(app: dict | None) -> list[dict]:
     if app is None:
         return []
-    return [dict(a) for a in PALETTE_ACTIONS]
+    kind = app.get("kind")
+    if not kind:
+        return [dict(a) for a in PALETTE_ACTIONS]
+    # У сайта нет папки, а «от администратора» к документу и папке неприменимо.
+    out = [dict(a) for a in PALETTE_ACTIONS
+           if a["key"] == "set" or (a["key"] == "folder" and kind != "web")]
+    for action in out:
+        if action["key"] == "folder":
+            action["label"] = "Показать в папке"
+    return out
 
 
 def suggest_category(item: dict, categories: list[dict]) -> str | None:

@@ -3872,6 +3872,95 @@ def test_search_ranks_without_noise():
     ok(lit("Visual Studio Code", "vsc") == "VSC", "and the first letters of an acronym hit")
 
 
+def test_search_aliases_and_frecency():
+    """«пс» находит Photoshop, а из равных совпадений первым идёт то, чем пользуются."""
+    from app.core import queries
+    from app.core.store import sanitize
+
+    ok(sanitize.clean_aliases("пс, фотошоп, ПС, ,  ") == ["пс", "фотошоп"],
+       "other names are split on commas, trimmed and deduplicated")
+    ok(sanitize.clean_aliases(None) == [] and sanitize.clean_aliases([1, "a"]) == ["a"],
+       "and junk in the file is dropped")
+
+    cats = [{"id": "work", "name": "Работа"}]
+    day = 86_400_000
+    now = int(time.time() * 1000)
+    apps = [
+        {"id": "ps", "name": "Adobe Photoshop 2025", "aliases": ["пс", "фотошоп"],
+         "category_id": "work"},
+        {"id": "remote", "name": "PS Remote Play", "category_id": "work"},
+        {"id": "tg", "name": "Telegram", "category_id": "work"},
+        {"id": "teams", "name": "Microsoft Teams", "category_id": "work",
+         "launch_count": 9, "launches": [now - day] * 9, "last_launched": now - day},
+        {"id": "old", "name": "Old Editor", "category_id": "work", "launch_count": 50,
+         "launches": [now - 200 * day] * 10, "last_launched": now - 200 * day},
+        {"id": "new", "name": "Oxygen Editor", "category_id": "work", "launch_count": 6,
+         "launches": [now - day] * 6, "last_launched": now - day},
+    ]
+
+    def ids(q):
+        return [r["app"]["id"] for r in queries.search_rows(apps, q, set(), cats)]
+
+    rows = queries.search_rows(apps, "пс", set(), cats)
+    ok(rows and rows[0]["app"]["id"] == "ps",
+       f"an other name typed in full beats a name that merely starts so ({ids('пс')})")
+    ok(rows[0]["via"] == "пс" and queries.app_palette_sub(rows[0]).startswith("«пс»"),
+       "and the palette says which other name matched")
+    ok(ids("фото")[:1] == ["ps"], "an other name matches by its start, too")
+    ok(ids("te")[:2] == ["teams", "tg"],
+       "between a name start and a word start, the program in use wins")
+    ok(ids("editor")[:2] == ["new", "old"],
+       "six launches this week outweigh fifty half a year ago")
+    ok(ids("tel")[:1] == ["tg"], "frecency never drags in what the query does not match")
+
+    fresh = [{"id": "a", "name": "Microsoft Teams", "category_id": "work"},
+             {"id": "b", "name": "Telegram", "category_id": "work"}]
+    ok([r["app"]["id"] for r in queries.search_rows(fresh, "te", set(), cats)] == ["b", "a"],
+       "with nothing launched yet, a name start still comes before a word start")
+
+    ok([a["key"] for a in queries.palette_actions({"kind": "web"})] == ["set"],
+       "a site has no folder and no admin mode in the palette")
+    ok([a["label"] for a in queries.palette_actions({"kind": "folder"})][0] == "Показать в папке",
+       "a folder is shown in its parent, not «the program's folder»")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        rec = store.add_app({"name": "Photoshop", "path": "C:/ps.exe", "aliases": "пс"})
+        ok(store.get_app(rec["id"])["aliases"] == ["пс"], "a new record keeps its other names")
+        store.update_app(rec["id"], {"aliases": "пс, фш"})
+        ok(store.get_app(rec["id"])["aliases"] == ["пс", "фш"], "and they can be edited")
+        for _ in range(sanitize.MAX_LAUNCHES + 3):
+            store.mark_launched(rec["id"])
+        app = store.get_app(rec["id"])
+        ok(len(app["launches"]) == sanitize.MAX_LAUNCHES and app["launch_count"] == 13,
+           "only the latest launches are remembered, the count keeps growing")
+
+
+def test_ui_aliases_field():
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI aliases test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        rec = store.add_app({"name": "Adobe Photoshop", "path": "C:/ps.exe",
+                             "category_id": "work"})
+        ui, _ = _ui_for(store)
+        ui.view.inspector = rec["id"]
+        panel = ui.inspector_panel.build_inspector()
+        ok("Другие имена" in _texts(panel), "the inspector offers other names for search")
+        field = _find_control(panel, lambda c: isinstance(c, ft.TextField)
+                              and "фотошоп" in (c.tooltip or ""))
+        ok(field is not None, "as a plain text field")
+        ui.set_aliases(rec["id"], "пс, фш")
+        ok(store.get_app(rec["id"])["aliases"] == ["пс", "фш"], "typing there saves them")
+        ui.view.query = "фш"
+        ok([r["app"]["id"] for r in ui._palette_rows() if r.get("kind") != "set"][:1]
+           == [rec["id"]], "and the palette finds the program by them")
+
+
 def test_search_field_keeps_focus_and_order():
     """Строка поиска не теряет фокус, выделение не уезжает за мышью.
 

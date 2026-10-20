@@ -232,9 +232,11 @@ class Store:
             "hidden": bool(app.get("hidden")),
             "track_exe": app.get("track_exe") or None,
             "kind": app["kind"] if str(app.get("kind") or "") in KINDS else "",
+            "aliases": sanitize.clean_aliases(app.get("aliases")),
             "order": app["order"] if isinstance(app.get("order"), int) else len(self.data["apps"]),
             "last_launched": 0,
             "launch_count": 0,
+            "launches": [],
             "added_at": int(time.time() * 1000),
         }
 
@@ -321,6 +323,8 @@ class Store:
                         "quick", "hidden", "track_exe", "order"):
                 if key in patch:
                     app[key] = patch[key]
+            if "aliases" in patch:
+                app["aliases"] = sanitize.clean_aliases(patch["aliases"])
             if persist == "debounce":
                 self._persist_debounce.schedule()
             elif persist:
@@ -435,8 +439,10 @@ class Store:
             app = self._app_ref(app_id)
             if not app:
                 return None
-            app["last_launched"] = int(time.time() * 1000)
+            now = int(time.time() * 1000)
+            app["last_launched"] = now
             app["launch_count"] = app.get("launch_count", 0) + 1
+            app["launches"] = (list(app.get("launches") or []) + [now])[-sanitize.MAX_LAUNCHES:]
             self._persist_debounce.schedule()
             return _clone(app)
 

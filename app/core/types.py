@@ -53,9 +53,11 @@ class App(TypedDict, total=False):
     hidden: bool
     track_exe: str | None
     kind: str
+    aliases: list[str]
     order: int
     last_launched: int
     launch_count: int
+    launches: list[int]
     added_at: int
 
 
