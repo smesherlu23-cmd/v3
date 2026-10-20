@@ -18,7 +18,8 @@
 
 Запуск считается успешным, если через -Seconds секунд процесс жив,
 корневой main.py успел отметиться в журнале запуска, нигде нет
-трассировки, а в app.zip сборки нет служебных каталогов репозитория.
+трассировки, а в пакете приложения (каталог app сборки или app.zip) нет
+служебных каталогов репозитория.
 
 .PARAMETER BuildDir
 Каталог сборки (build\windows).
@@ -184,34 +185,42 @@ try {
         ($text -split "`n" | Select-Object -Last 80) -join "`n" | Write-Host
     }
 
-    # Состав пакета — по самому app.zip из сборки, а не по тому, куда его
-    # распакует запуск: Flet 1.0 распаковывает в другое место, чем 0.28, и
-    # проверка распакованного каталога молча перестала что-либо находить.
-    # Служебным каталогам репозитория в пакете не место: .git сборки на
-    # раннере может нести токен actions/checkout, а tests и кэши — лишний
-    # вес и лишний повод для эвристик антивирусов. Список исключений —
-    # [tool.flet.app] в pyproject.
-    Section "пакет приложения (app.zip)"
+    # Состав пакета — по самой сборке, а не по тому, куда приложение
+    # распакует запуск: проверка распакованного каталога после перехода на
+    # Flet 1.0 молча перестала что-либо находить. Flet 0.28 упаковывал
+    # приложение в app.zip, Flet 1.0 кладёт его каталогом app рядом с exe
+    # (main и пакет app в .pyc). Служебным каталогам репозитория там не
+    # место: .git сборки на раннере может нести токен actions/checkout, а
+    # tests и кэши — лишний вес и лишний повод для эвристик антивирусов.
+    # Список исключений — [tool.flet.app] в pyproject.
+    Section "пакет приложения"
     $leaked = @()
-    $packages = @(Get-ChildItem -LiteralPath $runDir -Recurse -File -Filter "app.zip" -ErrorAction SilentlyContinue)
-    if ($packages.Count -eq 0) {
-        Write-Host "app.zip в $runDir не найден — проверить состав пакета нечем. Архивы в сборке:"
-        Get-ChildItem -LiteralPath $runDir -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -eq ".zip" -or $_.BaseName -eq "app" } |
-            ForEach-Object { Write-Host "  $($_.FullName)" }
+    $packages = @()
+    $appDir = Join-Path $runDir "app"
+    if (Get-ChildItem -LiteralPath $appDir -File -Filter "main.py*" -ErrorAction SilentlyContinue) {
+        $top = @(Get-ChildItem -LiteralPath $appDir -Force | ForEach-Object { $_.Name } | Sort-Object)
+        $packages += , @($appDir, $top)
     }
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    foreach ($package in $packages) {
-        Write-Host "[$($package.FullName)]"
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
-        try {
-            $top = @($zip.Entries | ForEach-Object { ($_.FullName -split "[/\\]")[0] } | Sort-Object -Unique)
-        } finally {
-            $zip.Dispose()
+    Get-ChildItem -LiteralPath $runDir -Recurse -File -Filter "app.zip" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $zipPath = $_.FullName
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+            try {
+                $top = @($zip.Entries | ForEach-Object { ($_.FullName -split "[/\\]")[0] } | Sort-Object -Unique)
+            } finally {
+                $zip.Dispose()
+            }
+            $packages += , @($zipPath, $top)
         }
-        Write-Host "  $($top -join ', ')"
+    if ($packages.Count -eq 0) {
+        Write-Host "ни каталога app с main, ни app.zip в $runDir — проверить состав пакета нечем"
+    }
+    foreach ($package in $packages) {
+        Write-Host "[$($package[0])]"
+        Write-Host "  $($package[1] -join ', ')"
         $leaked += @(".git", ".github", "tests", "installer", "scripts", ".pytest_cache", ".ruff_cache" |
-            Where-Object { $top -contains $_ })
+            Where-Object { $package[1] -contains $_ })
     }
     if ($leaked.Count) { Write-Host "в пакет попали служебные каталоги: $($leaked -join ', ')" }
     $packaged = $packages.Count -gt 0
