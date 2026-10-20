@@ -101,19 +101,24 @@ def _notify_already_running(single_instance):
 
 def _boot() -> None:
     """Собственно запуск. Всё, что может упасть, живёт здесь под защитой."""
-    import flet as ft
-
-    from app.main import ASSETS_DIR, main
     from app.platform import single_instance
 
     web = os.environ.get("CENTURIO_WEB") == "1"
     port = int(os.environ.get("CENTURIO_PORT", "0") or 0)
+    # Второй экземпляр решается до `import flet` и всего приложения: так Win+N
+    # по значку на панели задач или повторный запуск показывают уже открытое
+    # окно без секунды на загрузку того, что сразу же и выйдет.
     if not web and not single_instance.acquire():
         _notify_already_running(single_instance)
         # Не sys.exit: в собранном exe Flet подменяет его функцией, которая
         # только сообщает код оболочке и возвращает управление, — и второй
         # экземпляр запускался бы дальше как ни в чём не бывало.
         return
+
+    import flet as ft
+
+    from app.main import ASSETS_DIR, main
+
     if web:
         # Только с этой машины: веб-режим без пароля, а интерфейс умеет
         # запускать любые программы.

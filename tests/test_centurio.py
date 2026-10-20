@@ -2288,7 +2288,8 @@ def test_second_instance_stops_even_when_flet_disarms_sys_exit():
         fake = os.path.join(d, "fake")
         os.makedirs(os.path.join(fake, "app", "platform"))
         with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
-            fh.write("def app(**kw):\n    print('FT_APP_STARTED')\n")
+            fh.write("print('FLET_IMPORTED')\n"
+                     "def app(**kw):\n    print('FT_APP_STARTED')\n")
         # Подменяется весь пакет app: проверяется только логика точки входа.
         for rel, body in ((("app", "__init__.py"), ""),
                           (("app", "main.py"), "ASSETS_DIR = '.'\ndef main(page):\n    pass\n"),
@@ -2316,6 +2317,8 @@ def test_second_instance_stops_even_when_flet_disarms_sys_exit():
         ok("уже запущен" in proc.stderr, "второму экземпляру говорят, что Centurio уже запущен")
         ok("FT_APP_STARTED" not in proc.stdout,
            f"и окно он не поднимает, даже когда sys.exit обезврежен ({proc.stdout!r})")
+        ok("FLET_IMPORTED" not in proc.stdout,
+           "второй экземпляр выходит, не загружая Flet: окно по Win+N появляется сразу")
 
 
 def test_autostart_cannot_switch_itself_back_on():
