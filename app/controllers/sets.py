@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING
 
 from ..core import layout as L
 from ..core import queries
-from ..core.text import plu_programs, plu_windows
+from ..core.text import launch_key, plu_programs, plu_windows
 from ..infra import log
 from ..platform import windows as W
+from . import targets
 
 if TYPE_CHECKING:
     from .host import UIHost
@@ -105,22 +106,25 @@ class SetsController:
                 self.notify.error("Не удалось прочитать размеры экрана")
             return
         conf = rec["layout"]
-        targets = {}
+        wanted = {}
         for entry in rec["items"]:
             app = self.store.get_app(entry["app_id"])
             if not app:
                 continue
+            if not W.exe_names_for(app):
+                # Сайт, папка, документ: чьё окно ставить — не узнать.
+                continue
             if entry.get("minimized"):
-                targets[app["id"]] = (app, None)
+                wanted[app["id"]] = (app, None)
                 continue
             rect = L.rect_for(entry, conf["preset"], conf["split"], conf["vsplit"])
             if rect is not None:
-                targets[app["id"]] = (app, L.to_pixels(rect, area))
+                wanted[app["id"]] = (app, L.to_pixels(rect, area))
 
         def place_all(skip=()) -> set:
             done = set()
             snapshot = W.list_windows()
-            for app_id, (app, pixels) in targets.items():
+            for app_id, (app, pixels) in wanted.items():
                 if app_id in skip:
                     continue
                 wins = W.windows_for(W.exe_names_for(app), snapshot)
@@ -133,13 +137,13 @@ class SetsController:
 
         placed = place_all()
         deadline = time.monotonic() + max(0.0, wait)
-        while len(placed) < len(targets) and time.monotonic() < deadline:
+        while len(placed) < len(wanted) and time.monotonic() < deadline:
             time.sleep(ARRANGE_POLL)
             placed |= place_all(skip=placed)
         if wait and placed:
             time.sleep(ARRANGE_SETTLE)
             place_all()
-        missing = [app["name"] for app_id, (app, _px) in targets.items() if app_id not in placed]
+        missing = [app["name"] for app_id, (app, _px) in wanted.items() if app_id not in placed]
 
         if fallback:
             self.notify.show(f"Монитора {rec['monitor'] + 1} нет — разложили на основном",
@@ -245,7 +249,8 @@ class SetsController:
                            action=lambda: self.undo_set(rec["id"]), action_label="Вернуть")
         self.ui.on_library_changed()
 
-    def add_to_set(self, set_id, app_ids):
+    def add_to_set(self, set_id, app_ids, created=()):
+        """`created` — записи, заведённые в библиотеке ради этого набора: «Вернуть» убирает и их."""
         rec = self.store.get_set(set_id)
         if not rec:
             return
@@ -255,10 +260,39 @@ class SetsController:
             self.notify.show(f"Уже в наборе «{rec['name']}»", icon="layers", tone="muted")
             return
         self.store.update_set(set_id, {"apps": merged})
+
+        def undo():
+            self.restore_set_members(set_id, before)
+            if created:
+                self.store.remove_apps(list(created))
+                self.ui.on_library_changed()
         self.notify.show(f"Добавлено в «{rec['name']}»", icon="layers", tone="muted",
-                           action=lambda: self.restore_set_members(set_id, before),
-                           action_label="Вернуть")
+                         action=undo, action_label="Вернуть")
         self.ui.refresh()
+
+    def add_target(self, set_id, raw):
+        """Сайт, папка или файл прямо в набор: в библиотеку он попадает заодно."""
+        item, error = targets.describe(raw, self.ui.icon_cache_dir())
+        if item is None:
+            self.notify.error(error, detail=(raw or "").strip() or None)
+            return
+        known = next((a for a in self.ui.apps() if launch_key(a) == launch_key(item)), None)
+        created = ()
+        if known is None:
+            item["category_id"] = queries.suggest_category(item, self.ui.categories())
+            known = self.store.add_app(item)
+            created = (known["id"],)
+            self.ui.on_library_changed()
+        self.add_to_set(set_id, [known["id"]], created)
+
+    def pick_target(self, set_id, folder: bool = False):
+        def picked(path):
+            if path:
+                self.add_target(set_id, path)
+        if folder:
+            self.ui.ask_for_folder("Папка для набора", picked)
+        else:
+            self.ui.ask_for_file("Программа или документ для набора", picked)
 
     def remove_from_set(self, set_id, app_id):
         rec = self.store.get_set(set_id)

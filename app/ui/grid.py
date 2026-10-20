@@ -4,6 +4,7 @@ import flet as ft
 
 from ..core import queries
 from ..core.hotkeys import free_quick_slot
+from ..core.text import KINDS
 from . import colors as C
 from . import screens
 from . import widgets as Wg
@@ -295,7 +296,7 @@ class GridView:
     def _tile_meta(self, app) -> str:
         if self.ui.view.select_mode:
             return ""
-        return self.ui._accels.get(app["id"]) or ""
+        return self.ui._accels.get(app["id"]) or KINDS.get(app.get("kind") or "", "")
 
     def _tile_marks(self, a, running):
         if self.ui.view.select_mode:

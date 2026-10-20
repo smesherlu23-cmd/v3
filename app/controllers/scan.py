@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core import queries
-from ..core.text import launch_key, plu_apps
+from ..core.text import KINDS, launch_key, plu_apps
 from ..infra import log
 from ..platform import discovery
+from . import targets
 
 if TYPE_CHECKING:
     from .host import UIHost
@@ -89,7 +90,7 @@ class ScanController:
                 "icon": item.get("icon"),
                 "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
                 "track_exe": item.get("track_exe"), "poster": item.get("poster"),
-                "category_id": category_id}
+                "kind": item.get("kind") or "", "category_id": category_id}
 
     def add_suggestions(self):
         chosen = [s["item"] for s in self.suggestions() if s["on"]]
@@ -213,31 +214,29 @@ class ScanController:
         self.ui.view.manual_path = text or ""
 
     def add_manual_path(self, text=None):
-        raw = (text if text is not None else self.ui.view.manual_path or "").strip().strip('"')
-        if not raw:
-            self.notify.error("Вставьте путь к программе")
+        raw = text if text is not None else self.ui.view.manual_path or ""
+        item, error = targets.describe(raw, self.ui.icon_cache_dir())
+        if item is None:
+            self.notify.error(error, detail=raw.strip() or None)
             return
-        if not os.path.isfile(raw):
-            self.notify.error("Файл не найден", detail=raw)
-            return
-        name = Path(raw).stem.replace("-", " ").replace("_", " ").strip()
-        item = {"name": (name[:1].upper() + name[1:]) if name else "Программа",
-                "path": raw, "source": "manual",
-                "icon": discovery.extract_icon(raw, self.ui.icon_cache_dir())}
-        steam = self._steam_redirect(raw)
+        steam = None if item.get("kind") else self._steam_redirect(item["path"])
         if steam:
             item.update(steam)
         found = list(self._manual_found)
         if any(launch_key(f) == launch_key(item) for f in found):
-            self.notify.show("Этот путь уже в списке", icon="check_circle", tone="muted")
+            self.notify.show("Это уже в списке", icon="check_circle", tone="muted")
             return
         found.append(item)
         self._manual_found = found
         self.ui.view.manual_path = ""
         self.ui.view.add_sel.add(launch_key(item))
+        kind = KINDS.get(item.get("kind"))
         if steam:
             self.notify.show(f"{item['name']} — игра Steam, запустится через клиент",
                                icon="link", tone="muted")
+        elif kind:
+            self.notify.show(f"{kind.capitalize()} «{item['name']}» в списке",
+                             icon="link", tone="muted")
         else:
             self.notify.show(f"{item['name']} добавлен в список", icon="link", tone="muted")
         self.ui.refresh()
@@ -305,7 +304,11 @@ class ScanController:
         self.ui.on_library_changed()
 
     def pick_file(self):
-        self.ui.ask_for_file("Выберите программу", self.file_picked)
+        self.ui.ask_for_file("Выберите программу или документ", self.file_picked)
+
+    def pick_folder(self):
+        self.ui.ask_for_folder("Выберите папку",
+                               lambda path: path and self.add_manual_path(path))
 
     def file_picked(self, path):
         if not path:

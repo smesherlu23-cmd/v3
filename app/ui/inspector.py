@@ -59,20 +59,24 @@ class InspectorPanel:
                                 alignment=ft.alignment.center, tooltip=tooltip,
                                 on_click=lambda e: handler())
 
-        actions = ft.Container(
-            ft.Row([
-                Wg.primary_btn("Переключиться" if running else "Запустить",
-                              lambda: self.ui._launch(app["id"]), self.ui._accent(),
-                              ft.Icons.SYNC_ALT if running else ft.Icons.PLAY_ARROW,
-                              height=36, expand=True),
-                square(ft.Icons.STAR if app.get("favorite") else ft.Icons.STAR_BORDER,
-                       "В избранное", lambda: self.ui._toggle_fav(app["id"]),
-                       C.STAR if app.get("favorite") else C.MUTED),
-                square(ft.Icons.FOLDER_OPEN, "Показать в папке",
-                       lambda: self.ui._show_in_folder(app["id"])),
-                square(ft.Icons.MORE_HORIZ, "Ещё способы запуска",
-                       lambda: self.ui.context_menus.launch_more_menu(app, None)),
-            ], spacing=8), padding=ft.padding.only(18, 0, 18, 0))
+        kind = app.get("kind")
+        buttons = [
+            Wg.primary_btn("Переключиться" if running else ("Открыть" if kind else "Запустить"),
+                          lambda: self.ui._launch(app["id"]), self.ui._accent(),
+                          ft.Icons.SYNC_ALT if running
+                          else (ft.Icons.OPEN_IN_NEW if kind else ft.Icons.PLAY_ARROW),
+                          height=36, expand=True),
+            square(ft.Icons.STAR if app.get("favorite") else ft.Icons.STAR_BORDER,
+                   "В избранное", lambda: self.ui._toggle_fav(app["id"]),
+                   C.STAR if app.get("favorite") else C.MUTED),
+        ]
+        if kind != "web":
+            buttons.append(square(ft.Icons.FOLDER_OPEN, "Показать в папке",
+                                  lambda: self.ui._show_in_folder(app["id"])))
+        if not kind:
+            buttons.append(square(ft.Icons.MORE_HORIZ, "Ещё способы запуска",
+                                  lambda: self.ui.context_menus.launch_more_menu(app, None)))
+        actions = ft.Container(ft.Row(buttons, spacing=8), padding=ft.padding.only(18, 0, 18, 0))
 
         props = [
             self._insp_row("Категория", self._cat_selector(app, cat)),
@@ -98,7 +102,8 @@ class InspectorPanel:
 
         return ft.Container(
             ft.Column([header, actions,
-                       ft.Column([placement, self._insp_advanced(app),
+                       ft.Column([placement,
+                                  ft.Container() if kind else self._insp_advanced(app),
                                   ft.Container(height=18)],
                                  spacing=0, expand=True, scroll=ft.ScrollMode.AUTO),
                        footer], spacing=0, expand=True),

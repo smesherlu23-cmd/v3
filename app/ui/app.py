@@ -396,10 +396,11 @@ class CenturioUI:
 
     def icon_slot(self, app, size: int, radius: int, glyph: int | None = None,
                   border=None, glyph_color=None, bgcolor=None):
-        cat = self.cat_of(app) if app.get("category_id") else None
+        kind = _KIND_GLYPHS.get(app.get("kind") or "")
+        cat = self.cat_of(app) if app.get("category_id") and not kind else None
         return Wg.icon_slot(app, size, radius, glyph=glyph, border=border,
                             glyph_color=glyph_color, bgcolor=bgcolor, cat=cat,
-                            source_glyph=_source_glyph(app.get("source")))
+                            source_glyph=kind or _source_glyph(app.get("source")))
 
     def is_all_view(self):
         return self.view.is_all_view()
@@ -838,20 +839,22 @@ class CenturioUI:
         picker.pick_files(dialog_title=title, allow_multiple=False,
                           allowed_extensions=extensions)
 
-    def _pick_working_dir(self, app_id):
+    def ask_for_folder(self, title, on_path):
         picker = getattr(self, "_dir_picker", None)
         if picker is None:
             picker = ft.FilePicker()
             self._dir_picker = picker
             self.page.overlay.append(picker)
             self.page.update()
+        picker.on_result = lambda e: on_path(e.path or None)
+        picker.get_directory_path(dialog_title=title)
 
-        def on_result(e):
-            if e.path:
-                self.store.update_app(app_id, {"working_dir": e.path})
+    def _pick_working_dir(self, app_id):
+        def picked(path):
+            if path:
+                self.store.update_app(app_id, {"working_dir": path})
                 self.refresh()
-        picker.on_result = on_result
-        picker.get_directory_path(dialog_title="Выберите рабочую папку")
+        self.ask_for_folder("Выберите рабочую папку", picked)
 
     def _move_apps_to_category(self, app_ids, cat_id):
         cat = next((c for c in self.categories() if c["id"] == cat_id), None)
@@ -1232,6 +1235,9 @@ class CenturioUI:
         self.toast.show(f"Кэш очищен, файлов удалено: {removed}")
         self.scan.backfill_icons_async()
         self.refresh()
+
+_KIND_GLYPHS = {"web": "language", "folder": "folder", "file": "description"}
+
 
 def _source_glyph(source: str) -> str:
     return queries.SOURCES.get(source or "", {}).get("icon", "apps")

@@ -64,7 +64,7 @@ def _add_path_field(ui, state):
     field = state.get("path_field")
     if field is None:
         field = _field(ui.view, "add_path", ui.view.manual_path,
-                       r"Или вставьте путь: C:\Program Files\…\app.exe",
+                       r"Или вставьте путь к программе, папке, файлу — или адрес сайта",
                        on_change=lambda e: ui.scan.set_manual_path(e.control.value),
                        on_submit=lambda e: ui.scan.add_manual_path(e.control.value),
                        mono=True, size=11.5)
@@ -138,8 +138,9 @@ def _add_search(ui, state):
             path_row, padding=ft.padding.only(24, 0, 24, 12))
     path_row.controls = [
         _add_path_container(ui, state),
-        Wg.outline_btn("Обзор", ui.scan.pick_file, ft.Icons.FOLDER_OPEN),
-        Wg.outline_btn("Добавить путь", ui.scan.add_manual_path),
+        Wg.outline_btn("Файл", ui.scan.pick_file, ft.Icons.INSERT_DRIVE_FILE_OUTLINED),
+        Wg.outline_btn("Папка", ui.scan.pick_folder, ft.Icons.FOLDER_OPEN),
+        Wg.outline_btn("В список", ui.scan.add_manual_path),
     ]
 
     holder.controls = [state["search_row_holder"], state["path_row_holder"]]
@@ -198,8 +199,8 @@ def _add_empty(ui):
             T("Новых программ не нашлось" if only_new else "Ничего не нашлось",
               size=16, weight=ft.FontWeight.BOLD, color=C.TEXT),
             T("Всё установленное уже в библиотеке." if only_new
-              else "Автоматический поиск ничего не дал — программу можно указать файлом "
-                   "или вставить путь выше.", size=12.5, color=C.MUTED),
+              else "Автоматический поиск ничего не дал — выберите файл или папку "
+                   "либо вставьте выше путь или адрес сайта.", size=12.5, color=C.MUTED),
             ft.Container(ft.Row([
                 Wg.outline_btn("Показать все найденные" if only_new else "Повторить поиск",
                                ui.scan.toggle_only_new if only_new

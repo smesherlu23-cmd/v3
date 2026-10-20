@@ -5099,6 +5099,114 @@ def test_ui_reorder_apps_direction():
            "and dropping on the previous neighbour moves it back, in one step either way")
 
 
+def test_web_address_parsing():
+    from app.core.text import web_address, web_name
+
+    ok(web_address("youtube.com") == "https://youtube.com", "a bare domain becomes https")
+    ok(web_address("https://github.com/x") == "https://github.com/x", "a full URL stays as is")
+    ok(web_address("www.google.ru/search?q=1") == "https://www.google.ru/search?q=1",
+       "with a path and a query too")
+    ok(web_address("кц.рф") == "https://кц.рф", "and a Cyrillic domain")
+    for junk in ("notes.txt", "app.exe", "C:\\x\\y", "hello", "", ".git", "localhost:3000"):
+        ok(web_address(junk) is None, f"{junk!r} is not taken for a website")
+    ok(web_name("https://www.YouTube.com/watch?v=1") == "youtube.com",
+       "a site is named after its host, without www")
+    ok(web_name("http://localhost:8080/a") == "localhost", "and without the port")
+
+
+def test_sites_folders_documents():
+    """В библиотеке и в наборах живут не только программы."""
+    try:
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("sites, folders and documents test", exc)
+        return
+    from app.controllers import sets as sets_mod
+    from app.controllers import targets
+    from app.platform import windows as W
+
+    with tempfile.TemporaryDirectory() as d:
+        folder = os.path.join(d, "Проекты")
+        os.makedirs(folder)
+        doc = os.path.join(d, "Отчёт.docx")
+        exe = os.path.join(d, "tool.exe")
+        for path in (doc, exe):
+            with open(path, "w") as fh:
+                fh.write("x")
+
+        item, _ = targets.describe(folder, None)
+        ok(item["kind"] == "folder" and item["name"] == "Проекты", "a folder is a folder")
+        item, _ = targets.describe(f'"{doc}"', None)
+        ok(item["kind"] == "file" and item["name"] == "Отчёт", "a document is a document")
+        item, _ = targets.describe(exe, None)
+        ok(not item.get("kind") and item["name"] == "Tool", "a program stays a program")
+        item, _ = targets.describe("youtube.com", None)
+        ok(item["kind"] == "web" and item["path"] == "https://youtube.com", "a site is a site")
+        item, error = targets.describe(os.path.join(d, "missing.exe"), None)
+        ok(item is None and error, "a path that isn't there is refused, with a reason")
+
+        store = Store(os.path.join(d, "data.json"))
+        prog = store.add_app({"name": "Editor", "path": exe, "category_id": "work"})
+        ui, _ = _ui_for(store)
+
+        ui.open_add()
+        for raw in (folder, doc, "github.com"):
+            ui.scan.add_manual_path(raw)
+        manual = [r for g in ui.scan.found_groups() if g["source"] == "manual" for r in g["rows"]]
+        ok(sorted(r["item"]["kind"] for r in manual) == ["file", "folder", "web"],
+           "the Add screen takes a folder, a document and a site")
+        ui.scan.commit_add()
+        kinds = {a["name"]: a["kind"] for a in store.state()["apps"]}
+        ok(kinds == {"Editor": "", "Проекты": "folder", "Отчёт": "file", "github.com": "web"},
+           f"and they land in the library knowing what they are ({kinds})")
+
+        site = next(a for a in store.state()["apps"] if a["kind"] == "web")
+        ui.view.inspector = site["id"]
+        shown = _texts(ui.inspector_panel.build_inspector())
+        ok("Открыть" in shown and "ПАРАМЕТРЫ ЗАПУСКА" not in shown,
+           "a site is opened, and has no launch parameters to tune")
+
+        report = next(a for a in store.state()["apps"] if a["kind"] == "file")
+        ui.set_ops.make_set([prog["id"], report["id"]])
+        set_id = store.state()["sets"][0]["id"]
+        ok(store.get_set(set_id)["items"][1]["slot"] is None,
+           "a document in a new set gets no window place either")
+        before = len(store.state()["apps"])
+        ui.set_ops.add_target(set_id, "https://mail.example.com/inbox")
+        rec = store.get_set(set_id)
+        mail = next(a for a in store.state()["apps"] if a["path"].startswith("https://mail"))
+        ok(len(store.state()["apps"]) == before + 1 and mail["id"] in rec["apps"],
+           "a site typed into a set joins the set and the library")
+        entry = next(i for i in rec["items"] if i["app_id"] == mail["id"])
+        ok(entry["slot"] is None, "and takes no place in the window layout")
+        ok("сайт · окно не расставляется" in _texts(ft.Column(ui.content_col.controls)),
+           "which the set screen says plainly")
+        ui.set_ops.add_target(set_id, folder)
+        ok(len(store.state()["apps"]) == before + 1,
+           "a folder already in the library is reused, not duplicated")
+        ui.set_ops.add_target(set_id, "news.example.org")
+        ui.toast.fire_action()
+        ok(len(store.state()["apps"]) == before + 1
+           and not any("news" in a["path"] for a in store.state()["apps"]),
+           "«Вернуть» takes a site added through a set out of the library as well")
+
+        only_web = store.add_set("Сайты", [mail["id"], site["id"]])
+        saved = (W.available, W.work_area, W.list_windows)
+        W.available = lambda: True
+        W.work_area = lambda index=0: (0, 0, 1000, 800)
+        W.list_windows = lambda: []
+        old_wait = sets_mod.ARRANGE_WAIT
+        try:
+            started = time.monotonic()
+            ui.set_ops.arrange_set(only_web["id"], quiet=True, wait=5)
+            ok(time.monotonic() - started < 2,
+               "arranging does not wait for windows a site or folder will never have")
+            ok("Не дождался" not in (ui.toast.text.value or ""), "nor complains about them")
+        finally:
+            W.available, W.work_area, W.list_windows = saved
+            sets_mod.ARRANGE_WAIT = old_wait
+
+
 def test_ui_sets():
     try:
         from app.ui.app import CenturioUI  # noqa: F401

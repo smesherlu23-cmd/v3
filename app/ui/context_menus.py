@@ -149,18 +149,22 @@ class ContextMenus:
             menus.item(ft.Icons.ARROW_DOWNWARD, "Запускать позже",
                        lambda: self.ui.set_ops.move_set_item(rec["id"], entry["app_id"], 1)),
             menus.separator(),
-            menus.item(ft.Icons.CROP_FREE, "Место в раскладке",
-                       lambda: self.ui.menu.toggle_submenu("slot", places, y), submenu=True),
-            menus.item(ft.Icons.LAYERS_CLEAR if entry.get("minimized")
-                       else ft.Icons.MINIMIZE,
-                       "Открывать обычно" if entry.get("minimized") else "Запускать свёрнутым",
-                       lambda: self.ui.set_ops.set_item_minimized(rec["id"], entry["app_id"],
-                                                        not entry.get("minimized"))),
-            menus.separator(),
-            menus.item(ft.Icons.DELETE_OUTLINE, "Убрать из набора",
-                       lambda: self.ui.set_ops.remove_from_set(rec["id"], entry["app_id"]),
-                       danger=True),
         ]
+        if not (app or {}).get("kind"):
+            rows += [
+                menus.item(ft.Icons.CROP_FREE, "Место в раскладке",
+                           lambda: self.ui.menu.toggle_submenu("slot", places, y), submenu=True),
+                menus.item(ft.Icons.LAYERS_CLEAR if entry.get("minimized")
+                           else ft.Icons.MINIMIZE,
+                           "Открывать обычно" if entry.get("minimized")
+                           else "Запускать свёрнутым",
+                           lambda: self.ui.set_ops.set_item_minimized(
+                               rec["id"], entry["app_id"], not entry.get("minimized"))),
+                menus.separator(),
+            ]
+        rows.append(menus.item(ft.Icons.DELETE_OUTLINE, "Убрать из набора",
+                               lambda: self.ui.set_ops.remove_from_set(rec["id"], entry["app_id"]),
+                               danger=True))
         self.ui.menu.show(x, y, rows,
                        header=menus.text_header(app["name"] if app else "Программа"))
 

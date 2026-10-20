@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from ...infra import log, paths
 from ...infra.debounce import Debounce
 from .. import layout as L
-from ..text import launch_key
+from ..text import KINDS, launch_key
 from . import sanitize
 
 if TYPE_CHECKING:
@@ -231,6 +231,7 @@ class Store:
             "quick": bool(app.get("quick")),
             "hidden": bool(app.get("hidden")),
             "track_exe": app.get("track_exe") or None,
+            "kind": app["kind"] if str(app.get("kind") or "") in KINDS else "",
             "order": app["order"] if isinstance(app.get("order"), int) else len(self.data["apps"]),
             "last_launched": 0,
             "launch_count": 0,
@@ -524,9 +525,19 @@ class Store:
                               "items": [{"app_id": aid} for aid in members],
                               "quick": bool(quick), "order": len(self.data["sets"])},
                              len(self.data["sets"]))
+            unplaced = self._unplaced()
+            if unplaced & set(members):
+                for entry in rec["items"]:
+                    entry["slot"] = None
+                sanitize.refill_slots(rec, unplaced)
             self.data["sets"].append(rec)
             self._persist()
             return _clone(rec)
+
+    def _unplaced(self) -> set[str]:
+        # Окно сайта — окно браузера, а папки — Проводника: по ним не понять,
+        # какое из открытых ставить на место, поэтому место им не раздаётся.
+        return {a["id"] for a in self.data["apps"] if a.get("kind")}
 
     def get_set(self, set_id: str) -> AppSet | None:
         with self._lock:
@@ -539,6 +550,7 @@ class Store:
             if not rec:
                 return None
             known = {a["id"] for a in self.data["apps"]}
+            unplaced = self._unplaced()
             if "name" in patch:
                 rec["name"] = (patch["name"] or "").strip() or rec["name"]
             if "quick" in patch:
@@ -575,11 +587,13 @@ class Store:
                 for aid in wanted:
                     if aid in by_id:
                         continue
-                    rec["items"].append({"app_id": aid, "slot": sanitize.free_slot(rec),
+                    rec["items"].append({"app_id": aid,
+                                         "slot": None if aid in unplaced
+                                         else sanitize.free_slot(rec),
                                          "minimized": False, "rect": None})
             sanitize.fit_slots(sanitize.mirror_items(rec))
             if preset_changed:
-                sanitize.refill_slots(rec)
+                sanitize.refill_slots(rec, unplaced)
             self._persist()
             return _clone(rec)
 

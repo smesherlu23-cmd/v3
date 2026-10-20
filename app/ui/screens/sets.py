@@ -3,11 +3,11 @@ from __future__ import annotations
 import flet as ft
 
 from ...core import layout as L
-from ...core.text import plu_programs
+from ...core.text import KINDS, plu_programs
 from .. import colors as C
 from .. import widgets as Wg
 from ..format import T
-from .common import _caps
+from .common import _caps, _field
 
 
 def build_set_screen(ui, rec):
@@ -200,6 +200,7 @@ def _order_column(ui, rec):
         height=44, border_radius=11, border=ft.border.all(1, C.LINE_4),
         alignment=ft.alignment.center,
         on_click=lambda e: ui.context_menus.add_to_set_picker(rec["id"], e)))
+    rows.append(_target_row(ui, rec))
 
     settings = [
         ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.only(top=4)),
@@ -218,6 +219,26 @@ def _order_column(ui, rec):
         width=C.SET_SIDE_W)
 
 
+def _target_row(ui, rec):
+    field = _field(ui.view, "set_target", "", "Сайт, папка или файл",
+                   on_submit=lambda e: ui.set_ops.add_target(rec["id"], e.control.value),
+                   size=12.5)
+
+    def pick(icon, tip, folder):
+        return ft.Container(ft.Icon(icon, size=15, color=C.MUTED_2), width=26, height=26,
+                            alignment=ft.alignment.center, tooltip=tip,
+                            on_click=lambda e: ui.set_ops.pick_target(rec["id"], folder))
+
+    return ft.Container(
+        ft.Row([ft.Icon(ft.Icons.LINK, size=15, color=C.MUTED_2), field,
+                pick(ft.Icons.FOLDER_OPEN, "Выбрать папку", True),
+                pick(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, "Выбрать файл", False)],
+               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        height=40, padding=ft.padding.only(12, 0, 6, 0), border_radius=11,
+        border=ft.border.all(1, C.LINE_4), bgcolor=C.SET_BG,
+        tooltip="Вставьте адрес сайта или путь и нажмите Enter")
+
+
 def _set_option(title, control):
     left = [T(title, size=12.5, color=C.TEXT_2)]
     return ft.Row([ft.Column(left, spacing=1, tight=True, expand=True), control],
@@ -229,8 +250,10 @@ def _order_row(ui, rec, entry):
     if app is None:
         return ft.Container(height=0)
     conf = rec["layout"]
+    kind = KINDS.get(app.get("kind") or "")
     muted = bool(entry.get("minimized")) or entry.get("slot") is None
-    place = ("свёрнутым" if entry.get("minimized")
+    place = (f"{kind} · окно не расставляется" if kind
+             else "свёрнутым" if entry.get("minimized")
              else L.slot_label(conf["preset"], entry.get("slot"), conf["split"])
              or "без места")
     row = ft.Container(

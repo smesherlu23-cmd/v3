@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 
 from .. import layout as L
+from ..text import KINDS
 
 DEFAULT_CATEGORIES = [
     {"id": "work", "name": "Новая", "icon": "folder", "color": "#ffffff", "order": 0},
@@ -73,6 +74,7 @@ def clean_app(item, index: int) -> dict | None:
     rec["path"] = rec["path"] if isinstance(rec.get("path"), str) else ""
     rec["order"] = as_int(rec.get("order"), index)
     rec["hidden"] = bool(rec.get("hidden"))
+    rec["kind"] = rec["kind"] if str(rec.get("kind") or "") in KINDS else ""
     rec.pop("hotkey", None)
     for key in ("added_at", "last_launched", "launch_count"):
         rec[key] = as_int(rec.get(key))
@@ -183,9 +185,11 @@ def free_slot(rec: dict):
     return next((i for i in range(count) if i not in taken), None)
 
 
-def refill_slots(rec: dict) -> dict:
+def refill_slots(rec: dict, unplaced=frozenset()) -> dict:
+    """Раздать свободные места; `unplaced` — записи без своего окна (сайты, папки)."""
     for entry in rec["items"]:
-        if entry.get("minimized") or entry.get("rect") or entry.get("slot") is not None:
+        if entry.get("minimized") or entry.get("rect") or entry.get("slot") is not None \
+                or entry["app_id"] in unplaced:
             continue
         entry["slot"] = free_slot(rec)
         if entry["slot"] is None:

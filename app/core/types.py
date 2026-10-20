@@ -52,6 +52,7 @@ class App(TypedDict, total=False):
     quick: bool
     hidden: bool
     track_exe: str | None
+    kind: str
     order: int
     last_launched: int
     launch_count: int

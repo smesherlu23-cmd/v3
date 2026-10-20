@@ -28,6 +28,44 @@ def launch_key(item) -> str:
     return f"{path}\x00{args}" if args else path
 
 
+# Что лежит в библиотеке кроме программ. У программы вида нет.
+KINDS = {"web": "сайт", "folder": "папка", "file": "документ"}
+
+_FILE_EXTS = frozenset((
+    "exe", "bat", "cmd", "lnk", "url", "msi", "dll", "sys", "ini", "log", "txt", "md",
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "rtf", "pdf", "csv", "json",
+    "xml", "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "mp3", "wav", "flac",
+    "mp4", "mkv", "avi", "mov", "zip", "rar", "7z", "iso", "psd", "ps1", "js", "html",
+))
+_DOMAIN = re.compile(r"^(?:[\w-]+\.)+([a-zа-яё]{2,}|xn--[a-z0-9-]+)(?::\d+)?(?:[/?#]\S*)?$",
+                     re.IGNORECASE)
+
+
+def web_address(raw: str) -> str | None:
+    """Адрес сайта из того, что человек вставил: `https://…` или просто `youtube.com`.
+
+    Имя файла вида `notes.txt` за сайт не принимается, даже если такого
+    файла нет: опечатка в пути не должна превращаться в поход в интернет.
+    """
+    text = (raw or "").strip().strip('"')
+    if re.match(r"^https?://[^\s/]+\S*$", text, re.IGNORECASE):
+        return text
+    if not text or "\\" in text or text.startswith((".", "/")):
+        return None
+    m = _DOMAIN.match(text)
+    if not m or m.group(1).lower() in _FILE_EXTS:
+        return None
+    return "https://" + text
+
+
+def web_name(url: str) -> str:
+    host = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url or "", flags=re.IGNORECASE)
+    host = re.split(r"[/?#]", host, maxsplit=1)[0].split("@")[-1]
+    host = host.rsplit(":", 1)[0] if re.search(r":\d+$", host) else host
+    host = host.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
 def _plural(n, one, few, many):
     m10, m100 = n % 10, n % 100
     if m10 == 1 and m100 != 11:
