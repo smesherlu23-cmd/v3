@@ -17,8 +17,8 @@
   - код выхода и ошибки из журнала приложений Windows.
 
 Запуск считается успешным, если через -Seconds секунд процесс жив,
-корневой main.py успел отметиться в журнале запуска и нигде нет
-трассировки.
+корневой main.py успел отметиться в журнале запуска, нигде нет
+трассировки, а в app.zip сборки нет служебных каталогов репозитория.
 
 .PARAMETER BuildDir
 Каталог сборки (build\windows).
@@ -184,25 +184,37 @@ try {
         ($text -split "`n" | Select-Object -Last 80) -join "`n" | Write-Host
     }
 
-    # Сюда оболочка распаковывает app.zip. Служебным каталогам репозитория
-    # в нём не место: .git сборки на раннере несёт в .git/config токен
-    # actions/checkout, а tests и кэши — просто лишний вес и лишний повод для
-    # эвристик антивирусов. Список исключений — [tool.flet.app] в pyproject.
-    Section "распакованное приложение Flet"
+    # Состав пакета — по самому app.zip из сборки, а не по тому, куда его
+    # распакует запуск: Flet 1.0 распаковывает в другое место, чем 0.28, и
+    # проверка распакованного каталога молча перестала что-либо находить.
+    # Служебным каталогам репозитория в пакете не место: .git сборки на
+    # раннере может нести токен actions/checkout, а tests и кэши — лишний
+    # вес и лишний повод для эвристик антивирусов. Список исключений —
+    # [tool.flet.app] в pyproject.
+    Section "пакет приложения (app.zip)"
     $leaked = @()
-    $flet = Get-ChildItem -LiteralPath $dataDir -Recurse -Directory -Filter "flet" -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($flet) {
-        $app = Join-Path $flet.FullName "app"
-        Write-Host $app
-        Get-ChildItem -LiteralPath $app -Force -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "  $($_.Name)" }
-        $leaked = @(".git", ".github", "tests", "installer", "scripts", ".pytest_cache", ".ruff_cache" |
-            Where-Object { Test-Path -LiteralPath (Join-Path $app $_) })
-        if ($leaked.Count) { Write-Host "в пакет попали служебные каталоги: $($leaked -join ', ')" }
-    } else {
-        Write-Host "(не распаковано)"
+    $packages = @(Get-ChildItem -LiteralPath $runDir -Recurse -File -Filter "app.zip" -ErrorAction SilentlyContinue)
+    if ($packages.Count -eq 0) {
+        Write-Host "app.zip в $runDir не найден — проверить состав пакета нечем. Архивы в сборке:"
+        Get-ChildItem -LiteralPath $runDir -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -eq ".zip" -or $_.BaseName -eq "app" } |
+            ForEach-Object { Write-Host "  $($_.FullName)" }
     }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    foreach ($package in $packages) {
+        Write-Host "[$($package.FullName)]"
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($package.FullName)
+        try {
+            $top = @($zip.Entries | ForEach-Object { ($_.FullName -split "[/\\]")[0] } | Sort-Object -Unique)
+        } finally {
+            $zip.Dispose()
+        }
+        Write-Host "  $($top -join ', ')"
+        $leaked += @(".git", ".github", "tests", "installer", "scripts", ".pytest_cache", ".ruff_cache" |
+            Where-Object { $top -contains $_ })
+    }
+    if ($leaked.Count) { Write-Host "в пакет попали служебные каталоги: $($leaked -join ', ')" }
+    $packaged = $packages.Count -gt 0
 
     Section "журнал приложений Windows"
     $events = @(Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $startedAt } `
@@ -217,8 +229,9 @@ try {
     Write-Host "процесс жив:              $alive"
     Write-Host "main.py отметился:        $booted"
     Write-Host "трассировка/ошибка:       $failure"
+    Write-Host "пакет найден:             $packaged"
     Write-Host "лишнее в пакете:          $($leaked.Count -gt 0)"
-    if ($alive -and $booted -and -not $failure -and $leaked.Count -eq 0) {
+    if ($alive -and $booted -and -not $failure -and $packaged -and $leaked.Count -eq 0) {
         Write-Host "OK: Centurio запускается"
         $script:verdict = 0
     } else {
