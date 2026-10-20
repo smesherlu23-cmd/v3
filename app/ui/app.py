@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import threading
-import time
-import uuid
 from collections import OrderedDict
-from pathlib import Path
 
 import flet as ft
 
@@ -15,35 +12,38 @@ from ..controllers.updates import UpdatesController
 from ..core import queries
 from ..core.hotkeys import resolve_accels
 from ..core.store import Store
-from ..core.text import moment_label, plu_apps, plu_programs, plu_windows, split_args
 from ..core.view_state import PERSISTENT_FIELDS, SEARCH_FIELD, ViewState
 from ..infra import log
-from ..platform import windows as W
 from . import colors as C
-from . import menus, screens, theme
+from . import theme
 from . import widgets as Wg
+from .app_edits import AppEditsMixin
+from .category_ops import CategoryMixin
 from .chrome import Chrome
 from .context_menus import ContextMenus
 from .grid import GridView
 from .inspector import InspectorPanel
 from .keymap import Keymap
+from .launching import LaunchMixin
+from .library_files import LibraryFilesMixin
 from .menus import MenuHost
+from .palette_ops import PaletteMixin
+from .selection import SelectionMixin
 from .toast import Notifier, ToastHost
 
-WINDOW_TTL = 2.0
 PALETTE_GAP = 8
-# Сколько после нажатия клавиши не верить «наведению» мыши: строки палитры
-# перестраиваются под неподвижным курсором, Flutter честно сообщает, что
-# курсор «вошёл» в новую строку, — и выделение уезжало с лучшего совпадения.
-PALETTE_HOVER_GRACE = 0.6
 TILE_CACHE_MAX = 600
-ICON_SIZE_TTL = 30.0
 
-CATEGORY_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg")
-APP_ICON_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".ico")
-APP_ICON_SIZE = 256
 
-class CenturioUI:
+class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, CategoryMixin,
+                 LibraryFilesMixin):
+    """Окно Centurio: состояние, сборка и перерисовка.
+
+    Действия разнесены по примесям рядом: палитра поиска (`palette_ops`),
+    выбор плиток (`selection`), запуск (`launching`), правки записей
+    (`app_edits`), категории (`category_ops`), файлы и копии (`library_files`).
+    """
+
     def __init__(self, page: ft.Page, store: Store, launcher, controllers=None):
         self.page = page
         self.store = store
@@ -203,31 +203,6 @@ class CenturioUI:
         return bool(self.view.inspector and self.view.screen == "grid"
                     and not self.view.active_set and not self.view.select_mode)
 
-    def _windows_snapshot(self) -> list[dict]:
-        if not W.available():
-            return []
-        now = time.monotonic()
-        with self._win_lock:
-            if now - self._win_at <= WINDOW_TTL:
-                return self._win_snapshot
-        snapshot = W.list_windows()
-        with self._win_lock:
-            self._win_snapshot = snapshot
-            self._win_at = time.monotonic()
-        return snapshot
-
-    def window_count(self, app) -> int:
-        if app["id"] not in self.running:
-            return 0
-        return W.count_for(W.exe_names_for(app), self._windows_snapshot())
-
-    def _app_windows(self, app) -> list[dict]:
-        return W.windows_for(W.exe_names_for(app), self._windows_snapshot())
-
-    def running_note(self, app) -> str:
-        count = self.window_count(app)
-        return f"открыто · {count} {plu_windows(count)}" if count > 1 else "открыто"
-
     def mount(self):
         self.store.on_error = self._on_store_error
         main = ft.Column([self.toolbar_holder, self.content_holder], spacing=0, expand=True)
@@ -248,12 +223,6 @@ class CenturioUI:
                 f"{self.store.newer_version}) — показываю то, что понимаю, "
                 f"но ничего не сохраняю: иначе потерялось бы остальное",
                 detail=str(self.store.path))
-
-    def set_running(self, ids):
-        self.running = set(ids)
-        with self._win_lock:
-            self._win_at = 0.0
-        self.background_refresh(content_only=True)
 
     def _editing_rebuilt_field(self) -> bool:
         return bool(self.view.typing) and self.view.typing not in PERSISTENT_FIELDS
@@ -373,21 +342,6 @@ class CenturioUI:
         if visible and self._dirty:
             self.refresh()
 
-    def _refresh_palette_only(self):
-        if not self._visible:
-            self._dirty = True
-            return
-        with self._refresh_lock:
-            self._snapshot = self.store.state()
-            try:
-                self._render_palette()
-                self._render_bulk_bar()
-                self.chrome.sync_search_box()
-                self._render_popover()
-            finally:
-                self._snapshot = None
-            self.page.update()
-
     def cat_of(self, app) -> dict | None:
         cid = app.get("category_id")
         if not cid:
@@ -411,132 +365,6 @@ class CenturioUI:
         return queries.build_sections(self.apps(), self.categories(), self.view.filter,
                                       self.view.sort, self.running)
 
-    def _palette_rows(self):
-        state = self.state()
-        apps = state["apps"]
-        cats = sorted(state["categories"], key=lambda c: c.get("order", 0))
-        sets = sorted(state["sets"], key=lambda r: r.get("order", 0))
-        rows = [dict(r, kind="app") for r in
-                queries.search_rows(apps, self.view.query, self.running, cats)]
-        for entry in queries.set_rows(sets, apps, self.view.query):
-            rows.append({"kind": "set", "set": entry["set"], "members": entry["members"]})
-        for index, row in enumerate(rows):
-            row["index"] = index
-        return rows
-
-    def palette_current(self, rows=None):
-        rows = self._palette_rows() if rows is None else rows
-        if not rows:
-            return None
-        if self.view.palette_focus == "actions":
-            return next((r for r in rows if r["kind"] == "app"), None)
-        return rows[min(self.view.palette_index, len(rows) - 1)]
-
-    def _palette_app(self, rows=None):
-        rows = self._palette_rows() if rows is None else rows
-        current = self.palette_current(rows)
-        if current is not None and current["kind"] == "app":
-            return current["app"]
-        return next((r["app"] for r in rows if r["kind"] == "app"), None)
-
-    def _render_palette(self):
-        if not self.view.palette_open:
-            self.palette_layer.visible = False
-            self.palette_card.content = None
-            self.palette_card.opacity = 0
-            self.palette_card.offset = ft.Offset(0, -0.02)
-            return
-        rows = self._palette_rows()
-        self.palette_card.content = screens.build_palette(self, rows)
-        self.palette_card.opacity = 1
-        self.palette_card.offset = ft.Offset(0, 0)
-        self.palette_layer.visible = True
-
-    def _render_bulk_bar(self):
-        showing = bool(self.view.select_mode and self.view.sel)
-        self.toast.lift(showing)
-        if not showing:
-            self.bulk_layer.visible = False
-            self.bulk_card.content = None
-            self.bulk_card.opacity = 0
-            self.bulk_card.offset = ft.Offset(0, 0.3)
-            return
-        self.bulk_card.content = screens.build_bulk_bar(self)
-        self.bulk_card.opacity = 1
-        self.bulk_card.offset = ft.Offset(0, 0)
-        self.bulk_layer.visible = True
-
-    def _flat_apps(self, sections=None):
-        """Плитки в том порядке, в каком они на экране, — без свёрнутых секций.
-
-        Стрелки ходили и по плиткам свёрнутых категорий: выделение пропадало
-        из виду, а Enter запускал невидимую программу. В режиме выбора свёрнутые
-        секции раскрыты, и их плитки снова участвуют.
-        """
-        sections = self.sections() if sections is None else sections
-        if not self.view.select_mode:
-            sections = [sec for sec in sections
-                        if not (sec.get("cid") and sec["cid"] in self.view.collapsed)]
-        return queries.flatten_sections(sections)
-
-    def _selected_id(self, sections=None):
-        if self.view.inspector:
-            return self.view.inspector
-        flat = self._flat_apps(sections)
-        if 0 <= self.view.selected < len(flat):
-            return flat[self.view.selected]["id"]
-        return None
-
-    def move_selection(self, delta):
-        with self._refresh_lock:
-            flat = self._flat_apps()
-            if not flat:
-                self.view.selected = -1
-                return
-            self.view.move_selection(delta, len(flat))
-            self.refresh()
-
-    def activate_selected(self):
-        with self._refresh_lock:
-            flat = self._flat_apps()
-            if not flat:
-                return
-            idx = self.view.selected if 0 <= self.view.selected < len(flat) else 0
-        self._launch(flat[idx]["id"])
-
-    def _focus(self, field):
-        try:
-            if field.page:
-                field.focus()
-        except Exception:
-            log.exception("сбой при фокусировке на поле")
-
-    def _focus_search(self):
-        self.view.open_palette()
-        self.refresh()
-        self._focus(self.search_field)
-
-    def toggle_search(self):
-        if self.view.palette_open:
-            self._close_palette()
-            return False
-        self._focus_search()
-        return True
-
-    def clear_search(self):
-        self.search_field.value = ""
-
-    def _open_palette(self):
-        if self.view.palette_open:
-            return
-        self.view.open_palette()
-        self._refresh_palette_only()
-
-    def _close_palette(self):
-        self.view.close_palette()
-        self.search_field.value = ""
-        self.refresh()
-
     def _toggle_sidebar(self):
         self.view.toggle_sidebar()
         self.refresh()
@@ -556,497 +384,6 @@ class CenturioUI:
     def _toggle_section(self, cid):
         self.view.toggle_section(cid)
         self.refresh()
-
-    def note_palette_keys(self):
-        self._palette_keyed_at = time.monotonic()
-
-    def sync_query(self):
-        """Запрос из поля, а не из последнего обработанного on_change.
-
-        Обработчики Flet идут в пуле потоков: Enter сразу после последней
-        буквы мог обработаться раньше её on_change и запустить лучшее
-        совпадение для запроса без этой буквы. Значение поля Flet обновляет
-        до того, как раздаёт события, — оно всегда свежее.
-        """
-        value = self.search_field.value or ""
-        if value != self.view.query:
-            self.view.set_query(value)
-
-    def _on_search(self, e):
-        self.note_palette_keys()
-        self.view.set_query(e.control.value)
-        if not self.view.palette_open:
-            self.view.open_palette()
-        self._refresh_palette_only()
-
-    def toggle_select_mode(self):
-        if self.view.select_mode:
-            self.view.leave_select_mode()
-        else:
-            self.view.enter_select_mode()
-        self.refresh()
-
-    def _select_all_visible(self):
-        flat = self._flat_apps()
-        if not self.view.select_mode:
-            self.view.enter_select_mode()
-        self.view.select_many([a["id"] for a in flat])
-        self.refresh()
-
-    def _tile_tap(self, app_id, ids, e=None):
-        ctrl = bool(getattr(e, "ctrl", False)) if e is not None else False
-        shift = bool(getattr(e, "shift", False)) if e is not None else False
-        if not self.view.select_mode and not (ctrl or shift):
-            self._launch(app_id)
-            return
-        if not self.view.select_mode:
-            self.view.enter_select_mode()
-        if shift:
-            self.view.select_range(ids, app_id)
-        else:
-            self.view.toggle_selection(app_id)
-        self.refresh()
-
-    def _toggle_pick(self, app_id):
-        self.view.toggle_selection(app_id)
-        self.refresh()
-
-    def _range_to(self, app_id):
-        self.view.select_range([a["id"] for a in self._flat_apps()], app_id)
-        self.refresh()
-
-    def _select_tile(self, app_id):
-        self.view.select_one(app_id)
-        app = next((a for a in self.apps() if a["id"] == app_id), None)
-        self.view.adv = bool(app and (app.get("args") or app.get("run_as_admin")
-                                      or app.get("working_dir")))
-        self.refresh()
-
-    def _drag_ids(self, app_id):
-        return list(self.view.sel) if app_id in self.view.sel else [app_id]
-
-    def _close_inspector(self):
-        self.view.close_inspector()
-        self.refresh()
-
-    def _toggle_adv(self):
-        self.view.adv = not self.view.adv
-        self.refresh()
-
-    def _toast_hint_quick(self):
-        self.toast.show("Закрепить можно правой кнопкой по плитке — «В быстрый запуск»",
-                        icon=ft.Icons.BOLT, icon_color=C.MUTED)
-
-    def _switch_to(self, app) -> bool:
-        for win in self._app_windows(app):
-            if W.activate(win["hwnd"]):
-                return True
-        return False
-
-    def _launch(self, app_id, again: bool = False, as_admin: bool = False,
-                from_palette: bool = False):
-        app = self.store.get_app(app_id)
-        if not app:
-            return
-        if not again and not as_admin and app_id in self.running and self._switch_to(app):
-            self.toast.show(f"{app['name']} — переключились", icon=ft.Icons.SYNC_ALT,
-                            icon_color=C.MUTED)
-            self.after_launch(from_palette)
-            return
-        payload = dict(app, run_as_admin=True) if as_admin and not app.get("kind") else app
-        try:
-            res = self.launcher.launch(payload)
-        except Exception as exc:
-            log.exception("launching %s failed", app.get("path"))
-            res = {"ok": False, "error": str(exc)}
-        if not res.get("ok"):
-            self._launch_failed(app, res.get("error", "Не удалось запустить"))
-            return
-        self.store.mark_launched(app_id)
-        self.running = set(self.launcher.running_ids())
-        if not again:
-            self.toast.show(f"{app['name']} открыт", icon=ft.Icons.PLAY_ARROW)
-        self.after_launch(from_palette)
-
-    def _launch_failed(self, app, message):
-        missing = "не найден" in message.lower()
-        self.toast.error(f"{app['name']} не нашёлся на диске" if missing else message,
-                         detail="Программу переустановили или перенесли" if missing else None,
-                         action=(lambda: self._relocate(app["id"])) if missing else None,
-                         action_label="Найти" if missing else None)
-        self.refresh()
-
-    def after_launch(self, from_palette: bool = False):
-        if from_palette:
-            self.view.close_palette()
-            self.search_field.value = ""
-            if self.setting("hide_after", True):
-                self._hide_to_tray()
-        self.safe_refresh()
-
-    def _relocate(self, app_id):
-        self.relocating = app_id
-        self.scan.pick_file()
-
-    def run_palette_action(self, key: str):
-        app = self._palette_app()
-        if app is None:
-            return
-        if key == "folder":
-            self._show_in_folder(app["id"])
-        elif key == "admin":
-            self._launch(app["id"], as_admin=True, from_palette=True)
-        elif key == "set":
-            self.view.close_palette()
-            self.search_field.value = ""
-            self.refresh()
-            self.menu.show(self._window_width() / 2, 200.0, self.context_menus.set_submenu([app["id"]]),
-                           header=menus.text_header("Добавить в набор…"))
-
-    def palette_click(self, row):
-        if row["kind"] == "set":
-            self.set_ops.launch_set(row["set"]["id"], from_palette=True)
-        else:
-            self._launch(row["app"]["id"], from_palette=True)
-
-    def palette_hover(self, index: int, e):
-        if time.monotonic() - self._palette_keyed_at < PALETTE_HOVER_GRACE:
-            return
-        if e.data == "true" and (self.view.palette_index != index
-                                 or self.view.palette_focus != "results"):
-            self.view.palette_index = index
-            self.view.palette_focus = "results"
-            self._refresh_palette_only()
-
-    def _toggle_fav(self, app_id):
-        a = self.store.get_app(app_id)
-        if a:
-            self.store.update_app(app_id, {"favorite": not a.get("favorite")})
-        self.refresh()
-
-    def _toggle_quick(self, app_id, value):
-        self.store.update_app(app_id, {"quick": bool(value)})
-        self.on_library_changed()
-        accel = self._accels.get(app_id)
-        self.toast.show(f"Закреплено · {accel}" if value and accel
-                        else "Закреплено" if value else "Откреплено",
-                        icon=ft.Icons.BOLT, icon_color=C.MUTED)
-
-    def _toggle_set_quick(self, set_id, value):
-        self.set_ops.toggle_set_quick(set_id, value)
-
-    def _hide_apps(self, ids, hidden: bool):
-        ids = [i for i in ids if i]
-        touched = self.store.update_apps(ids, {"hidden": bool(hidden)})
-        if not touched:
-            return
-        self.view.clear_selection()
-        text = (f"Скрыто {touched}" if hidden else f"Снова видно: {touched}")
-        self.toast.show(text, icon=ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
-                        icon_color=C.MUTED,
-                        action=lambda: self._hide_apps(ids, not hidden),
-                        action_label="Отменить")
-        self.on_library_changed()
-
-    def rename_app(self, app_id, name):
-        name = (name or "").strip()
-        app = self.store.get_app(app_id)
-        if not app or not name or name == app["name"]:
-            return
-        self.store.update_app(app_id, {"name": name})
-        self.on_library_changed()
-
-    def set_aliases(self, app_id, text):
-        app = self.store.get_app(app_id)
-        if not app or ", ".join(app.get("aliases") or []) == (text or "").strip():
-            return
-        self.store.update_app(app_id, {"aliases": text or ""})
-        self.refresh()
-
-    def pick_app_icon(self, app_id):
-        def picked(src):
-            if not src:
-                return
-            stored = self._store_app_icon(app_id, src)
-            if stored:
-                self.store.update_app(app_id, {"icon": stored, "icon_fit": "contain",
-                                               "custom_icon": True})
-                self.on_library_changed()
-        self.ask_for_file("Значок программы", picked,
-                          extensions=[e.lstrip(".") for e in APP_ICON_EXTS])
-
-    def _store_app_icon(self, app_id, src) -> str | None:
-        """Своя картинка → PNG в кэше значков, под новым именем на каждую смену.
-
-        Новое имя нужно, чтобы ни кэш плиток, ни кэш картинок Flutter не
-        показали прежний значок.
-        """
-        if Path(src).suffix.lower() not in APP_ICON_EXTS:
-            self.toast.error("Подойдёт PNG, JPG, WEBP, GIF, BMP или ICO")
-            return None
-        dest_dir = Path(self.icon_cache_dir()) / "custom"
-        dest = dest_dir / f"{app_id}-{uuid.uuid4().hex[:8]}.png"
-        try:
-            from PIL import Image
-
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            with Image.open(src) as im:
-                im = im.convert("RGBA")
-                im.thumbnail((APP_ICON_SIZE, APP_ICON_SIZE))
-                im.save(dest, "PNG")
-        except Exception:
-            log.exception("не удалось подготовить значок из %s", src)
-            self.toast.error("Не удалось прочитать картинку")
-            return None
-        self._drop_custom_icons(app_id, keep=dest)
-        return str(dest)
-
-    def _drop_custom_icons(self, app_id, keep=None):
-        for stale in (Path(self.icon_cache_dir()) / "custom").glob(f"{app_id}-*"):
-            if stale != keep:
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
-
-    def reset_app_icon(self, app_id):
-        self.store.update_app(app_id, {"icon": None, "custom_icon": False})
-        self._drop_custom_icons(app_id)
-        self.on_library_changed()
-        self.scan.backfill_icons_async()
-
-    def _set_args(self, app_id, value):
-        text = (value or "").strip()
-        try:
-            args = split_args(text) if text else []
-        except ValueError:
-            self.toast.error("В аргументах не закрыта кавычка — не сохранено", detail=text)
-            self.refresh()
-            return
-        self.store.update_app(app_id, {"args": args})
-        self.refresh()
-
-    def _set_admin(self, app_id, value):
-        self.store.update_app(app_id, {"run_as_admin": bool(value)})
-        self.refresh()
-
-    def ask_for_file(self, title, on_path, extensions=None):
-        picker = getattr(self, "_file_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._file_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
-
-        def on_result(e):
-            if not e.files:
-                on_path(None)
-                return
-            picked = e.files[0]
-            on_path(picked.path or picked.name)
-        picker.on_result = on_result
-        picker.pick_files(dialog_title=title, allow_multiple=False,
-                          allowed_extensions=extensions)
-
-    def ask_for_folder(self, title, on_path):
-        picker = getattr(self, "_dir_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._dir_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
-        picker.on_result = lambda e: on_path(e.path or None)
-        picker.get_directory_path(dialog_title=title)
-
-    def _pick_working_dir(self, app_id):
-        def picked(path):
-            if path:
-                self.store.update_app(app_id, {"working_dir": path})
-                self.refresh()
-        self.ask_for_folder("Выберите рабочую папку", picked)
-
-    def _move_apps_to_category(self, app_ids, cat_id):
-        cat = next((c for c in self.categories() if c["id"] == cat_id), None)
-        ids = [i for i in app_ids if i]
-        if not cat or not ids:
-            return
-        before = {a["id"]: a.get("category_id") for a in self.apps() if a["id"] in set(ids)}
-        moved = self.store.update_apps(ids, {"category_id": cat_id})
-        if not moved:
-            return
-
-        def undo():
-            for app_id, old in before.items():
-                self.store.update_app(app_id, {"category_id": old}, persist=False)
-            self.store.flush()
-            self.on_library_changed()
-
-        first = next((a["name"] for a in self.apps() if a["id"] == ids[0]), "")
-        text = (f"{first} переложен в «{cat['name']}»" if moved == 1
-                else f"Переложено {moved} в «{cat['name']}»")
-        self.toast.show(text, icon=ft.Icons.FOLDER, icon_color=C.MUTED,
-                        action=undo, action_label="Вернуть")
-        self.on_library_changed()
-
-    def _bulk_favorite(self, ids):
-        before = [i for i in ids if not (self.store.get_app(i) or {}).get("favorite")]
-        self.store.update_apps(ids, {"favorite": True})
-        self.toast.show(f"В избранном: {len(ids)}", icon=ft.Icons.STAR, icon_color=C.STAR,
-                        action=lambda: self._undo_favorite(before),
-                        action_label="Отменить")
-        self.refresh()
-
-    def _undo_favorite(self, ids):
-        self.store.update_apps(ids, {"favorite": False})
-        self.refresh()
-
-    def _remove_apps(self, app_ids):
-        if not app_ids:
-            return
-        bundle = self.store.remove_apps_with_sets(app_ids)
-        gone = bundle["apps"]
-        if not gone:
-            return
-        # Убранное руками больше не предлагать при сканировании; отмена
-        # (restore_apps) вычёркивает из списка обратно.
-        self.store.ignore(gone)
-        self.view.close_inspector()
-        text = (f"{gone[0]['name']} убран из библиотеки" if len(gone) == 1
-                else f"Убрано {len(gone)} {plu_apps(len(gone))}")
-        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE, icon_color=C.MUTED,
-                        action=lambda: self._restore_apps(bundle), action_label="Вернуть")
-        self.on_library_changed()
-
-    def _restore_apps(self, bundle):
-        self.store.restore_apps_and_sets(bundle)
-        self.on_library_changed()
-
-    def _add_category(self):
-        cat = self.store.add_category("Новая категория")
-        self.view.set_filter(f"category:{cat['id']}")
-        self.view.open_popover(cat["id"])
-        self.on_library_changed()
-
-    def _move_category(self, cat_id, delta):
-        self.store.move_category(cat_id, delta)
-        self.refresh()
-
-    def _reorder_category(self, dragged_id, target_id):
-        if dragged_id == target_id:
-            return
-        ids = [c["id"] for c in self.categories()]
-        if dragged_id not in ids or target_id not in ids:
-            return
-        moving_down = ids.index(target_id) > ids.index(dragged_id)
-        ids.remove(dragged_id)
-        ids.insert(ids.index(target_id) + (1 if moving_down else 0), dragged_id)
-        self.store.reorder_categories(ids)
-        self.refresh()
-
-    def _reorder_apps(self, section_ids, dragged_ids, target_id):
-        dragged = [i for i in dragged_ids if i in section_ids]
-        if not dragged or target_id in dragged or target_id not in section_ids:
-            return
-        moving_right = section_ids.index(target_id) > section_ids.index(dragged[0])
-        order = [i for i in section_ids if i not in dragged]
-        idx = order.index(target_id) + (1 if moving_right else 0)
-        order[idx:idx] = dragged
-        self.store.reorder_apps(order)
-        if self.view.sort != "manual":
-            self.view.set_sort("manual")
-        self.refresh()
-
-    def _open_popover(self, cat_id):
-        self.view.open_popover(cat_id)
-        self.refresh()
-
-    def close_popover(self):
-        self.view.close_popover()
-        self.refresh()
-
-    def rename_category(self, cat_id, name):
-        if (name or "").strip():
-            self.store.update_category(cat_id, {"name": name.strip()})
-            self.on_library_changed()
-
-    def set_category_color(self, cat_id, color):
-        self.store.update_category(cat_id, {"color": color})
-        self.refresh()
-
-    def set_category_icon(self, cat_id, icon):
-        self.store.update_category(cat_id, {"icon": icon, "image": None})
-        self.refresh()
-
-    def pick_category_image(self, cat_id):
-        picker = getattr(self, "_image_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._image_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
-
-        def on_result(e):
-            if not e.files:
-                return
-            src = e.files[0].path or e.files[0].name
-            stored = self._store_category_image(cat_id, src)
-            if stored:
-                self.store.update_category(cat_id, {"image": stored})
-                self.refresh()
-        picker.on_result = on_result
-        picker.pick_files(dialog_title="Картинка категории", allow_multiple=False,
-                          allowed_extensions=[e.lstrip(".") for e in CATEGORY_IMAGE_EXTS])
-
-    def _store_category_image(self, cat_id, src) -> str | None:
-        import shutil
-        suffix = Path(src).suffix.lower()
-        if suffix not in CATEGORY_IMAGE_EXTS:
-            self.toast.error("Подойдёт PNG, JPG, WEBP, GIF, BMP или SVG")
-            return None
-        dest_dir = Path(self.icon_cache_dir()) / "categories"
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            # Новое имя на каждую смену: по старому пути Flutter показывал бы
-            # прежнюю картинку из своего кэша до перезапуска.
-            dest = dest_dir / f"{cat_id}-{uuid.uuid4().hex[:8]}{suffix}"
-            shutil.copyfile(src, dest)
-        except OSError:
-            log.exception("не удалось скопировать изображение категории")
-            self.toast.error("Не удалось прочитать файл")
-            return None
-
-        for stale in [*dest_dir.glob(f"{cat_id}.*"), *dest_dir.glob(f"{cat_id}-*")]:
-            if stale != dest:
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
-        return str(dest)
-
-    def clear_category_image(self, cat_id):
-        self.store.update_category(cat_id, {"image": None})
-        self.refresh()
-
-    def _remove_category(self, cat_id):
-        if len(self.categories()) <= 1:
-            self.toast.error("Это последняя категория — программам некуда деться")
-            return
-        cat = next((c for c in self.categories() if c["id"] == cat_id), None)
-        undo = self.store.remove_category(cat_id)
-        if not undo:
-            return
-        self.view.close_popover()
-        moved = len(undo["apps"])
-        text = f"Категория «{cat['name']}» удалена" if cat else "Категория удалена"
-        if moved:
-            text += f", {moved} {plu_apps(moved)} перенесено"
-        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE, icon_color=C.MUTED,
-                        action=lambda: self._restore_category(undo), action_label="Вернуть")
-        self.on_library_changed()
-
-    def _restore_category(self, undo):
-        self.store.restore_category(undo)
-        self.on_library_changed()
 
     def open_add(self):
         self.view.set_screen("add")
@@ -1111,13 +448,6 @@ class CenturioUI:
         except Exception:
             log.exception("не удалось сообщить пользователю о сбое записи в хранилище")
 
-    def _show_in_folder(self, app_id):
-        a = self.store.get_app(app_id)
-        if a:
-            res = self.launcher.show_in_folder(a)
-            if not res.get("ok"):
-                self.toast.error(res.get("error", "Не найдено"))
-
     def _minimize(self):
         cb = self.controllers.get("minimize")
         if cb:
@@ -1141,145 +471,9 @@ class CenturioUI:
     def _current_title(self):
         return queries.current_title(self.view.filter, self.categories())
 
-    def icon_cache_dir(self) -> str:
-        return str(Path(self.store.path).parent / "icons")
-
-    def _render_popover(self):
-        cat_id = self.view.popover
-        cat = next((c for c in self.categories() if c["id"] == cat_id), None)
-        if cat is None:
-            self.popover_layer.visible = False
-            self.popover_layer.content = None
-            return
-        index = [c["id"] for c in self.categories()].index(cat_id)
-        metrics = self.rail()
-        top = (C.HEADER_H + 14 + (2 + index) * (metrics["btn"] + metrics["gap"]) + 9
-               - self._rail_scroll)
-        height = self._window_height()
-        self.popover_layer.left = metrics["rail"] + 8
-        self.popover_layer.top = max(C.HEADER_H + 6, min(top, height - C.POPOVER_H - 8))
-        self.popover_layer.content = screens.build_category_popover(self, cat)
-        self.popover_layer.visible = True
-
     def safe_refresh(self):
         self.background_refresh()
 
-    def backup(self):
-        try:
-            path = self.store.backup()
-        except Exception:
-            log.exception("не удалось создать копию")
-            self.toast.error("Не удалось создать копию", action=self.backup,
-                             action_label="Повторить")
-            return
-        self.toast.show(f"Копия сохранена: {path.name}", icon=ft.Icons.BACKUP,
-                        icon_color=C.MUTED)
-
-    def pick_backup(self):
-        self.ask_for_file("Копия библиотеки", self.restore_backup, extensions=["json"])
-
-    def open_url(self, url: str):
-        import webbrowser
-
-        threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
-
-    def restore_menu(self):
-        """Восстановить из автокопии — или выбрать файл, если их ещё нет."""
-        copies = self.store.auto_backups()
-        if not copies:
-            self.pick_backup()
-            return
-        rows = []
-        for path in copies:
-            summary = self.store.backup_summary(path)
-            if summary is None:
-                continue
-            try:
-                when = moment_label(path.stat().st_mtime)
-            except OSError:
-                continue
-            count = summary["apps"]
-            rows.append(menus.item(ft.Icons.HISTORY, when,
-                                   lambda p=path: self.restore_backup(str(p)),
-                                   hint=f"{count} {plu_programs(count)}"))
-        rows += [menus.separator(),
-                 menus.item(ft.Icons.FOLDER_OPEN, "Из файла…", self.pick_backup)]
-        self.menu.show(self._window_width() / 2 - 120, 180.0, rows,
-                       header=menus.text_header("Восстановить библиотеку"))
-
-    def last_auto_backup(self) -> str:
-        copies = self.store.auto_backups()
-        try:
-            return moment_label(copies[0].stat().st_mtime) if copies else ""
-        except OSError:
-            return ""
-
-    def restore_backup(self, src):
-        """Заменить библиотеку копией. Текущая сначала сама уходит в копию."""
-        if not src:
-            return
-        try:
-            safety = self.store.backup()
-        except Exception:
-            log.exception("не удалось сохранить текущую библиотеку перед восстановлением")
-            self.toast.error("Не удалось сохранить текущую библиотеку — восстановление отменено")
-            return
-        if not self.store.import_data(src):
-            self.toast.error("Это не копия библиотеки Centurio или она от более новой версии",
-                             detail=str(src))
-            return
-        self.view.set_screen("grid")
-        self.toast.show(f"Библиотека восстановлена из {Path(src).name}", icon=ft.Icons.RESTORE,
-                        icon_color=C.MUTED, action=lambda: self._undo_restore(safety),
-                        action_label="Вернуть")
-        self.on_library_changed()
-
-    def _undo_restore(self, safety):
-        if self.store.import_data(safety):
-            self.on_library_changed()
-
-    def show_data_folder(self):
-        res = self.launcher.show_in_folder({"path": str(self.store.path)})
-        if not res.get("ok"):
-            self.toast.error(res.get("error", "Папка не найдена"))
-
-    def icon_cache_size(self) -> int:
-        now = time.monotonic()
-        if self._icon_size_at and now - self._icon_size_at <= ICON_SIZE_TTL:
-            return self._icon_size
-        total = 0
-        try:
-            for entry in Path(self.icon_cache_dir()).rglob("*"):
-                if entry.is_file():
-                    total += entry.stat().st_size
-        except OSError:
-            total = 0
-        self._icon_size, self._icon_size_at = total, now
-        return total
-
-    def forget_icon_cache_size(self) -> None:
-        self._icon_size_at = 0.0
-
-    def clear_icon_cache(self):
-        removed = 0
-        keep = {(c.get("image") or "") for c in self.categories()}
-        keep |= {a.get("icon") or "" for a in self.apps() if a.get("custom_icon")}
-        try:
-            for entry in Path(self.icon_cache_dir()).rglob("*"):
-                if entry.is_file() and str(entry) not in keep:
-                    entry.unlink()
-                    removed += 1
-        except OSError:
-            log.exception("не удалось очистить кэш иконок")
-            self.toast.error("Не удалось очистить кэш")
-            return
-        self.store.update_apps([a["id"] for a in self.apps() if not a.get("custom_icon")],
-                               {"icon": None})
-        self.store.update_apps([a["id"] for a in self.apps()], {"poster": None})
-        self.forget_icon_cache_size()
-        self.toast.show(f"Кэш очищен, файлов удалено: {removed}")
-        self.scan.backfill_icons_async()
-        self.refresh()
 
 _KIND_GLYPHS = {"web": "language", "folder": "folder", "file": "description"}
 

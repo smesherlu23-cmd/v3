@@ -25,6 +25,8 @@ ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Корень — чтобы импортировался пакет app, tests — для общего helpers.py.
+pythonpath = [".", "tests"]
 addopts = "-q"
 
 [tool.flet]
