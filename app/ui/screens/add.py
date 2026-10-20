@@ -5,7 +5,7 @@ import flet as ft
 from ...core.text import plu_programs
 from .. import colors as C
 from .. import widgets as Wg
-from ..format import T, cat_icon
+from ..format import T, as_icon, cat_icon
 from .common import _field, _screen_header
 
 
@@ -42,9 +42,9 @@ def _add_header(ui):
                 else ft.Icon(ft.Icons.REFRESH, size=15, color=C.MUTED),
                 T("Сканировать снова", size=12.5, color=C.TEXT)],
                spacing=7, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=34, padding=ft.padding.symmetric(0, 12),
-        border=ft.border.all(1, C.LINE_4), border_radius=8,
-        alignment=ft.alignment.center,
+        height=34, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
+        border=ft.Border.all(1, C.LINE_4), border_radius=8,
+        alignment=ft.Alignment.CENTER,
         on_click=None if ui.scan.scanning() else (lambda e: ui.scan.start_scan(force=True)))
     return _screen_header("Найти и добавить", subtitle, ui.back_to_grid, extra=[rescan])
 
@@ -66,7 +66,8 @@ def _add_path_field(ui, state):
         field = _field(ui.view, "add_path", ui.view.manual_path,
                        r"Или вставьте путь к программе, папке, файлу — или адрес сайта",
                        on_change=lambda e: ui.scan.set_manual_path(e.control.value),
-                       on_submit=lambda e: ui.scan.add_manual_path(e.control.value),
+                       on_submit=lambda e: ui.in_background(ui.scan.add_manual_path,
+                                                            e.control.value),
                        mono=True, size=11.5)
         state["path_field"] = field
     elif not ui.view.manual_path and field.value:
@@ -82,8 +83,8 @@ def _add_search_container(ui, state):
         ft.Row([ft.Icon(ft.Icons.SEARCH, size=15, color=C.MUTED_2),
                 _add_search_field(ui, state)],
                spacing=9, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=36, bgcolor=C.PANEL, border=ft.border.all(1, C.LINE), border_radius=9,
-        padding=ft.padding.symmetric(0, 12), expand=True)
+        height=36, bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE), border_radius=9,
+        padding=ft.Padding.symmetric(vertical=0, horizontal=12), expand=True)
     state["search_box"] = box
     return box
 
@@ -96,8 +97,8 @@ def _add_path_container(ui, state):
         ft.Row([ft.Icon(ft.Icons.LINK, size=15, color=C.MUTED_2),
                 _add_path_field(ui, state)],
                spacing=9, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=36, bgcolor=C.SET_BG, border=ft.border.all(1, C.LINE_4), border_radius=9,
-        padding=ft.padding.symmetric(0, 12), expand=True)
+        height=36, bgcolor=C.SET_BG, border=ft.Border.all(1, C.LINE_4), border_radius=9,
+        padding=ft.Padding.symmetric(vertical=0, horizontal=12), expand=True)
     state["path_box"] = box
     return box
 
@@ -118,8 +119,8 @@ def _add_search(ui, state):
         ft.Row([T("Только новые", size=12.5, color=C.TEXT),
                 Wg.toggle(ui.view.only_new, lambda v: ui.scan.toggle_only_new(), ui._accent())],
                spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=36, padding=ft.padding.symmetric(0, 12),
-        border=ft.border.all(1, C.LINE), border_radius=9,
+        height=36, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
+        border=ft.Border.all(1, C.LINE), border_radius=9,
         on_click=lambda e: ui.scan.toggle_only_new())
 
     search_row = state.get("search_row")
@@ -127,7 +128,7 @@ def _add_search(ui, state):
         search_row = ft.Row([], spacing=10)
         state["search_row"] = search_row
         state["search_row_holder"] = ft.Container(
-            search_row, padding=ft.padding.only(24, 14, 24, 6))
+            search_row, padding=ft.Padding.only(left=24, top=14, right=24, bottom=6))
     search_row.controls = [_add_search_container(ui, state), only_new]
 
     path_row = state.get("path_row")
@@ -135,12 +136,12 @@ def _add_search(ui, state):
         path_row = ft.Row([], spacing=10)
         state["path_row"] = path_row
         state["path_row_holder"] = ft.Container(
-            path_row, padding=ft.padding.only(24, 0, 24, 12))
+            path_row, padding=ft.Padding.only(left=24, top=0, right=24, bottom=12))
     path_row.controls = [
         _add_path_container(ui, state),
         Wg.outline_btn("Файл", ui.scan.pick_file, ft.Icons.INSERT_DRIVE_FILE_OUTLINED),
         Wg.outline_btn("Папка", ui.scan.pick_folder, ft.Icons.FOLDER_OPEN),
-        Wg.outline_btn("В список", ui.scan.add_manual_path),
+        Wg.outline_btn("В список", lambda: ui.in_background(ui.scan.add_manual_path)),
     ]
 
     holder.controls = [state["search_row_holder"], state["path_row_holder"]]
@@ -153,7 +154,7 @@ def _scanning(ui):
                   spacing=22, tight=True,
                   horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                   alignment=ft.MainAxisAlignment.CENTER),
-        expand=True, alignment=ft.alignment.center)
+        expand=True, alignment=ft.Alignment.CENTER)
 
 
 def _found_list(ui, state):
@@ -168,7 +169,7 @@ def _found_list(ui, state):
     if col is None:
         col = ft.Column(rows, spacing=2, scroll=ft.ScrollMode.AUTO, expand=True)
         state["rows_col"] = col
-        holder = ft.Container(col, expand=True, padding=ft.padding.only(24, 0, 24, 8))
+        holder = ft.Container(col, expand=True, padding=ft.Padding.only(left=24, top=0, right=24, bottom=8))
         state["rows_holder"] = holder
     else:
         col.controls = rows
@@ -186,8 +187,8 @@ def _inline_error(ui, err):
                 ft.Container(T("Скрыть", size=12.5, color=C.MUTED_2),
                              on_click=lambda e: ui.scan.dismiss_scan_errors())],
                spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=C.ERR_BG, border=ft.border.all(1, C.ERR_BORDER), border_radius=12,
-        padding=ft.padding.symmetric(13, 16), margin=ft.margin.only(bottom=8))
+        bgcolor=C.ERR_BG, border=ft.Border.all(1, C.ERR_BORDER), border_radius=12,
+        padding=ft.Padding.symmetric(vertical=13, horizontal=16), margin=ft.Margin.only(bottom=8))
 
 
 def _add_empty(ui):
@@ -206,8 +207,8 @@ def _add_empty(ui):
                                ui.scan.toggle_only_new if only_new
                                else (lambda: ui.scan.start_scan(force=True))),
                 Wg.outline_btn("Выбрать файл", ui.scan.pick_file, ft.Icons.FOLDER_OPEN),
-            ], spacing=8), padding=ft.padding.only(0, 6, 0, 0)),
-        ], spacing=10, tight=True), width=460, padding=ft.padding.only(0, 30, 0, 0))
+            ], spacing=8), padding=ft.Padding.only(left=0, top=6, right=0, bottom=0)),
+        ], spacing=10, tight=True), width=460, padding=ft.Padding.only(left=0, top=30, right=0, bottom=0))
 
 
 def _add_group(ui, group):
@@ -223,7 +224,7 @@ def _add_group(ui, group):
         box = ft.Icons.CHECK_BOX_OUTLINE_BLANK
         box_color = C.MUTED
 
-    head = [ft.Icon(box, size=18, color=box_color),
+    head = [ft.Icon(as_icon(box), size=18, color=box_color),
             ft.Icon(cat_icon(group["icon"]), size=16, color=C.MUTED_2),
             T(group["label"], size=12.5, weight=ft.FontWeight.W_600, color=C.TEXT)]
     head.append(ft.Container(height=1, bgcolor=C.LINE_2, expand=True))
@@ -232,7 +233,7 @@ def _add_group(ui, group):
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER),
                          height=36, on_click=lambda e, g=group: ui.scan.toggle_add_group(g))]
     rows += [_add_row(ui, row) for row in group["rows"]]
-    return ft.Container(ft.Column(rows, spacing=2), padding=ft.padding.only(0, 0, 0, 8))
+    return ft.Container(ft.Column(rows, spacing=2), padding=ft.Padding.only(left=0, top=0, right=0, bottom=8))
 
 
 def _add_row(ui, row):
@@ -258,17 +259,17 @@ def _add_row(ui, row):
                     T(cat["name"], size=11.5, color=C.TEXT_2) if cat else ft.Container(),
                     ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=13, color=C.MUTED_2)],
                    spacing=6, tight=True),
-            height=28, padding=ft.padding.symmetric(0, 10),
+            height=28, padding=ft.Padding.symmetric(vertical=0, horizontal=10),
             bgcolor=C.PANEL_3 if cat else None,
-            border=ft.border.all(1, C.LINE if cat else C.LINE_4), border_radius=7,
+            border=ft.Border.all(1, C.LINE if cat else C.LINE_4), border_radius=7,
             tooltip="Другая категория",
             on_click=lambda e, r=row: ui.scan.cycle_add_category(r)))
 
     return ft.Container(
         ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=46, padding=ft.padding.symmetric(0, 12), border_radius=10,
+        height=46, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=10,
         bgcolor=C.PANEL if checked else None,
-        border=ft.border.all(1, C.LINE_5) if checked else None,
+        border=ft.Border.all(1, C.LINE_5) if checked else None,
         opacity=0.45 if not row["is_new"] else 1,
         on_click=lambda e, r=row: ui.scan.toggle_add_row(r))
 
@@ -284,9 +285,9 @@ def _add_footer(ui):
             ft.Container(expand=True),
             Wg.outline_btn("Отложить в разбор", ui.scan.defer_add, ft.Icons.INBOX),
             ft.Container(ft.Row(add_row, spacing=8, tight=True), height=36,
-                         padding=ft.padding.symmetric(0, 16), bgcolor=ui._accent(),
-                         border_radius=9, alignment=ft.alignment.center,
+                         padding=ft.Padding.symmetric(vertical=0, horizontal=16), bgcolor=ui._accent(),
+                         border_radius=9, alignment=ft.Alignment.CENTER,
                          on_click=lambda e: ui.scan.commit_add()),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=64, bgcolor=C.BG_2, padding=ft.padding.symmetric(0, 24),
-        border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)))
+        height=64, bgcolor=C.BG_2, padding=ft.Padding.symmetric(vertical=0, horizontal=24),
+        border=ft.Border.only(top=ft.BorderSide(1, C.LINE_2)))

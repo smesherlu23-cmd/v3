@@ -6,7 +6,7 @@ from ...core import layout as L
 from ...core.text import KINDS, plu_programs
 from .. import colors as C
 from .. import widgets as Wg
-from ..format import T
+from ..format import T, as_icon
 from .common import _caps, _field
 
 
@@ -16,16 +16,16 @@ def build_set_screen(ui, rec):
                    ft.Row([_layout_column(ui, rec), _order_column(ui, rec)],
                           spacing=20, vertical_alignment=ft.CrossAxisAlignment.START)],
                   spacing=20, tight=True),
-        padding=ft.padding.symmetric(22, 26))],
+        padding=ft.Padding.symmetric(vertical=22, horizontal=26))],
         spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
 
 
 def _set_header(ui, rec):
     accel = ui._set_accels.get(rec["id"])
     name = Wg.track_typing(ft.TextField(
-        value=rec["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
+        value=rec["name"], border=ft.NoInputBorder(), filled=False, dense=True,
         text_size=20, color=C.TEXT, cursor_color=C.TEXT,
-        content_padding=ft.padding.symmetric(0, 0),
+        content_padding=ft.Padding.symmetric(vertical=0, horizontal=0),
         text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, font_family="Inter Bold"),
         on_blur=lambda e: ui.set_ops.rename_set(rec["id"], e.control.value),
         on_submit=lambda e: ui.set_ops.rename_set(rec["id"], e.control.value)),
@@ -64,8 +64,8 @@ def _layout_column(ui, rec):
                   spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     panel = ft.Container(
         ft.Column([_canvas(ui, rec), _layout_note(ui, rec)], spacing=10, tight=True),
-        bgcolor=C.BG_0, border=ft.border.all(1, C.SET_BORDER), border_radius=12,
-        padding=ft.padding.all(16))
+        bgcolor=C.BG_0, border=ft.Border.all(1, C.SET_BORDER), border_radius=12,
+        padding=ft.Padding.all(16))
     presets = ft.Row([_preset_btn(ui, rec, key) for key in L.PRESETS],
                      spacing=8, wrap=True, run_spacing=8)
     return ft.Column([head, panel, presets], spacing=10, tight=True, expand=True)
@@ -102,18 +102,18 @@ def _canvas(ui, rec):
                       spacing=6, tight=True),
             left=x * cw + 4, top=y * ch + 4,
             width=max(40.0, w * cw - 8), height=max(34.0, h * ch - 8),
-            bgcolor=C.WIN_BG, border=ft.border.all(1.5, C.WIN_BORDER), border_radius=6,
-            padding=ft.padding.all(10), clip_behavior=ft.ClipBehavior.HARD_EDGE))
+            bgcolor=C.WIN_BG, border=ft.Border.all(1.5, C.WIN_BORDER), border_radius=6,
+            padding=ft.Padding.all(10), clip_behavior=ft.ClipBehavior.HARD_EDGE))
     if not children:
         children.append(ft.Container(
             T("Ни одна программа не занимает места — выберите пресет ниже", size=11.5,
               color=C.MUTED_2, text_align=ft.TextAlign.CENTER),
-            left=0, top=ch / 2 - 10, width=cw, alignment=ft.alignment.center))
+            left=0, top=ch / 2 - 10, width=cw, alignment=ft.Alignment.CENTER))
     children += _split_handles(ui, rec, cw, ch)
     return ft.Container(ft.Stack(children, width=cw, height=ch),
                         height=C.CANVAS_H, bgcolor=C.CANVAS_BG,
-                        border=ft.border.all(1, C.CONTROL), border_radius=8,
-                        padding=ft.padding.all(8))
+                        border=ft.Border.all(1, C.CONTROL), border_radius=8,
+                        padding=ft.Padding.all(8))
 
 
 def _split_handles(ui, rec, cw, ch):
@@ -170,9 +170,9 @@ def _preset_btn(ui, rec, key):
     row = []
     if key != "grid4":
         thumb = ft.Container(width=14, height=11, border_radius=2,
-                             border=ft.border.all(1.5, C.TEXT if active else C.MUTED))
+                             border=ft.Border.all(1.5, C.TEXT if active else C.MUTED))
         if active and key in ("6040", "half"):
-            thumb.border = ft.border.only(
+            thumb.border = ft.Border.only(
                 left=ft.BorderSide(1.5, C.TEXT), top=ft.BorderSide(1.5, C.TEXT),
                 bottom=ft.BorderSide(1.5, C.TEXT), right=ft.BorderSide(5, C.TEXT))
         row.append(thumb)
@@ -181,9 +181,9 @@ def _preset_btn(ui, rec, key):
                  color=C.TEXT if active else C.TEXT_2))
     btn = ft.Container(
         ft.Row(row, spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=32, padding=ft.padding.symmetric(0, 11), border_radius=8,
+        height=32, padding=ft.Padding.symmetric(vertical=0, horizontal=11), border_radius=8,
         bgcolor=C.PRESET_ACTIVE_BG if active else None,
-        border=ft.border.all(1, C.LINE_5 if active else C.CONTROL),
+        border=ft.Border.all(1, C.LINE_5 if active else C.CONTROL),
         on_click=lambda e: ui.set_ops.set_layout_preset(rec["id"], key))
     return btn if active else Wg.hoverable(btn, None, C.SELECTED_BG)
 
@@ -197,19 +197,19 @@ def _order_column(ui, rec):
         ft.Row([ft.Icon(ft.Icons.ADD, size=15, color=C.MUTED_2),
                 T("Добавить программу", size=12.5, color=C.MUTED)],
                spacing=7, tight=True, alignment=ft.MainAxisAlignment.CENTER),
-        height=44, border_radius=11, border=ft.border.all(1, C.LINE_4),
-        alignment=ft.alignment.center,
+        height=44, border_radius=11, border=ft.Border.all(1, C.LINE_4),
+        alignment=ft.Alignment.CENTER,
         on_click=lambda e: ui.context_menus.add_to_set_picker(rec["id"], e)))
     rows.append(_target_row(ui, rec))
 
     settings = [
-        ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.only(top=4)),
+        ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.Margin.only(top=4)),
         _set_option("Пауза между запусками",
                     ft.Container(T(f"{rec['delay_seconds']:g} с", size=11.5, color=C.TEXT,
                                    font_family="monospace"),
-                                 height=30, padding=ft.padding.symmetric(0, 10),
-                                 bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL),
-                                 border_radius=8, alignment=ft.alignment.center,
+                                 height=30, padding=ft.Padding.symmetric(vertical=0, horizontal=10),
+                                 bgcolor=C.PANEL, border=ft.Border.all(1, C.CONTROL),
+                                 border_radius=8, alignment=ft.Alignment.CENTER,
                                  tooltip="Другая пауза",
                                  on_click=lambda e: ui.context_menus.delay_menu(rec, e))),
     ]
@@ -221,12 +221,13 @@ def _order_column(ui, rec):
 
 def _target_row(ui, rec):
     field = _field(ui.view, "set_target", "", "Сайт, папка или файл",
-                   on_submit=lambda e: ui.set_ops.add_target(rec["id"], e.control.value),
+                   on_submit=lambda e: ui.in_background(ui.set_ops.add_target, rec["id"],
+                                                        e.control.value),
                    size=12.5)
 
     def pick(icon, tip, folder):
-        return ft.Container(ft.Icon(icon, size=15, color=C.MUTED_2), width=26, height=26,
-                            alignment=ft.alignment.center, tooltip=tip,
+        return ft.Container(ft.Icon(as_icon(icon), size=15, color=C.MUTED_2), width=26, height=26,
+                            alignment=ft.Alignment.CENTER, tooltip=tip,
                             on_click=lambda e: ui.set_ops.pick_target(rec["id"], folder))
 
     return ft.Container(
@@ -234,8 +235,8 @@ def _target_row(ui, rec):
                 pick(ft.Icons.FOLDER_OPEN, "Выбрать папку", True),
                 pick(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, "Выбрать файл", False)],
                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=40, padding=ft.padding.only(12, 0, 6, 0), border_radius=11,
-        border=ft.border.all(1, C.LINE_4), bgcolor=C.SET_BG,
+        height=40, padding=ft.Padding.only(left=12, top=0, right=6, bottom=0), border_radius=11,
+        border=ft.Border.all(1, C.LINE_4), bgcolor=C.SET_BG,
         tooltip="Вставьте адрес сайта или путь и нажмите Enter")
 
 
@@ -270,13 +271,13 @@ def _order_row(ui, rec, entry):
                          overflow=ft.TextOverflow.ELLIPSIS)],
                       spacing=1, expand=True, tight=True),
             ft.Container(ft.Icon(ft.Icons.MORE_HORIZ, size=16, color=C.TEXT_FAINT),
-                         width=24, height=24, alignment=ft.alignment.center,
+                         width=24, height=24, alignment=ft.Alignment.CENTER,
                          tooltip="Меню",
                          on_click=lambda e, en=entry: ui.context_menus.set_item_menu(rec, en, e)),
         ], spacing=11, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=52, padding=ft.padding.symmetric(0, 12), border_radius=11,
+        height=52, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=11,
         bgcolor=C.SET_BG if muted else C.PANEL,
-        border=ft.border.all(1, C.DASHED if muted else C.LINE))
+        border=ft.Border.all(1, C.DASHED if muted else C.LINE))
     Wg.hoverable(row, C.SET_BG if muted else C.PANEL, C.SELECTED_BG)
     tapper = ft.GestureDetector(
         row, on_secondary_tap_down=lambda e, en=entry: ui.context_menus.set_item_menu(rec, en, e))

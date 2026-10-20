@@ -884,7 +884,7 @@ def test_discovery():
     apps = discovery.discover_apps()
     ok(isinstance(apps, list), "discover_apps returns a list")
     ok(all(("name" in a and "path" in a) for a in apps), "discovered apps have name+path")
-    ok(all(a == b for a, b in zip(apps, sorted(apps, key=lambda x: x["name"].lower()))),
+    ok(all(a == b for a, b in zip(apps, sorted(apps, key=lambda x: x["name"].lower()), strict=True)),
        "discovered apps are sorted")
     ok(discovery._looks_like_junk("Uninstall Foo") is True, "junk filter flags uninstallers")
     ok(discovery._looks_like_junk("Google Chrome") is False, "junk filter keeps real apps")

@@ -299,6 +299,7 @@ class _FakePage:
         self.controls = []
         self.window = _FakeWindow()
         self.web = False
+        self.tasks = []
 
     def add(self, *controls):
         self.controls.extend(controls)
@@ -309,11 +310,15 @@ class _FakePage:
     def close(self, d):
         pass
 
-    def update(self):
+    def update(self, *controls):
         pass
 
-    def get_control(self, _id):
-        return None
+    def run_task(self, handler, *args):
+        """Асинхронное (фокус, окно, выбор файла) в тестах не выполняется."""
+        self.tasks.append((handler, args))
+
+    def run_thread(self, handler, *args):
+        handler(*args)
 
 
 def _ui_for(store):
@@ -346,12 +351,14 @@ def _texts(control, depth=0, out=None):
 
 
 def _tap(x=300, y=250):
-    return types_ns(global_x=x, global_y=y, local_x=x, local_y=y, kind="mouse")
+    return types_ns(global_position=types_ns(x=x, y=y), local_position=types_ns(x=x, y=y),
+                    kind="mouse")
 
 
 def _tap_mods(ctrl=False, shift=False):
     """Клик с модификаторами — то, чем берут диапазон и по одной."""
-    return types_ns(global_x=300, global_y=250, local_x=300, local_y=250,
+    return types_ns(global_position=types_ns(x=300, y=250),
+                    local_position=types_ns(x=300, y=250),
                     kind="mouse", ctrl=ctrl, shift=shift, alt=False, meta=False)
 
 

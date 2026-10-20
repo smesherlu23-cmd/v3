@@ -7,7 +7,7 @@ from ..core import queries
 from ..infra import log
 from . import colors as C
 from . import widgets as Wg
-from .format import T
+from .format import T, as_icon
 
 HEADER_SIDES_W = 320
 
@@ -21,7 +21,7 @@ class Chrome:
         room = self.ui._window_width() - HEADER_SIDES_W
         self.ui.search_box.width = max(C.SEARCH_MIN_W, min(C.SEARCH_W, room))
         self.ui.search_box.bgcolor = C.FIELD_ACTIVE_BG if active else C.PANEL
-        self.ui.search_box.border = ft.border.all(
+        self.ui.search_box.border = ft.Border.all(
             1, C.FIELD_ACTIVE_BORDER if active else C.CONTROL)
         self.ui.search_icon.color = C.TEXT_2 if active else C.MUTED_2
         if active:
@@ -36,8 +36,8 @@ class Chrome:
     def build_header(self):
         logo = ft.WindowDragArea(
             ft.Container(T("Centurio", size=13.5, weight=ft.FontWeight.BOLD, color=C.TEXT),
-                         width=150, padding=ft.padding.only(18, 0, 0, 0),
-                         alignment=ft.alignment.center_left))
+                         width=150, padding=ft.Padding.only(left=18, top=0, right=0, bottom=0),
+                         alignment=ft.Alignment.CENTER_LEFT))
         centre = ft.Container(
             ft.Row([ft.WindowDragArea(ft.Container(height=36), expand=True),
                     self.ui.search_box,
@@ -49,13 +49,13 @@ class Chrome:
                     Wg.win_btn(ft.Icons.CROP_SQUARE, "Развернуть", self.ui._toggle_maximize),
                     Wg.win_btn(ft.Icons.CLOSE, "Закрыть", self.ui._close, danger=True)],
                    spacing=2, alignment=ft.MainAxisAlignment.END),
-            width=150, alignment=ft.alignment.center_right)
+            width=150, alignment=ft.Alignment.CENTER_RIGHT)
         return ft.Container(
             ft.Row([logo, centre, buttons], spacing=16,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=C.HEADER_H, bgcolor=C.BG_1,
-            border=ft.border.only(bottom=ft.BorderSide(1, C.LINE_2)),
-            padding=ft.padding.only(0, 0, 6, 0),
+            border=ft.Border.only(bottom=ft.BorderSide(1, C.LINE_2)),
+            padding=ft.Padding.only(left=0, top=0, right=6, bottom=0),
         )
 
     def _rail_item(self, glyph, active, on_click, tooltip, fixed_color=None,
@@ -68,8 +68,8 @@ class Chrome:
             glyph, width=btn, height=btn,
             border_radius=square_r if active else round_r,
             bgcolor=C.PANEL_ACTIVE if active else C.RAIL_BTN_BG,
-            border=ft.border.all(1, C.LINE_4) if outlined else None,
-            alignment=ft.alignment.center, tooltip=tooltip,
+            border=ft.Border.all(1, C.LINE_4) if outlined else None,
+            alignment=ft.Alignment.CENTER, tooltip=tooltip,
             clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
             animate=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT),
             animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
@@ -78,7 +78,7 @@ class Chrome:
         def on_hover(e):
             if active:
                 return
-            highlight = e.data == "true"
+            highlight = Wg.entered(e)
             inner.bgcolor = C.PANEL_ACTIVE if highlight else C.RAIL_BTN_BG
             inner.border_radius = square_r if highlight else round_r
             inner.scale = C.HOVER_SCALE if highlight else 1.0
@@ -100,9 +100,8 @@ class Chrome:
         content = tapper
         if on_drop_app is not None or on_drop_category is not None:
             def _accept(e):
-                src = self.ui.page.get_control(e.src_id)
-                payload = getattr(src, "data", None) if src is not None else None
-                inner.border = ft.border.all(1, C.LINE_4) if outlined else None
+                payload = Wg.dragged_data(e)
+                inner.border = ft.Border.all(1, C.LINE_4) if outlined else None
                 Wg.safe_update(inner)
 
                 if isinstance(payload, dict) and payload.get("category_id"):
@@ -115,19 +114,19 @@ class Chrome:
                         on_drop_app([payload])
 
             def _will(e):
-                inner.border = ft.border.all(2, self.ui._accent())
+                inner.border = ft.Border.all(2, self.ui._accent())
                 Wg.safe_update(inner)
 
             def _leave(e):
-                inner.border = ft.border.all(1, C.LINE_4) if outlined else None
+                inner.border = ft.Border.all(1, C.LINE_4) if outlined else None
                 Wg.safe_update(inner)
             content = ft.DragTarget(group="apps", content=tapper,
                                     on_accept=_accept, on_will_accept=_will, on_leave=_leave)
 
         bar = ft.Container(width=3, height=round(btn * 0.62),
-                           border_radius=ft.border_radius.only(0, 3, 0, 3),
+                           border_radius=ft.BorderRadius.only(top_left=0, top_right=3, bottom_left=0, bottom_right=3),
                            bgcolor=self.ui._accent()) if active else ft.Container(width=3)
-        return ft.Row([bar, ft.Container(content, expand=True, alignment=ft.alignment.center)],
+        return ft.Row([bar, ft.Container(content, expand=True, alignment=ft.Alignment.CENTER)],
                       spacing=0)
 
     def _inbox_badge(self, count: int):
@@ -135,7 +134,7 @@ class Chrome:
             T(str(count if count < 100 else 99), size=10, weight=ft.FontWeight.BOLD,
               color=C.ON_ACCENT, font_family="monospace"),
             height=17, border_radius=9, bgcolor=self.ui._accent(),
-            padding=ft.padding.symmetric(0, 5), alignment=ft.alignment.center)
+            padding=ft.Padding.symmetric(vertical=0, horizontal=5), alignment=ft.Alignment.CENTER)
 
     def _on_rail_scroll(self, e: ft.OnScrollEvent):
         self.ui._rail_scroll = e.pixels or 0.0
@@ -157,7 +156,7 @@ class Chrome:
                             self.ui.view.sidebar_open, lambda: self.ui._toggle_sidebar(),
                             "Показать/скрыть панель"),
             ft.Container(width=round(btn * 0.72), height=1, bgcolor=C.LINE_2,
-                         margin=ft.margin.symmetric(3, 0)),
+                         margin=ft.Margin.symmetric(vertical=3, horizontal=0)),
         ]
 
         cats = []
@@ -176,12 +175,12 @@ class Chrome:
                                      data={"category_id": cat["id"]}))
         add = ft.Container(ft.Icon(ft.Icons.ADD, size=glyph - 3, color=C.TEXT_FAINT),
                            width=btn, height=btn, border_radius=btn / 2,
-                           alignment=ft.alignment.center,
-                           border=ft.border.all(1.5, C.CONTROL),
+                           alignment=ft.Alignment.CENTER,
+                           border=ft.Border.all(1.5, C.CONTROL),
                            on_click=lambda e: self.ui._add_category(),
                            tooltip="Добавить категорию")
         cats.append(ft.Row([ft.Container(width=3),
-                            ft.Container(add, expand=True, alignment=ft.alignment.center)],
+                            ft.Container(add, expand=True, alignment=ft.Alignment.CENTER)],
                            spacing=0))
         middle = ft.Container(
             ft.Column(cats, spacing=gap, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -202,28 +201,28 @@ class Chrome:
                                  color=C.TEXT if self.ui.view.screen == "settings"
                                  else C.MUTED_2),
                         width=btn, height=btn, border_radius=btn / 2,
-                        alignment=ft.alignment.center,
+                        alignment=ft.Alignment.CENTER,
                         on_click=lambda e: self.ui._open_settings(), tooltip="Настройки"),
         ]
 
         return ft.Container(
             ft.Column(top + [middle] + bottom, spacing=gap,
                       horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
-            padding=ft.padding.only(0, 14, 0, 12),
-            border=ft.border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
+            padding=ft.Padding.only(left=0, top=14, right=0, bottom=12),
+            border=ft.Border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
         )
 
     def _sidebar_filter(self, icon_ctl, label, key):
         active = self.ui.view.filter == key and self.ui.view.screen == "grid" and not self.ui.view.active_set
         row = ft.Container(
             ft.Row([
-                ft.Container(icon_ctl, width=16, height=16, alignment=ft.alignment.center),
+                ft.Container(icon_ctl, width=16, height=16, alignment=ft.Alignment.CENTER),
                 T(label, size=13, color=C.TEXT if active else C.TEXT_2,
                   weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400, expand=True),
             ], spacing=11),
-            padding=ft.padding.symmetric(7, 10), border_radius=9,
+            padding=ft.Padding.symmetric(vertical=7, horizontal=10), border_radius=9,
             bgcolor=C.SET_SLOT_BG if active else None,
-            border=ft.border.all(1, C.CONTROL) if active else None,
+            border=ft.Border.all(1, C.CONTROL) if active else None,
             animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             on_click=lambda e: self.ui._set_filter(key),
         )
@@ -238,9 +237,9 @@ class Chrome:
         top = [ft.Container(T(self.ui._current_title(), size=18, weight=ft.FontWeight.BOLD,
                               color=C.TEXT, max_lines=1,
                               overflow=ft.TextOverflow.ELLIPSIS),
-                            padding=ft.padding.only(8, 0, 8, 0))]
+                            padding=ft.Padding.only(left=8, top=0, right=8, bottom=0))]
         top += [
-            ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.symmetric(10, 0)),
+            ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.Margin.symmetric(vertical=10, horizontal=0)),
             self._sidebar_filter(ft.Icon(ft.Icons.STAR, size=16, color=C.STAR),
                                  "Избранное", "favorites"),
             self._sidebar_filter(ft.Icon(ft.Icons.SCHEDULE, size=16, color=C.MUTED),
@@ -252,14 +251,14 @@ class Chrome:
                 ft.Icon(ft.Icons.VISIBILITY_OFF, size=16, color=C.MUTED),
                 "Скрытые", "hidden"))
 
-        top += [ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.symmetric(10, 0)),
+        top += [ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.Margin.symmetric(vertical=10, horizontal=0)),
                 ft.Container(ft.Row([Wg.caps("НАБОРЫ"), ft.Container(expand=True),
                                      ft.Container(ft.Icon(ft.Icons.ADD, size=15,
                                                           color=C.MUTED_2),
                                                   tooltip="Собрать набор из выбранного",
                                                   on_click=lambda e: self.ui.set_ops.new_set())],
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                             padding=ft.padding.only(10, 0, 10, 8))]
+                             padding=ft.Padding.only(left=10, top=0, right=10, bottom=8))]
 
         sets_block = []
         if self.ui.view.select_mode:
@@ -270,15 +269,15 @@ class Chrome:
         if not records and not self.ui.view.select_mode:
             sets_block.append(ft.Container(
                 T("Выберите плитки и нажмите «плюс»", size=11.5, color=C.TEXT_DIM),
-                padding=ft.padding.only(10, 0, 10, 4)))
+                padding=ft.Padding.only(left=10, top=0, right=10, bottom=4)))
         return ft.Container(
             ft.Column([ft.Column(top, spacing=3, tight=True),
                        ft.Column(sets_block, spacing=3, expand=True,
                                  scroll=ft.ScrollMode.AUTO),
                        self._sidebar_footer()],
                       spacing=3, expand=True),
-            padding=ft.padding.only(14, 20, 14, 12),
-            border=ft.border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
+            padding=ft.Padding.only(left=14, top=20, right=14, bottom=12),
+            border=ft.Border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
         )
 
     def _sidebar_set_row(self, rec):
@@ -289,11 +288,11 @@ class Chrome:
         row = ft.Container(
             ft.Row([ft.Container(ft.Icon(ft.Icons.LAYERS, size=16,
                                          color=C.TEXT_2 if active else C.MUTED),
-                                 width=16, height=16, alignment=ft.alignment.center),
+                                 width=16, height=16, alignment=ft.Alignment.CENTER),
                     ft.Column(lines, spacing=1, expand=True, tight=True)], spacing=10),
-            padding=ft.padding.symmetric(8, 10), border_radius=9,
+            padding=ft.Padding.symmetric(vertical=8, horizontal=10), border_radius=9,
             bgcolor=C.SET_SLOT_BG if active else None,
-            border=ft.border.all(1, C.CONTROL) if active else None,
+            border=ft.Border.all(1, C.CONTROL) if active else None,
             on_click=lambda e, sid=rec["id"]: self.ui._open_set(sid))
         if not active:
             Wg.hoverable(row, None, C.SET_SLOT_BG)
@@ -308,12 +307,12 @@ class Chrome:
     def _set_drop_hint(self):
         row = ft.Container(
             ft.Row([ft.Container(ft.Icon(ft.Icons.LAYERS, size=16, color=C.MUTED),
-                                 width=16, height=16, alignment=ft.alignment.center),
+                                 width=16, height=16, alignment=ft.Alignment.CENTER),
                     T("Перетащите сюда", size=12, color=C.MUTED, expand=True,
                       max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)],
                    spacing=10),
-            padding=ft.padding.symmetric(8, 10), border_radius=9,
-            border=ft.border.all(1, C.BAR_BORDER),
+            padding=ft.Padding.symmetric(vertical=8, horizontal=10), border_radius=9,
+            border=ft.Border.all(1, C.BAR_BORDER),
             on_click=lambda e: self.ui.set_ops.new_set())
         return ft.DragTarget(
             group="apps", content=row,
@@ -322,8 +321,8 @@ class Chrome:
             on_leave=lambda e, r=row: self.highlight_drop(r, False, C.BAR_BORDER))
 
     def highlight_drop(self, row, on: bool, rest=None):
-        row.border = (ft.border.all(1, self.ui._accent()) if on
-                      else (ft.border.all(1, rest) if rest else None))
+        row.border = (ft.Border.all(1, self.ui._accent()) if on
+                      else (ft.Border.all(1, rest) if rest else None))
         try:
             row.update()
         except Exception:
@@ -331,8 +330,7 @@ class Chrome:
 
     def drop_set_item(self, set_id, target_id, e, row, rest=C.LINE):
         self.highlight_drop(row, False, rest)
-        src = self.ui.page.get_control(e.src_id)
-        moved = getattr(src, "data", None) if src is not None else None
+        moved = Wg.dragged_data(e)
         rec = self.ui.store.get_set(set_id)
         if not rec or not isinstance(moved, str) or moved == target_id:
             return
@@ -346,8 +344,7 @@ class Chrome:
         self.ui.refresh()
 
     def _dropped_ids(self, e) -> list[str]:
-        src = self.ui.page.get_control(e.src_id)
-        payload = getattr(src, "data", None) if src is not None else None
+        payload = Wg.dragged_data(e)
         if isinstance(payload, dict) and payload.get("ids"):
             return list(payload["ids"])
         return [payload] if payload else []
@@ -375,8 +372,8 @@ class Chrome:
             ft.Row([notice,
                     T(f"v{__version__}", size=11, color=C.MUTED_3, font_family="monospace")],
                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)),
-            padding=ft.padding.only(10, 10, 10, 0),
+            border=ft.Border.only(top=ft.BorderSide(1, C.LINE_2)),
+            padding=ft.Padding.only(left=10, top=10, right=10, bottom=0),
         )
 
     def build_toolbar(self):
@@ -395,24 +392,24 @@ class Chrome:
             ft.Row([T(queries.SORT_LABELS[self.ui.view.sort], size=12.5, color=C.MUTED),
                     ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14, color=C.MUTED_2)],
                    spacing=7),
-            height=34, padding=ft.padding.symmetric(0, 12),
-            border=ft.border.all(1, C.CONTROL), border_radius=9,
-            on_click=lambda e: self.ui.context_menus.sort_menu(e), alignment=ft.alignment.center,
+            height=34, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
+            border=ft.Border.all(1, C.CONTROL), border_radius=9,
+            on_click=lambda e: self.ui.context_menus.sort_menu(e), alignment=ft.Alignment.CENTER,
             tooltip="Порядок плиток",
         )
         Wg.hoverable(sort_btn, None, C.SELECTED_BG)
 
         def view_btn(icon_name, m, tip):
             active = self.ui.view.mode == m
-            return ft.Container(ft.Icon(icon_name, size=13,
+            return ft.Container(ft.Icon(as_icon(icon_name), size=13,
                                         color=C.TEXT if active else C.MUTED_2),
-                                width=34, height=34, alignment=ft.alignment.center,
+                                width=34, height=34, alignment=ft.Alignment.CENTER,
                                 bgcolor=C.PANEL_ACTIVE if active else None,
                                 on_click=lambda e: self.ui._set_mode(m), tooltip=tip)
         view_toggle = ft.Container(
             ft.Row([view_btn(ft.Icons.GRID_VIEW, "grid", "Сетка"),
                     view_btn(ft.Icons.VIEW_LIST, "list", "Список")], spacing=0),
-            border=ft.border.all(1, C.CONTROL), border_radius=9,
+            border=ft.Border.all(1, C.CONTROL), border_radius=9,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         )
         right = Wg.primary_btn("Добавить", self.ui.open_add, self.ui._accent(),
@@ -420,5 +417,5 @@ class Chrome:
         return ft.Container(
             ft.Row(left + [sort_btn, view_toggle, ft.Container(expand=True), right],
                    spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.only(22, 16, 22, 10),
+            padding=ft.Padding.only(left=22, top=16, right=22, bottom=10),
         )

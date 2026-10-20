@@ -6,7 +6,7 @@ from ...core import queries
 from ...core.text import match_spans
 from .. import colors as C
 from .. import widgets as Wg
-from ..format import T
+from ..format import T, as_icon
 from .common import _caps
 
 
@@ -30,11 +30,11 @@ def build_palette(ui, rows):
         children.append(ft.Container(
             ft.Column([_palette_action_row(ui, a, i) for i, a in enumerate(actions)],
                       spacing=1, tight=True),
-            padding=ft.padding.only(8, 0, 8, 10)))
+            padding=ft.Padding.only(left=8, top=0, right=8, bottom=10)))
     return ft.Container(
         ft.Column(children, spacing=0, tight=True),
         width=C.PALETTE_W, bgcolor=C.PALETTE_BG,
-        border=ft.border.all(1, C.PALETTE_BORDER), border_radius=14,
+        border=ft.Border.all(1, C.PALETTE_BORDER), border_radius=14,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
         shadow=ft.BoxShadow(blur_radius=70, offset=ft.Offset(0, 30),
                             color=C.SHADOW_PALETTE))
@@ -42,12 +42,12 @@ def build_palette(ui, rows):
 
 def _group_head(label, first: bool = False):
     return ft.Container(_caps(label),
-                        padding=ft.padding.only(16, 12 if first else 14, 16, 6))
+                        padding=ft.Padding.only(left=16, top=12 if first else 14, right=16, bottom=6))
 
 
 def _palette_list(rows):
     return ft.Container(ft.Column(rows, spacing=1, tight=True),
-                        padding=ft.padding.symmetric(0, 8))
+                        padding=ft.Padding.symmetric(vertical=0, horizontal=8))
 
 
 def _palette_row(ui, index: int, plate, lines, right, on_click, height=48):
@@ -58,7 +58,7 @@ def _palette_row(ui, index: int, plate, lines, right, on_click, height=48):
         controls.append(right)
     row = ft.Container(
         ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=height, padding=ft.padding.symmetric(0, 12), border_radius=10,
+        height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=10,
         bgcolor=C.PALETTE_ROW if active else None,
         on_click=lambda e: on_click())
     row.on_hover = lambda e, i=index: ui.palette_hover(i, e)
@@ -103,13 +103,13 @@ def _palette_set_row(ui, row):
 
 def _palette_action_row(ui, action, index):
     active = ui.view.palette_focus == "actions" and ui.view.palette_index == index
-    controls = [ft.Container(ft.Icon(action["icon"], size=17, color=C.SLOT_GLYPH),
-                             width=32, alignment=ft.alignment.center),
+    controls = [ft.Container(ft.Icon(as_icon(action["icon"]), size=17, color=C.SLOT_GLYPH),
+                             width=32, alignment=ft.Alignment.CENTER),
                 T(action["label"], size=13.5, color=C.WHITE if active else C.TEXT_2,
                   expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
     row = ft.Container(
         ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=40, padding=ft.padding.symmetric(0, 12), border_radius=10,
+        height=40, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=10,
         bgcolor=C.PALETTE_ROW if active else None,
         on_click=lambda e, k=action["key"]: ui.run_palette_action(k))
     if not active:
@@ -122,4 +122,4 @@ def _palette_empty(ui):
         ft.Row([T("Ничего не найдено", size=13.5, color=C.MUTED, expand=True),
                 Wg.link_btn("Найти на диске", ui.open_add)],
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.padding.only(16, 14, 16, 16))
+        padding=ft.Padding.only(left=16, top=14, right=16, bottom=16))

@@ -15,7 +15,9 @@ class ContextMenus:
     def menu_at(self, e):
         if e is None:
             return self.ui._window_width() / 2, 180.0
-        return float(getattr(e, "global_x", 0) or 0), float(getattr(e, "global_y", 0) or 0)
+        pos = getattr(e, "global_position", None)
+        return (float(pos.x), float(pos.y)) if pos is not None else (self.ui._window_width() / 2,
+                                                                      180.0)
 
     def on_menu_dismissed(self):
         self.ui.safe_refresh()

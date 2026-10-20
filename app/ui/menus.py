@@ -4,7 +4,7 @@ import flet as ft
 
 from . import colors as C
 from . import widgets as Wg
-from .format import T, cat_icon
+from .format import T, as_icon, cat_icon
 
 ROW_H = 36
 HEADER_H = 44
@@ -111,11 +111,11 @@ class MenuHost:
         children = []
         if header is not None:
             children += [header, ft.Container(height=1, bgcolor=C.LINE_2,
-                                              margin=ft.margin.only(4, 0, 4, 6))]
+                                              margin=ft.Margin.only(left=4, top=0, right=4, bottom=6))]
         for row in rows:
             children.append(self._row(row) if row["kind"] == "item" else
                             ft.Container(height=1, bgcolor=C.LINE_2,
-                                         margin=ft.margin.symmetric(5, 4)))
+                                         margin=ft.Margin.symmetric(vertical=5, horizontal=4)))
         full = height_of(rows) + (HEADER_H if header is not None else 0) + 16
         # Длинный список (много программ или категорий) не уходит за край окна,
         # а прокручивается внутри меню.
@@ -124,8 +124,8 @@ class MenuHost:
             ft.Column(children, spacing=1, tight=not scroll,
                       scroll=ft.ScrollMode.AUTO if scroll else None),
             height=height if scroll else None,
-            width=width, bgcolor=C.PANEL, border=ft.border.all(1, C.MENU_BORDER),
-            border_radius=14, padding=ft.padding.all(8),
+            width=width, bgcolor=C.PANEL, border=ft.Border.all(1, C.MENU_BORDER),
+            border_radius=14, padding=ft.Padding.all(8),
             shadow=ft.BoxShadow(blur_radius=60, offset=ft.Offset(0, 24),
                                 color=C.SHADOW_MENU))
 
@@ -136,7 +136,7 @@ class MenuHost:
             color = icon_color = C.MUTED_3
         controls = []
         if row["icon"]:
-            controls.append(ft.Icon(row["icon"], size=17, color=icon_color))
+            controls.append(ft.Icon(as_icon(row["icon"]), size=17, color=icon_color))
         controls.append(T(row["label"], size=13.5, color=color, expand=True,
                           max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
         if row["hint"]:
@@ -147,11 +147,11 @@ class MenuHost:
 
         container = ft.Container(
             ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.symmetric(9, 12), border_radius=9,
+            padding=ft.Padding.symmetric(vertical=9, horizontal=12), border_radius=9,
             on_click=None if row["disabled"] else (lambda e, r=row: self._fire(r)))
         if not row["disabled"]:
             def on_hover(e, c=container):
-                c.bgcolor = C.PANEL_3 if e.data == "true" else None
+                c.bgcolor = C.PANEL_3 if Wg.entered(e) else None
                 Wg.safe_update(c)
             container.on_hover = on_hover
         return container
@@ -165,7 +165,7 @@ class MenuHost:
 
     def _safe_update(self):
         try:
-            if self.control.page:
+            if Wg.attached(self.control):
                 self.control.update()
         except Exception:
             from ..infra import log
@@ -180,14 +180,14 @@ def app_header(ui, app, running: bool):
         row.append(ft.Container(width=6, height=6, border_radius=3, bgcolor=C.GREEN))
     return ft.Container(ft.Row(row, spacing=11,
                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=ft.padding.only(12, 10, 12, 12))
+                        padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))
 
 
 def text_header(label: str, count: str = ""):
     row = [T(label, size=13.5, weight=ft.FontWeight.BOLD, color=C.TEXT, expand=True)]
     if count:
         row.append(T(count, size=11, color=C.TEXT_FAINT))
-    return ft.Container(ft.Row(row, spacing=10), padding=ft.padding.only(12, 10, 12, 12))
+    return ft.Container(ft.Row(row, spacing=10), padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))
 
 
 def category_header(ui, cat, count: int):
@@ -197,4 +197,4 @@ def category_header(ui, cat, count: int):
                   expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                 T(str(count), size=11, color=C.TEXT_FAINT)],
                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.padding.only(12, 10, 12, 12))
+        padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import os
 import threading
 from collections import OrderedDict
@@ -49,10 +48,10 @@ class _LruCache:
             self._bytes = 0
 
 
-_IMG_B64_CACHE = _LruCache(max_entries=192, max_bytes=24 * 1024 * 1024)
+_IMG_BYTES_CACHE = _LruCache(max_entries=192, max_bytes=24 * 1024 * 1024)
 _SVG_CACHE = _LruCache(max_entries=64, max_bytes=2 * 1024 * 1024)
 
-# Кодировать ли растр в base64 вместо того, чтобы отдать путь. Нужно только
+# Отдавать ли растр байтами вместо пути к файлу. Нужно только
 # режиму CENTURIO_WEB: страница в браузере не может открыть файл на диске.
 _EMBED = False
 
@@ -68,7 +67,7 @@ def raster_path(path) -> str | None:
     return str(path) if os.path.exists(path) else None
 
 
-def img_b64(path) -> str | None:
+def img_bytes(path) -> bytes | None:
     if not path or not str(path).lower().endswith(_RASTER_EXT):
         return None
     key = str(path)
@@ -76,7 +75,7 @@ def img_b64(path) -> str | None:
         st = os.stat(path)
     except OSError:
         return None
-    cached = _IMG_B64_CACHE.get(key, st.st_mtime)
+    cached = _IMG_BYTES_CACHE.get(key, st.st_mtime)
     if cached is not None:
         return cached
     try:
@@ -84,9 +83,8 @@ def img_b64(path) -> str | None:
             data = fh.read()
     except OSError:
         return None
-    b = base64.b64encode(data).decode("ascii")
-    _IMG_B64_CACHE.put(key, st.st_mtime, b, len(b))
-    return b
+    _IMG_BYTES_CACHE.put(key, st.st_mtime, data, len(data))
+    return data
 
 
 def _svg_markup(path) -> str | None:
@@ -114,8 +112,8 @@ def icon_image(path, **kw) -> ft.Image | None:
     if raster:
         if not _EMBED:
             return ft.Image(src=raster, **kw)
-        b64 = img_b64(raster)
-        return ft.Image(src_base64=b64, **kw) if b64 else None
+        data = img_bytes(raster)
+        return ft.Image(src=data, **kw) if data else None
     svg = _svg_markup(path)
     if svg:
         return ft.Image(src=svg, **kw)

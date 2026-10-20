@@ -25,11 +25,11 @@ env:
 
 jobs:
   build:
-    # Не `windows-latest`: на нём теперь Visual Studio 2026, а Flutter 3.29.2
-    # (его тянет flet 0.28.3) просит у CMake генератор «Visual Studio 16 2019»
-    # и падает с «could not find any instance of Visual Studio». Когда flet
-    # переедет на Flutter, знающий про VS 2026, образ можно вернуть обратно.
-    # Тесты в ci.yml это не касается — они собираются без Flutter.
+    # Не `windows-latest`: на нём Visual Studio 2026, а Flutter, которого
+    # тянет `flet build`, ищет для CMake генератор по версии Visual Studio и
+    # на незнакомой падает с «could not find any instance of Visual Studio».
+    # На образе с VS 2022 сборка проверена. Тесты в ci.yml это не касается —
+    # они собираются без Flutter.
     runs-on: windows-2022
 
     steps:
@@ -48,6 +48,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # С Flet 1.0 команда `flet build` — отдельный пакет; версия та же,
+          # что у flet в requirements.txt (сверяет test_packaging_metadata).
+          pip install "flet-cli==1.0.4"
           pip install pytest ruff
 
       # Версии в app/__init__.py, pyproject.toml и centurio.iss сверяет

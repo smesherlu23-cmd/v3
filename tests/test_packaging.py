@@ -230,6 +230,11 @@ def test_packaging_metadata():
        f"requirements.txt and pyproject agree (pyproject-only: {declared - required}, "
        f"requirements-only: {required - declared})")
 
+    flet = re.search(r"flet\[desktop\]==([\d.]+)", _read("requirements.txt"))
+    cli = re.search(r"flet-cli==([\d.]+)", _read(".github", "workflows", "release.yml"))
+    ok(flet and cli and flet.group(1) == cli.group(1),
+       "the release builds with flet-cli of the same version as flet itself")
+
 
 def test_release_fixes_the_code_page_and_runs_the_built_exe():
     """Релиз обязан перевести exe на UTF-8 и запустить его до подписи.
@@ -367,7 +372,7 @@ def test_single_entry_point():
     """app/main.py builds the page; only the root main.py launches it."""
     root_main = _read("main.py")
     page_module = _read("app", "main.py")
-    ok('if __name__ == "__main__"' in root_main and "ft.app(" in root_main,
+    ok('if __name__ == "__main__"' in root_main and "ft.run(" in root_main,
        "the root main.py starts the app")
     ok('host="127.0.0.1"' in root_main,
        "the browser mode listens on this machine only — it can launch any program")
@@ -377,7 +382,7 @@ def test_single_entry_point():
        "app/main.py doesn't carry a second entry point")
     code = "\n".join(line for line in page_module.splitlines()
                      if not line.lstrip().startswith("#"))
-    ok("ft.app(" not in code, "app/main.py doesn't call ft.app()")
+    ok("ft.run(" not in code and "ft.app(" not in code, "app/main.py doesn't start Flet itself")
 
 
 def test_no_modal_dialogs():

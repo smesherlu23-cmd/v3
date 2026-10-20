@@ -171,11 +171,11 @@ def _start(page: ft.Page):
             if fits:
                 page.window.left = x
                 page.window.top = y
-            else:
-                page.window.center()
             if s.get("win_max"):
                 page.window.maximized = True
             page.update()
+            if not fits:
+                page.run_task(page.window.center)
         except Exception:
             log.exception("восстановление геометрии окна ошибка")
 
@@ -312,13 +312,14 @@ def _start(page: ft.Page):
         geometry_flush.schedule(immediate=flush)
 
     def on_win_event(e):
-        if e.data in ("resized", "moved", "maximize", "unmaximize"):
+        kind = e.type.value if e.type else ""
+        if kind in ("resized", "moved", "maximize", "unmaximize"):
             save_window()
-        elif e.data == "minimize":
+        elif kind == "minimize":
             set_visible(False)
-        elif e.data in ("restore", "focus"):
+        elif kind in ("restore", "focus"):
             set_visible(True)
-        elif e.data == "close":
+        elif kind == "close":
             save_window(flush=True)
             close()
     page.window.on_event = on_win_event if not is_web else None
@@ -401,10 +402,12 @@ def _show_window(page):
         page.update()
     except Exception:
         log.exception("не удалось восстановить окно")
-    try:
-        page.window.to_front()
+    async def to_front():
+        await page.window.to_front()
         page.window.focused = True
         page.update()
+    try:
+        page.run_task(to_front)
     except Exception:
         log.exception("не удалось переместить окно на передний план")
 
@@ -418,9 +421,15 @@ def _hide_window(page):
 
 
 def _quit(page):
-    try:
+    async def destroy():
         page.window.prevent_close = False
-        page.window.destroy()
+        page.update()
+        await page.window.destroy()
+    # Закрытие окна идёт через цикл событий Flet; если он уже не отвечает,
+    # процесс всё равно должен завершиться, а не висеть в трее без значка.
+    threading.Timer(5.0, os._exit, args=(0,)).start()
+    try:
+        page.run_task(destroy)
     except Exception:
         log.exception("не удалось закрыть окно, выход вручную")
         os._exit(0)

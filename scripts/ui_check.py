@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -62,9 +63,11 @@ class Session:
         env = dict(os.environ, APPDATA=str(self.workdir), CENTURIO_NO_DIALOG="1",
                    CENTURIO_UI_CHECK=str(self.state_path))
         env.pop("CENTURIO_WEB", None)
+        # Своя группа процессов: клиент Flet — дочерний процесс Python, и при
+        # остановке его надо гасить вместе с программой, иначе окна копятся.
         self.proc = subprocess.Popen([sys.executable, str(ROOT / "main.py")], cwd=str(ROOT),
                                      env=env, stdout=open(self.log_path, "w"),
-                                     stderr=subprocess.STDOUT)
+                                     stderr=subprocess.STDOUT, start_new_session=True)
         self.wait(lambda s: True, "приложение пишет состояние", START_TIMEOUT)
         deadline = time.monotonic() + START_TIMEOUT
         while time.monotonic() < deadline:
@@ -82,16 +85,27 @@ class Session:
                 self.geometry[key] = int(value)
 
     def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(10)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+        if not self.proc:
+            return
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+            self.proc.wait(10)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+        # Клиент Flet из той же группы мог пережить Python: добиваем всю группу.
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.proc.wait(10)
 
     @staticmethod
     def xdo(*args, check=True) -> str:
-        res = subprocess.run(["xdotool", *args], capture_output=True, text=True, timeout=30)
+        try:
+            res = subprocess.run(["xdotool", *args], capture_output=True, text=True,
+                                 timeout=30)
+        except subprocess.TimeoutExpired as exc:
+            raise CheckFailed(f"xdotool {' '.join(args)} не ответил за 30 с") from exc
         if check and res.returncode != 0:
             raise CheckFailed(f"xdotool {' '.join(args)}: {res.stderr.strip()}")
         return res.stdout.strip()
@@ -116,7 +130,10 @@ class Session:
 
     def click(self, x: int, y: int) -> None:
         gx, gy = self.geometry.get("X", 0) + x, self.geometry.get("Y", 0) + y
-        self.xdo("mousemove", "--sync", str(gx), str(gy))
+        # Без --sync: если указатель уже стоит в этой точке (второй щелчок по
+        # тому же месту), xdotool ждёт движения, которого не будет.
+        self.xdo("mousemove", str(gx), str(gy))
+        time.sleep(0.1)
         self.xdo("click", "1")
 
     def click_search(self) -> None:
@@ -128,12 +145,24 @@ class Session:
     def key(self, *names: str) -> None:
         self.xdo("key", *names)
 
+    @staticmethod
+    def human_pause() -> None:
+        """Пауза человека между сочетанием и следующей буквой.
+
+        Курсор в поиск ставит Python: путь «клавиша → Python → Flutter» на
+        виртуальном экране без видеокарты бывает дольше 90 мс, с которыми
+        печатает xdotool, и буква, набранная раньше, уходит мимо. У человека
+        между Ctrl+K и первой буквой проходит больше.
+        """
+        time.sleep(0.5)
+
 
 def scenarios(s: Session):
     def search_takes_text_after_click():
         s.click_search()
         s.type("tel")
-        s.wait(lambda st: st["query"] == "tel" and st["palette_open"],
+        s.wait(lambda st: st["query"] == "tel" and st["palette_open"]
+               and st["palette"][:1] == ["Telegram"],
                "после щелчка по строке поиска набранное «tel» дошло до программы")
 
     def enter_launches_first_row():
@@ -155,7 +184,8 @@ def scenarios(s: Session):
 
     def arrows_pick_the_row_to_launch():
         s.type("te")
-        st = s.wait(lambda st: st["query"] == "te" and len(st["palette"]) >= 2,
+        st = s.wait(lambda st: st["query"] == st["palette_query"] == "te"
+                    and len(st["palette"]) >= 2,
                     "на «te» нашлось хотя бы две строки")
         s.key("Down")
         s.wait(lambda st: st["palette_index"] == 1, "стрелка вниз выбрала вторую строку")
@@ -166,11 +196,37 @@ def scenarios(s: Session):
 
     def ctrl_k_opens_search():
         s.key("ctrl+k")
+        s.human_pause()
         s.type("chr")
         s.wait(lambda st: st["query"] == "chr" and st["palette"][:1] == ["Google Chrome"],
                "Ctrl+K ставит курсор в поиск, «chr» находит Chrome")
         s.key("Escape")
         s.wait(lambda st: not st["palette_open"], "Esc закрыл палитру")
+
+    def tab_keeps_typing_in_the_search():
+        # Над настройками: там есть другое поле (цвет акцента), куда Flutter
+        # уводил фокус по Tab, — и продолжение запроса набиралось туда.
+        s.key("ctrl+comma")
+        s.wait(lambda st: st["screen"] == "settings", "открылись настройки")
+        accent = s.state()["accent"]
+        s.key("ctrl+k")
+        s.human_pause()
+        s.type("tel")
+        s.wait(lambda st: st["query"] == "tel", "набрано «tel»")
+        s.key("Tab")
+        s.wait(lambda st: st["palette_focus"] == "actions", "Tab перевёл выбор на действия")
+        s.human_pause()
+        s.type("e")
+        # Вернувшийся фокус Flutter может выделить весь запрос, и буква его
+        # заменит («e» вместо «tele») — это не страшно. Страшно было, когда
+        # буквы уходили в другое поле окна и меняли, например, цвет или имя.
+        s.wait(lambda st: st["query"] in ("tele", "e") and st["typing"] == "search"
+               and st["accent"] == accent,
+               "после Tab буквы по-прежнему идут в поиск, а не в другое поле окна")
+        s.key("Escape")
+        s.wait(lambda st: not st["palette_open"], "Esc закрыл палитру")
+        s.key("Escape")
+        s.wait(lambda st: st["screen"] == "grid", "Esc вернул к библиотеке")
 
     def settings_open_and_close():
         s.key("ctrl+comma")
@@ -180,7 +236,7 @@ def scenarios(s: Session):
 
     return [search_takes_text_after_click, enter_launches_first_row,
             second_click_keeps_focus, arrows_pick_the_row_to_launch,
-            ctrl_k_opens_search, settings_open_and_close]
+            ctrl_k_opens_search, tab_keeps_typing_in_the_search, settings_open_and_close]
 
 
 def screenshot(path: Path) -> None:
@@ -219,6 +275,10 @@ def main() -> int:
         finally:
             session.stop()
             shutil.copy(session.log_path, out_dir / "app.log")
+            for name in ("centurio.log", "centurio-crash.log"):
+                own = Path(tmp) / "Centurio" / name
+                if own.exists():
+                    shutil.copy(own, out_dir / name)
     print("Проверка интерфейса: " + ("всё прошло" if not failed else f"провалено {failed}"))
     return 1 if failed else 0
 

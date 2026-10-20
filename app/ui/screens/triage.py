@@ -28,13 +28,13 @@ def build_triage_screen(ui):
                          tooltip="Очистить очередь — найденное вернётся при следующей проверке",
                          on_click=lambda e: ui.triage.triage_defer_all())],
             spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.padding.only(26, 22, 26, 0))
+        padding=ft.Padding.only(left=26, top=22, right=26, bottom=0))
 
     bar = ft.Container(
         ft.Row([ft.Container(height=3, border_radius=2, bgcolor=C.ACCENT, expand=max(done, 0) or 1
                              if done else 1, visible=bool(done)),
                 ft.Container(height=3, border_radius=2, bgcolor=C.PROGRESS_TRACK, expand=total)],
-               spacing=3), padding=ft.padding.only(26, 16, 26, 0))
+               spacing=3), padding=ft.Padding.only(left=26, top=16, right=26, bottom=0))
 
     chips = []
     for index, cat in enumerate(picks):
@@ -47,15 +47,15 @@ def build_triage_screen(ui):
         chips.append(ft.Container(
             ft.Row(row, spacing=9, tight=True,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=44, padding=ft.padding.symmetric(0, 16), border_radius=12,
+            height=44, padding=ft.Padding.symmetric(vertical=0, horizontal=16), border_radius=12,
             bgcolor=C.TRIAGE_PICK_BG if first else None,
-            border=ft.border.all(1, C.TRIAGE_PICK_BORDER if first else C.TRIAGE_CHIP_BORDER),
+            border=ft.Border.all(1, C.TRIAGE_PICK_BORDER if first else C.TRIAGE_CHIP_BORDER),
             on_click=lambda e, cid=cat["id"], iid=item["id"]: ui.triage.triage_place(iid, cid)))
 
     source = queries.SOURCES.get(item.get("source") or "", {}).get("label", "")
     card = ft.Column([
         ft.Container(ui.icon_slot(item, 92, 24, glyph=42, border=C.TRIAGE_SLOT_BORDER),
-                     alignment=ft.alignment.center),
+                     alignment=ft.Alignment.CENTER),
         ft.Column([
             T(item["name"], size=22, weight=ft.FontWeight.BOLD, color=C.TEXT,
               text_align=ft.TextAlign.CENTER),
@@ -63,14 +63,14 @@ def build_triage_screen(ui):
         ], spacing=7, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         ft.Container(ft.Row(chips, spacing=9, wrap=True, run_spacing=9,
                             alignment=ft.MainAxisAlignment.CENTER),
-                     padding=ft.padding.only(0, 2, 0, 0)),
+                     padding=ft.Padding.only(left=0, top=2, right=0, bottom=0)),
     ], spacing=20, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         alignment=ft.MainAxisAlignment.CENTER)
 
     def hint(key, label):
         return ft.Row([ft.Container(T(key, size=10.5, color=C.MUTED, font_family="monospace"),
-                                    bgcolor=C.PANEL_2, border=ft.border.all(1, C.LINE),
-                                    border_radius=4, padding=ft.padding.symmetric(2, 6)),
+                                    bgcolor=C.PANEL_2, border=ft.Border.all(1, C.LINE),
+                                    border_radius=4, padding=ft.Padding.symmetric(vertical=2, horizontal=6)),
                        T(label, size=11.5, color=C.MUTED_2)], spacing=7, tight=True)
 
     footer = ft.Container(
@@ -81,12 +81,12 @@ def build_triage_screen(ui):
                 ft.Container(hint("Del", "не нужно"), tooltip="Больше не предлагать",
                              on_click=lambda e, iid=item["id"]: ui.triage.triage_drop(iid))],
                spacing=20, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=52, bgcolor=C.BG_2, padding=ft.padding.symmetric(0, 26),
-        border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)))
+        height=52, bgcolor=C.BG_2, padding=ft.Padding.symmetric(vertical=0, horizontal=26),
+        border=ft.Border.only(top=ft.BorderSide(1, C.LINE_2)))
 
     return ft.Column([head, bar,
-                      ft.Container(card, expand=True, padding=ft.padding.symmetric(0, 26),
-                                   alignment=ft.alignment.center),
+                      ft.Container(card, expand=True, padding=ft.Padding.symmetric(vertical=0, horizontal=26),
+                                   alignment=ft.Alignment.CENTER),
                       footer], spacing=0, expand=True)
 
 
@@ -101,8 +101,8 @@ def _triage_done(ui):
         ft.Column([
             ft.Container(ft.Icon(ft.Icons.CHECK, size=28, color=C.GREEN),
                          width=64, height=64, border_radius=20, bgcolor=C.DONE_BG,
-                         border=ft.border.all(1, C.DONE_BORDER),
-                         alignment=ft.alignment.center),
+                         border=ft.Border.all(1, C.DONE_BORDER),
+                         alignment=ft.Alignment.CENTER),
             T("Всё разобрано", size=18, weight=ft.FontWeight.BOLD, color=C.TEXT),
             T(text + later,
               size=13, color=C.MUTED_2, width=300, text_align=ft.TextAlign.CENTER),
@@ -110,7 +110,7 @@ def _triage_done(ui):
                 Wg.primary_btn("К библиотеке", ui.back_to_grid, ui._accent()),
                 Wg.outline_btn("Поискать ещё", ui.open_add),
             ], spacing=8, alignment=ft.MainAxisAlignment.CENTER),
-                padding=ft.padding.only(0, 8, 0, 0)),
+                padding=ft.Padding.only(left=0, top=8, right=0, bottom=0)),
         ], spacing=16, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             alignment=ft.MainAxisAlignment.CENTER),
-        expand=True, alignment=ft.alignment.center, padding=ft.padding.all(36))
+        expand=True, alignment=ft.Alignment.CENTER, padding=ft.Padding.all(36))

@@ -4,7 +4,7 @@ import flet as ft
 
 from .. import colors as C
 from .. import widgets as Wg
-from ..format import T
+from ..format import T, as_icon
 
 
 def build_bulk_bar(ui):
@@ -12,25 +12,25 @@ def build_bulk_bar(ui):
 
     def action(label, icon, on_click, icon_color=C.TEXT_2, arrow=False, plain=False,
                color=C.TEXT):
-        row = [ft.Icon(icon, size=15, color=icon_color),
+        row = [ft.Icon(as_icon(icon), size=15, color=icon_color),
                T(label, size=12.5, weight=ft.FontWeight.W_500, color=color)]
         if arrow:
             row.append(ft.Icon(ft.Icons.KEYBOARD_ARROW_UP, size=14, color=C.SLOT_GLYPH))
         btn = ft.Container(
             ft.Row(row, spacing=7, tight=True), height=36,
-            padding=ft.padding.symmetric(0, 12), border_radius=9,
-            bgcolor=None if plain else C.BAR_BTN, alignment=ft.alignment.center,
+            padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=9,
+            bgcolor=None if plain else C.BAR_BTN, alignment=ft.Alignment.CENTER,
             on_click=lambda e: on_click())
         return Wg.hoverable(btn, None if plain else C.BAR_BTN, C.PANEL_ACTIVE)
 
     def divider():
         return ft.Container(width=1, height=20, bgcolor=C.LINE_4,
-                            margin=ft.margin.symmetric(0, 4))
+                            margin=ft.Margin.symmetric(vertical=0, horizontal=4))
 
     cancel = ft.Container(
         T("Отмена", size=12.5, weight=ft.FontWeight.W_500, color=C.MUTED),
-        height=36, padding=ft.padding.symmetric(0, 12), border_radius=9,
-        alignment=ft.alignment.center, on_click=lambda e: ui.toggle_select_mode())
+        height=36, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=9,
+        alignment=ft.Alignment.CENTER, on_click=lambda e: ui.toggle_select_mode())
     Wg.hoverable(cancel, None, C.BAR_BTN)
 
     in_hidden = ui.view.filter == "hidden"
@@ -50,6 +50,6 @@ def build_bulk_bar(ui):
             divider(),
             cancel,
         ], spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=56, bgcolor=C.BAR_BG, border=ft.border.all(1, C.BAR_BORDER),
-        border_radius=14, padding=ft.padding.only(16, 0, 10, 0),
+        height=56, bgcolor=C.BAR_BG, border=ft.Border.all(1, C.BAR_BORDER),
+        border_radius=14, padding=ft.Padding.only(left=16, top=0, right=10, bottom=0),
         shadow=ft.BoxShadow(blur_radius=44, offset=ft.Offset(0, 18), color=C.SHADOW_BAR))

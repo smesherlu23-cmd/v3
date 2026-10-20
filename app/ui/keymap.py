@@ -48,7 +48,7 @@ class Keymap:
             self.ui._refresh_palette_only()
             # Flutter уже передал фокус следующему элементу окна; курсор должен
             # остаться в поиске, иначе следующие буквы уходят мимо.
-            self.ui._focus(self.ui.search_field)
+            self.ui.refocus_search()
         elif key in ("Enter", "Numpad Enter"):
             self._palette_activate(admin=bool(e.ctrl), rows=rows)
         elif key == "Escape":

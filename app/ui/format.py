@@ -40,3 +40,12 @@ def T(value="", **kw):
 
 def cat_icon(name: str):
     return getattr(ft.Icons, (name or "folder").upper(), ft.Icons.FOLDER)
+
+
+def as_icon(value):
+    """Значок по имени («folder») или уже готовый `ft.Icons.X`.
+
+    Во Flet 1.0 значок — объект, а не строка: строку клиент не рисует, и на
+    месте всего контрола появлялся серый прямоугольник ошибки.
+    """
+    return cat_icon(value) if isinstance(value, str) else value

@@ -75,7 +75,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self._palette_keyed_at = 0.0
         self._deferred = None
         self.view.on_typing_done = self._run_deferred_refresh
-        self.view.on_stray_focus = lambda: self._focus(self.search_field)
+        self.view.on_stray_focus = lambda: self.refocus_search()
 
         self.toast = ToastHost(page)
         self.notify = Notifier(self.toast)
@@ -91,8 +91,8 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self.updates = UpdatesController(self)
 
         self.search_field = Wg.track_typing(ft.TextField(
-            value="", hint_text="Найти или запустить", border=ft.InputBorder.NONE,
-            filled=False, dense=True, content_padding=ft.padding.symmetric(0, 0),
+            value="", hint_text="Найти или запустить", border=ft.NoInputBorder(),
+            filled=False, dense=True, content_padding=ft.Padding.symmetric(vertical=0, horizontal=0),
             text_size=13.5, color=C.WHITE,
             hint_style=ft.TextStyle(color=C.MUTED_2, size=13.5),
             cursor_color=C.ACCENT, on_change=self._on_search,
@@ -103,14 +103,14 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self.search_box = ft.Container(
             ft.Row([self.search_icon, self.search_field, self.search_tail],
                    spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=36, border_radius=10, padding=ft.padding.only(12, 0, 8, 0))
+            height=36, border_radius=10, padding=ft.Padding.only(left=12, top=0, right=8, bottom=0))
 
         self.header_holder = ft.Container()
         self.rail_container = ft.Container(width=C.RAIL_W, bgcolor=C.BG_0)
         self.sidebar_container = ft.Container(width=C.SIDEBAR_W, bgcolor=C.BG_2)
         self.content_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
         self.content_holder = ft.Container(self.content_col, expand=True,
-                                           padding=ft.padding.only(22, 4, 22, 0))
+                                           padding=ft.Padding.only(left=22, top=4, right=22, bottom=0))
         self.toolbar_holder = ft.Container()
         self.inspector_container = ft.Container(width=C.INSPECTOR_W, bgcolor=C.BG_2,
                                                 visible=False)
@@ -205,6 +205,9 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
                     and not self.view.active_set and not self.view.select_mode)
 
     def mount(self):
+        # Сервис выбора файла регистрируется на странице при создании — то есть
+        # здесь, пока известна текущая страница, а не в обработчике щелчка.
+        self.file_picker = ft.FilePicker()
         self.store.on_error = self._on_store_error
         main = ft.Column([self.toolbar_holder, self.content_holder], spacing=0, expand=True)
         body = ft.Row([self.rail_container, self.sidebar_container, main,
@@ -224,6 +227,26 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
                 f"{self.store.newer_version}) — показываю то, что понимаю, "
                 f"но ничего не сохраняю: иначе потерялось бы остальное",
                 detail=str(self.store.path))
+
+    def in_background(self, fn, *args):
+        """Долгое (значок через PowerShell, обложка из сети) — не в обработчике.
+
+        Во Flet 1.0 обычный обработчик события выполняется прямо в цикле
+        событий, и пока он работает, окно не отвечает.
+        """
+        def run():
+            try:
+                fn(*args)
+            except Exception:
+                log.exception("сбой фоновой операции")
+        threading.Thread(target=run, daemon=True).start()
+
+    def run_async(self, coro_fn, *args):
+        """Асинхронный метод Flet (фокус, окно, выбор файла) из обычного кода."""
+        try:
+            self.page.run_task(coro_fn, *args)
+        except Exception:
+            log.exception("не удалось запустить асинхронный вызов Flet")
 
     def _editing_rebuilt_field(self) -> bool:
         return bool(self.view.typing) and self.view.typing not in PERSISTENT_FIELDS
@@ -326,8 +349,8 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
             self.toolbar_holder.content = self.chrome.build_toolbar()
         self.content_col.controls = self.grid.build_content()
         self.content_col.scroll = ft.ScrollMode.AUTO if on_grid else None
-        self.content_holder.padding = (ft.padding.only(22, 4, 22, 0) if on_grid
-                                       else ft.padding.all(0))
+        self.content_holder.padding = (ft.Padding.only(left=22, top=4, right=22, bottom=0) if on_grid
+                                       else ft.Padding.all(0))
         inspector = self.inspector_panel.build_inspector() if self._inspector_visible() else None
         floating = inspector is not None and self._inspector_floats()
         self.inspector_container.visible = inspector is not None and not floating

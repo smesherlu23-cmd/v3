@@ -535,7 +535,7 @@ def squirrel_target(args) -> str | None:
     Сам Update.exe живёт секунду, а окна принадлежат X.exe — следить за
     запущенным и раскладывать окна нужно по нему.
     """
-    for flag, value in zip(args, args[1:]):
+    for flag, value in zip(args, args[1:], strict=False):
         if flag.lower() == "--processstart" and value.lower().endswith(".exe"):
             return ntpath.basename(value)
     return None

@@ -132,7 +132,7 @@ class GridView:
         holder = self._section_holders.get(("qrow",))
         if holder is None:
             row = ft.Row(cards, spacing=10, wrap=True, run_spacing=10)
-            holder = ft.Container(row, padding=ft.padding.only(0, 0, 0, 18))
+            holder = ft.Container(row, padding=ft.Padding.only(left=0, top=0, right=0, bottom=18))
             self._section_holders[("qrow",)] = holder
         else:
             holder.content.controls = cards
@@ -140,7 +140,7 @@ class GridView:
 
     def _build_quick_head(self):
         head_row = [T("Быстрый запуск", size=14.5, weight=ft.FontWeight.BOLD, color=C.TEXT)]
-        return ft.Container(ft.Row(head_row, spacing=10), padding=ft.padding.only(0, 8, 0, 12))
+        return ft.Container(ft.Row(head_row, spacing=10), padding=ft.Padding.only(left=0, top=8, right=0, bottom=12))
 
     def _fits_in_row(self, count: int) -> bool:
         gap = 10
@@ -156,8 +156,8 @@ class GridView:
         ], spacing=0, tight=True)]
         card = ft.Container(
             ft.Stack(layers), width=C.QUICK_W, height=QUICK_H, bgcolor=C.PANEL,
-            border=ft.border.all(1, C.CONTROL), border_radius=12,
-            padding=ft.padding.all(12),
+            border=ft.Border.all(1, C.CONTROL), border_radius=12,
+            padding=ft.Padding.all(12),
             tooltip=f"{app['name']} · {accel}" if accel else app["name"],
             on_click=lambda e, i=app["id"]: self.ui._launch(i))
         Wg.hoverable(card, C.PANEL, C.SELECTED_BG)
@@ -173,8 +173,8 @@ class GridView:
                   max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
             ], spacing=0, tight=True),
             width=C.QUICK_W, height=QUICK_H, bgcolor=C.SET_BG,
-            border=ft.border.all(1, C.DASHED), border_radius=12,
-            padding=ft.padding.all(12),
+            border=ft.Border.all(1, C.DASHED), border_radius=12,
+            padding=ft.Padding.all(12),
             tooltip=rec["name"],
             on_click=lambda e, sid=rec["id"]: self.ui.set_ops.launch_set(sid))
         Wg.hoverable(card, C.SET_BG, C.PANEL)
@@ -185,7 +185,7 @@ class GridView:
         return ft.Container(
             ft.Icon(ft.Icons.ADD, size=16, color=C.TEXT_GHOST),
             width=C.QUICK_W, height=QUICK_H, border_radius=12,
-            border=ft.border.all(1, C.CONTROL), alignment=ft.alignment.center,
+            border=ft.Border.all(1, C.CONTROL), alignment=ft.Alignment.CENTER,
             tooltip=f"Закрепите приложение — оно встанет на Ctrl+{slot}",
             on_click=lambda e: self.ui._toast_hint_quick())
 
@@ -211,7 +211,7 @@ class GridView:
                 on_click=lambda e, cid=sec["cid"]: self.ui._toggle_section(cid)))
         head = ft.Container(ft.Row(row, spacing=9,
                                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                            padding=ft.padding.only(0, 2, 0, 12))
+                            padding=ft.Padding.only(left=0, top=2, right=0, bottom=12))
         if not cat:
             return head
         return ft.GestureDetector(head,
@@ -229,7 +229,7 @@ class GridView:
         if holder is None:
             row = ft.Row(tiles, wrap=True, spacing=12, run_spacing=12,
                          vertical_alignment=ft.CrossAxisAlignment.START)
-            holder = ft.Container(row, padding=ft.padding.only(0, 0, 0, 18))
+            holder = ft.Container(row, padding=ft.Padding.only(left=0, top=0, right=0, bottom=18))
             self._section_holders[("grid", key)] = holder
         else:
             holder.content.controls = tiles
@@ -282,13 +282,12 @@ class GridView:
         ctl = box.get("tile")
         if ctl is None:
             return
-        ctl.border = ft.border.all(2, self.ui._accent()) if on else box.get("border")
+        ctl.border = ft.Border.all(2, self.ui._accent()) if on else box.get("border")
         Wg.safe_update(ctl)
 
     def _accept_reorder(self, e, target_id, section_ids, box):
         self._mark_reorder(box, False)
-        src = self.ui.page.get_control(e.src_id)
-        payload = getattr(src, "data", None) if src is not None else None
+        payload = Wg.dragged_data(e)
         if not isinstance(payload, dict) or not payload.get("ids"):
             return
         self.ui._reorder_apps(section_ids, list(payload["ids"]), target_id)
@@ -305,8 +304,8 @@ class GridView:
                 ft.Icon(ft.Icons.CHECK, size=14, color=C.ON_ACCENT) if picked else None,
                 width=20, height=20, border_radius=10,
                 bgcolor=self.ui._accent() if picked else None,
-                border=None if picked else ft.border.all(1.5, C.TEXT_FAINT),
-                alignment=ft.alignment.center)
+                border=None if picked else ft.Border.all(1.5, C.TEXT_FAINT),
+                alignment=ft.Alignment.CENTER)
             return [ft.Container(box, left=8, top=8)]
         marks = []
         if running:
@@ -327,9 +326,9 @@ class GridView:
             self.ui.icon_slot(a, slot, 14, glyph=round(slot * 0.48),
                            border=C.SLOT_BORDER_SEL if selected else None,
                            glyph_color=C.SLOT_GLYPH_SEL if selected else None),
-            expand=True, alignment=ft.alignment.center,
-            gradient=ft.LinearGradient(begin=ft.alignment.top_left,
-                                       end=ft.alignment.bottom_right,
+            expand=True, alignment=ft.Alignment.CENTER,
+            gradient=ft.LinearGradient(begin=ft.Alignment.TOP_LEFT,
+                                       end=ft.Alignment.BOTTOM_RIGHT,
                                        colors=list(gradient)))]
         cover_children += self._tile_marks(a, running)
 
@@ -342,7 +341,7 @@ class GridView:
                             overflow=ft.TextOverflow.ELLIPSIS,
                             font_family="monospace" if meta.startswith("Ctrl") else None))
         foot = ft.Container(ft.Column(foot_lines, spacing=2, tight=True),
-                            padding=ft.padding.only(11, 9, 11, 10))
+                            padding=ft.Padding.only(left=11, top=9, right=11, bottom=10))
 
         tile = ft.Container(
             ft.Column([ft.Container(ft.Stack(cover_children, expand=True),
@@ -350,7 +349,7 @@ class GridView:
                                     clip_behavior=ft.ClipBehavior.HARD_EDGE), foot],
                       spacing=0, tight=True),
             width=width, bgcolor=C.SELECTED_BG if selected else C.PANEL,
-            border=ft.border.all(2, self.ui._accent()) if selected else ft.border.all(1, C.LINE),
+            border=ft.Border.all(2, self.ui._accent()) if selected else ft.Border.all(1, C.LINE),
             border_radius=14, clip_behavior=ft.ClipBehavior.HARD_EDGE,
             animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
             animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
@@ -362,8 +361,8 @@ class GridView:
         def on_hover(e):
             if selected:
                 return
-            hot = e.data == "true"
-            tile.border = ft.border.all(1, C.LINE_4 if hot else C.LINE)
+            hot = Wg.entered(e)
+            tile.border = ft.Border.all(1, C.LINE_4 if hot else C.LINE)
             tile.bgcolor = C.SELECTED_BG if hot else C.PANEL
             tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
             Wg.safe_update(tile)
@@ -374,19 +373,19 @@ class GridView:
         width = C.POSTER_W_COMPACT if compact else C.POSTER_W
         height = C.POSTER_H_COMPACT if compact else C.POSTER_H
         poster = icon_image(a.get("poster"), width=width, height=height,
-                            fit=ft.ImageFit.COVER) or ft.Container()
+                            fit=ft.BoxFit.COVER) or ft.Container()
         scrim = ft.Container(
             T(a["name"], size=12, weight=ft.FontWeight.W_600, color=C.WHITE,
               max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
-            left=0, right=0, bottom=0, padding=ft.padding.only(9, 18, 9, 8),
-            gradient=ft.LinearGradient(begin=ft.alignment.top_center,
-                                       end=ft.alignment.bottom_center,
+            left=0, right=0, bottom=0, padding=ft.Padding.only(left=9, top=18, right=9, bottom=8),
+            gradient=ft.LinearGradient(begin=ft.Alignment.TOP_CENTER,
+                                       end=ft.Alignment.BOTTOM_CENTER,
                                        colors=list(C.POSTER_SCRIM)))
         children = [poster, scrim] + self._tile_marks(a, running)
 
         tile = ft.Container(
             ft.Stack(children), width=width, height=height, bgcolor=C.PANEL,
-            border=ft.border.all(2, self.ui._accent()) if selected else ft.border.all(1, C.LINE),
+            border=ft.Border.all(2, self.ui._accent()) if selected else ft.Border.all(1, C.LINE),
             border_radius=12, clip_behavior=ft.ClipBehavior.HARD_EDGE,
             animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
             animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT))
@@ -397,8 +396,8 @@ class GridView:
         def on_hover(e):
             if selected:
                 return
-            hot = e.data == "true"
-            tile.border = ft.border.all(1, C.LINE_4 if hot else C.LINE)
+            hot = Wg.entered(e)
+            tile.border = ft.Border.all(1, C.LINE_4 if hot else C.LINE)
             tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
             Wg.safe_update(tile)
         tile.on_hover = on_hover
@@ -417,7 +416,7 @@ class GridView:
         holder = self._section_holders.get(("list", key))
         if holder is None:
             col = ft.Column(rows, spacing=6)
-            holder = ft.Container(col, padding=ft.padding.only(0, 0, 0, 18))
+            holder = ft.Container(col, padding=ft.Padding.only(left=0, top=0, right=0, bottom=18))
             self._section_holders[("list", key)] = holder
         else:
             holder.content.controls = rows
@@ -456,13 +455,13 @@ class GridView:
             controls.append(ft.Icon(ft.Icons.STAR, size=15, color=C.STAR))
         controls.append(ft.Container(ft.Icon(ft.Icons.MORE_HORIZ, size=16, color=C.MUTED),
                                      width=30, height=30, border_radius=9,
-                                     alignment=ft.alignment.center, tooltip="Меню",
+                                     alignment=ft.Alignment.CENTER, tooltip="Меню",
                                      on_click=lambda e, ap=a: self.ui.context_menus.app_menu(ap, None)))
         row = ft.Container(ft.Row(controls, spacing=12,
                                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                           padding=ft.padding.symmetric(9, 12), border_radius=11,
-                           border=ft.border.all(2, self.ui._accent()) if selected
-                           else ft.border.all(1, C.LINE),
+                           padding=ft.Padding.symmetric(vertical=9, horizontal=12), border_radius=11,
+                           border=ft.Border.all(2, self.ui._accent()) if selected
+                           else ft.Border.all(1, C.LINE),
                            bgcolor=C.SELECTED_BG if selected else C.PANEL)
         if not selected:
             Wg.hoverable(row, C.PANEL, C.SELECTED_BG)
@@ -485,7 +484,7 @@ class GridView:
                              "уже пользуетесь.", size=13, color=C.MUTED_2,
                              text_align=ft.TextAlign.CENTER, width=380)],
                           spacing=12, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                alignment=ft.alignment.center, padding=ft.padding.only(0, 80, 0, 40))
+                alignment=ft.Alignment.CENTER, padding=ft.Padding.only(left=0, top=80, right=0, bottom=40))
         found = scan.suggestions()
         if not found:
             return self._empty("Библиотека пуста",
@@ -514,7 +513,7 @@ class GridView:
                 ft.Container(height=14),
                 Wg.link_btn("Не сейчас", scan.dismiss_suggestions),
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-            alignment=ft.alignment.center, padding=ft.padding.only(0, 56, 0, 40))
+            alignment=ft.Alignment.CENTER, padding=ft.Padding.only(left=0, top=56, right=0, bottom=40))
 
     def _suggestion_card(self, s):
         on = s["on"]
@@ -528,9 +527,9 @@ class GridView:
                     ft.Icon(ft.Icons.CHECK_BOX if on else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
                             size=18, color=C.ACCENT if on else C.MUTED)],
                    spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            width=230, height=56, padding=ft.padding.symmetric(0, 12), border_radius=10,
+            width=230, height=56, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=10,
             bgcolor=C.PANEL if on else None,
-            border=ft.border.all(1, C.LINE_5 if on else C.LINE),
+            border=ft.Border.all(1, C.LINE_5 if on else C.LINE),
             opacity=1 if on else 0.6,
             on_click=lambda e, k=s["key"]: self.ui.scan.toggle_suggestion(k))
 
@@ -548,4 +547,4 @@ class GridView:
                                 alignment=ft.MainAxisAlignment.CENTER)]
         return ft.Container(
             ft.Column(controls, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-            alignment=ft.alignment.center, padding=ft.padding.only(0, 80, 0, 40))
+            alignment=ft.Alignment.CENTER, padding=ft.Padding.only(left=0, top=80, right=0, bottom=40))

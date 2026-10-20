@@ -709,13 +709,14 @@ def test_store_batched_writes():
 
 
 def test_image_cache_bounded():
-    """The base64 caches used to keep every image the session ever touched."""
+    """The image caches used to keep every image the session ever touched."""
     try:
         from app.ui import images
     except Exception as exc:  # flet only — a missing ceiling must not skip
         skip("image cache test", exc)
         return
-    _IMG_B64_CACHE, _LruCache, img_b64 = (images._IMG_B64_CACHE, images._LruCache, images.img_b64)
+    _IMG_BYTES_CACHE, _LruCache, img_bytes = (images._IMG_BYTES_CACHE, images._LruCache,
+                                              images.img_bytes)
 
     cache = _LruCache(max_entries=3)
     for i in range(10):
@@ -730,20 +731,20 @@ def test_image_cache_bounded():
         byte_capped.put(f"k{i}", 1.0, "x" * 4, 4)
     ok(len(byte_capped) <= 3, "the byte ceiling is enforced independently of the count")
 
-    ok(_IMG_B64_CACHE.max_entries <= 1024 and bool(_IMG_B64_CACHE.max_bytes),
-       "the shared base64 cache declares a finite ceiling")
-    _IMG_B64_CACHE.clear()
+    ok(_IMG_BYTES_CACHE.max_entries <= 1024 and bool(_IMG_BYTES_CACHE.max_bytes),
+       "the shared image cache declares a finite ceiling")
+    _IMG_BYTES_CACHE.clear()
     with tempfile.TemporaryDirectory() as d:
         encoded = []
-        for i in range(min(_IMG_B64_CACHE.max_entries, 200) + 20):
+        for i in range(min(_IMG_BYTES_CACHE.max_entries, 200) + 20):
             p = os.path.join(d, f"i{i}.png")
             iconify.generate_icon(p, 8)
-            encoded.append(img_b64(p))
+            encoded.append(img_bytes(p))
         ok(all(encoded), "every image encodes")
-        ok(len(_IMG_B64_CACHE) <= _IMG_B64_CACHE.max_entries,
-           "img_b64 never grows past its ceiling")
-        ok(img_b64(p) == encoded[-1], "an evicting cache still returns correct data")
-    _IMG_B64_CACHE.clear()
+        ok(len(_IMG_BYTES_CACHE) <= _IMG_BYTES_CACHE.max_entries,
+           "img_bytes never grows past its ceiling")
+        ok(img_bytes(p) == encoded[-1], "an evicting cache still returns correct data")
+    _IMG_BYTES_CACHE.clear()
 
 
 def test_store_corrupt_recovery():

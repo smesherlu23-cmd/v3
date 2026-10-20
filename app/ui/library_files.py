@@ -17,32 +17,24 @@ ICON_SIZE_TTL = 30.0
 
 class LibraryFilesMixin:
     def ask_for_file(self, title, on_path, extensions=None):
-        picker = getattr(self, "_file_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._file_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
+        picker = self.file_picker
 
-        def on_result(e):
-            if not e.files:
-                on_path(None)
-                return
-            picked = e.files[0]
-            on_path(picked.path or picked.name)
-        picker.on_result = on_result
-        picker.pick_files(dialog_title=title, allow_multiple=False,
-                          allowed_extensions=extensions)
+        async def ask():
+            files = await picker.pick_files(dialog_title=title, allow_multiple=False,
+                                            allowed_extensions=extensions)
+            picked = files[0] if files else None
+            # Ответ разбирается в отдельном потоке: за ним бывает тяжёлая работа
+            # (значок из exe, копия картинки), а цикл событий Flet ждать не должен.
+            self.page.run_thread(on_path, (picked.path or picked.name) if picked else None)
+        self.run_async(ask)
 
     def ask_for_folder(self, title, on_path):
-        picker = getattr(self, "_dir_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._dir_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
-        picker.on_result = lambda e: on_path(e.path or None)
-        picker.get_directory_path(dialog_title=title)
+        picker = self.file_picker
+
+        async def ask():
+            path = await picker.get_directory_path(dialog_title=title)
+            self.page.run_thread(on_path, path or None)
+        self.run_async(ask)
 
     def icon_cache_dir(self) -> str:
         return str(Path(self.store.path).parent / "icons")

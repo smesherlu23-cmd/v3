@@ -162,11 +162,11 @@ def test_search_field_keeps_focus_and_order():
 
         ui._on_search(types_ns(control=types_ns(value="te")))
         ok(ui.view.palette_index == 0, "typing puts the best match first")
-        ui.palette_hover(1, types_ns(data="true"))
+        ui.palette_hover(1, types_ns(data=True))
         ok(ui.view.palette_index == 0,
            "a row that appeared under a resting pointer does not steal the selection")
         ui._palette_keyed_at = 0.0
-        ui.palette_hover(1, types_ns(data="true"))
+        ui.palette_hover(1, types_ns(data=True))
         ok(ui.view.palette_index == 1, "a real move of the mouse still does")
 
         launched = []

@@ -89,9 +89,8 @@ def test_drag_reorder_reaches_the_end():
 
         apps = [store.add_app({"name": n, "path": f"/x/{n}"})["id"] for n in "abc"]
         rec = store.add_set("S", apps)
-        src = types_ns(data=apps[0])
-        ui.page.get_control = lambda _id: src
-        ui.chrome.drop_set_item(rec["id"], apps[2], types_ns(src_id="x"), types_ns(update=lambda: None))
+        ui.chrome.drop_set_item(rec["id"], apps[2], types_ns(src=types_ns(data=apps[0])),
+                                types_ns(update=lambda: None))
         ok(store.get_set(rec["id"])["apps"] == [apps[1], apps[2], apps[0]],
            "a set member dragged onto the last one starts last")
 
@@ -610,12 +609,10 @@ def test_ui_delete_is_undone_not_confirmed():
         # неё принимает {"ids": [...]} из перетаскиваемой плитки.
         ui.view.set_sort("alpha")
         dragged = types_ns(data={"ids": [ids[0]]})
-        page.get_control = lambda _id, ctl=dragged: ctl
-        ui.grid._accept_reorder(types_ns(src_id=1), ids[1], [ids[1], ids[0]], {})
+        ui.grid._accept_reorder(types_ns(src=dragged), ids[1], [ids[1], ids[0]], {})
         ok(store.get_app(ids[0])["order"] < store.get_app(ids[1])["order"],
            "the grid's own drop handler reorders tiles the same way")
         ok(ui.view.sort == "manual", "and flips sorting to manual too")
-        page.get_control = lambda _id: None
 
         ui._remove_category(cat["id"])
         ok(not any(c["id"] == cat["id"] for c in store.state()["categories"]),
@@ -928,7 +925,7 @@ def test_tab_from_the_palette_does_not_type_into_the_inspector():
         store.add_app({"name": "Telegram", "path": "/x/tg.exe", "category_id": "work"})
         ui, _ = _ui_for(store)
         focused = []
-        ui._focus = focused.append
+        ui.refocus_search = lambda: focused.append(ui.search_field)
         ui.view.select_one(app_id)
         ui.refresh()
         name = _find_control(ui.inspector_container,
@@ -1039,6 +1036,88 @@ def test_ui_keys_belong_to_the_focused_field():
         ok(committed == [1], "Ctrl+Enter подтверждает добавление прямо из поля")
 
 
+def _all_controls(root):
+    """Каждый контрол поддерева — по всем полям, а не только controls/content."""
+    import dataclasses
+
+    seen, stack, out = set(), [root], []
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        if isinstance(node, (list, tuple)):
+            stack.extend(node)
+            continue
+        if not dataclasses.is_dataclass(node) or isinstance(node, type):
+            continue
+        out.append(node)
+        for f in dataclasses.fields(node):
+            if f.name.startswith("_") or f.name in ("parent", "page"):
+                continue
+            value = getattr(node, f.name, None)
+            if isinstance(value, (list, tuple)) or dataclasses.is_dataclass(value):
+                stack.append(value)
+    return out
+
+
+def test_ui_icons_are_objects_not_names():
+    """Во Flet 1.0 значок — `ft.Icons.X`, а не строка «folder».
+
+    Строку клиент не рисует: на месте всего контрола появлялся серый
+    прямоугольник ошибки (так выглядело меню «Переложить в…»).
+    """
+    try:
+        import flet as ft
+
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI icon objects test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ids = [store.add_app({"name": n, "path": f"/x/{n}.exe", "category_id": "work"})["id"]
+               for n in ("Alpha", "Beta")]
+        rec = store.add_set("Утро", ids)
+        ui, page = _ui_for(store)
+        bad = []
+
+        def check(where):
+            for ctl in _all_controls(page.controls):
+                if isinstance(ctl, ft.Icon) and isinstance(ctl.icon, str):
+                    bad.append(f"{where}: {ctl.icon!r}")
+
+        check("grid")
+        app = store.get_app(ids[0])
+        for name, show in (("category picker", lambda: ui.context_menus.category_picker(app, None)),
+                           ("set menu", lambda: ui.context_menus.add_to_set_menu(app, None)),
+                           ("sort menu", lambda: ui.context_menus.sort_menu(None)),
+                           ("set item menu", lambda: ui.context_menus.set_item_menu(
+                               store.get_set(rec["id"]), store.get_set(rec["id"])["items"][0],
+                               None))):
+            show()
+            check(name)
+            ui.menu.close()
+        ui.view.select_one(ids[0])
+        ui.refresh()
+        check("inspector")
+        ui.toggle_search()
+        ui._on_search(types_ns(control=types_ns(value="al")))
+        ui.keymap.handle_key(_key("Tab"))
+        check("palette actions")
+        ui._close_palette()
+        for tab in ("view", "keys", "startup", "library"):
+            ui._open_settings()
+            ui.set_settings_tab(tab)
+            check(f"settings/{tab}")
+        ui.open_add()
+        check("add screen")
+        ui._open_set(rec["id"])
+        check("set screen")
+        ok(not bad, "string icon names reach ft.Icon: " + "; ".join(bad))
+
+
 def test_ui_icons_are_never_letters():
     try:
         import flet as ft
@@ -1058,7 +1137,7 @@ def test_ui_icons_are_never_letters():
         ok(slot.bgcolor == C.SLOT_BG, "an icon-less app gets the neutral pad")
         ok(isinstance(slot.content, ft.Icon), "with a glyph, not a letter")
         ok(slot.content.color == C.SLOT_GLYPH, "in the muted placeholder colour")
-        ok(slot.content.name == ft.Icons.FOLDER, "and the glyph is its category's")
+        ok(slot.content.icon == ft.Icons.FOLDER, "and the glyph is its category's")
 
         icon_png = iconify.generate_icon(os.path.join(d, "real.png"), 32)
         store.update_app(app["id"], {"icon": str(icon_png)})
@@ -1095,7 +1174,6 @@ def test_images_are_handed_over_as_paths_not_base64():
             images.embed_images(False)
             img = images.icon_image(png, width=32, height=32)
             ok(img is not None and img.src == png, f"путь уходит как есть ({img and img.src})")
-            ok(img.src_base64 is None, "и ничего не кодируется")
 
             ok(images.raster_path(png) == png, "существующий растр опознаётся")
             ok(images.raster_path(missing) is None, "отсутствующий файл — нет")
@@ -1105,8 +1183,9 @@ def test_images_are_handed_over_as_paths_not_base64():
 
             images.embed_images(True)
             web = images.icon_image(png, width=32, height=32)
-            ok(web is not None and web.src_base64, "в режиме CENTURIO_WEB картинка кодируется")
-            ok(web.src is None, "потому что страница в браузере не читает файлы с диска")
+            ok(web is not None and isinstance(web.src, bytes),
+               "в режиме CENTURIO_WEB картинка уходит байтами, а не путём: страница в "
+               "браузере не читает файлы с диска")
         finally:
             images.embed_images(False)
 
@@ -1134,11 +1213,11 @@ def test_ui_icon_slot_respects_stored_fit():
         ui, _ = _ui_for(store)
 
         square_slot = ui.icon_slot(store.get_app(square["id"]), 60, 16)
-        ok(square_slot.content.fit == ft.ImageFit.CONTAIN,
+        ok(square_slot.content.fit == ft.BoxFit.CONTAIN,
            "a Steam app whose icon is a real square one is not cover-cropped")
 
         wide_slot = ui.icon_slot(store.get_app(wide["id"]), 60, 16)
-        ok(wide_slot.content.fit == ft.ImageFit.COVER,
+        ok(wide_slot.content.fit == ft.BoxFit.COVER,
            "one whose icon is capsule/header art still fills the slot as before")
 
 

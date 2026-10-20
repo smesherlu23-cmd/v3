@@ -27,6 +27,9 @@ def snapshot(ui, launched: list[str]) -> dict:
         "palette_open": view.palette_open,
         "palette": [r["app"]["name"] if r["kind"] == "app" else r["set"]["name"]
                     for r in rows],
+        # По этому запросу посчитан список: значение поля Flet обновляет
+        # раньше, чем обработчик успевает пересчитать выдачу.
+        "palette_query": view.query,
         "palette_index": view.palette_index,
         "palette_focus": view.palette_focus,
         "accent": ui.setting("accent"),

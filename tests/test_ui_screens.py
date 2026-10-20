@@ -205,11 +205,9 @@ def test_ui_sets():
 
         # Ручка drag_indicator на строке — настоящая: строку тащат на другую.
         dragged = types_ns(data=ids[0])
-        page.get_control = lambda _id, ctl=dragged: ctl
-        ui.chrome.drop_set_item(rec["id"], ids[1], types_ns(src_id=1), ft.Container())
+        ui.chrome.drop_set_item(rec["id"], ids[1], types_ns(src=dragged), ft.Container())
         ok(store.get_set(rec["id"])["apps"] == [ids[0], ids[1]],
            "dropping one row on another moves it in front of it")
-        page.get_control = lambda _id: None
 
         ui.set_ops.remove_from_set(rec["id"], ids[1])
         ok(store.get_set(rec["id"])["apps"] == [ids[0]], "a member can be removed")
@@ -420,7 +418,7 @@ def test_ui_category_popover():
         glyph = widgets.cat_glyph(store.state()["categories"][0])
         art = _find_control(glyph, lambda c: isinstance(c, ft.Image))
         ok(art is not None, "and it is what the rail draws")
-        ok(art.fit == ft.ImageFit.COVER,
+        ok(art.fit == ft.BoxFit.COVER,
            "cropped to fill like a Discord icon, not letterboxed inside the badge")
         ok(getattr(glyph, "border_radius", None), "inside a circular clip")
 
@@ -949,3 +947,45 @@ def test_ui_discovery_reuse():
     finally:
         discovery.discover_apps = real_discover
         _settle_threads(before)
+
+
+def test_slow_adding_does_not_hold_the_window():
+    """Во Flet 1.0 обычный обработчик события выполняется в цикле событий.
+
+    Добавление по пути извлекает значок (иногда через PowerShell, до 25 с) и
+    качает обложку игры Steam — всё это время окно не отвечало бы. Поэтому
+    Enter в поле пути и в поле набора отдают работу фоновому потоку.
+    """
+    try:
+        import flet as ft
+
+        from app.ui.app import CenturioUI  # noqa: F401
+    except Exception as exc:
+        skip("UI background work test", exc)
+        return
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        ids = [store.add_app({"name": n, "path": f"/x/{n}.exe"})["id"] for n in ("A", "B")]
+        rec = store.add_set("S", ids)
+        ui, _ = _ui_for(store)
+        handed = []
+        ui.in_background = lambda fn, *args: handed.append((fn, args))
+        # Настоящий поиск программ здесь ни к чему: его поток перерисовывает
+        # экран и пишет в папку, пока тест ищет поле.
+        ui.scan.start_scan = lambda force=False: None
+
+        ui.open_add()
+        path_field = _find_control(ui.content_col, lambda n: isinstance(n, ft.TextField)
+                                   and "адрес сайта" in (n.hint_text or ""))
+        path_field.on_submit(types_ns(control=types_ns(value="youtube.com")))
+        ok(handed and handed[-1] == (ui.scan.add_manual_path, ("youtube.com",)),
+           "Enter in the path field hands the work to a background thread")
+
+        ui._open_set(rec["id"])
+        target = _find_control(ui.content_col, lambda n: isinstance(n, ft.TextField)
+                               and n.hint_text == "Сайт, папка или файл")
+        target.on_submit(types_ns(control=types_ns(value="github.com")))
+        ok(handed[-1] == (ui.set_ops.add_target, (rec["id"], "github.com")),
+           "and so does the set's own field")
+

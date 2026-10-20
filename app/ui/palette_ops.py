@@ -6,8 +6,8 @@ import time
 import flet as ft
 
 from ..core import queries
-from ..infra import log
 from . import menus, screens
+from . import widgets as Wg
 
 # Сколько после нажатия клавиши не верить «наведению» мыши: строки палитры
 # перестраиваются под неподвижным курсором, Flutter честно сообщает, что
@@ -73,11 +73,32 @@ class PaletteMixin:
         self.palette_layer.visible = True
 
     def _focus(self, field):
-        try:
-            if field.page:
-                field.focus()
-        except Exception:
-            log.exception("сбой при фокусировке на поле")
+        if Wg.attached(field):
+            self.run_async(field.focus)
+
+    def refocus_search(self):
+        """Вернуть курсор в поиск — в конец запроса.
+
+        Вернувшийся фокус выделяет весь текст поля, и следующая буква
+        заменила бы запрос целиком («tel» + «e» давало «e»).
+        """
+        field = self.search_field
+        # По одному Tab курсор возвращают и палитра, и поле, перехватившее
+        # фокус. Второй focus() приходил уже после того, как курсор встал в
+        # конец, и снова выделял весь текст.
+        if not Wg.attached(field) or getattr(self, "_refocusing", False):
+            return
+        self._refocusing = True
+
+        async def back():
+            try:
+                await field.focus()
+                end = len(field.value or "")
+                field.selection = ft.TextSelection(base_offset=end, extent_offset=end)
+                field.update()
+            finally:
+                self._refocusing = False
+        self.run_async(back)
 
     def _focus_search(self):
         # Сначала фокус, потом палитра: буквы, набранные сразу за Ctrl+K,
@@ -114,10 +135,10 @@ class PaletteMixin:
     def sync_query(self):
         """Запрос из поля, а не из последнего обработанного on_change.
 
-        Обработчики Flet идут в пуле потоков: Enter сразу после последней
-        буквы мог обработаться раньше её on_change и запустить лучшее
-        совпадение для запроса без этой буквы. Значение поля Flet обновляет
-        до того, как раздаёт события, — оно всегда свежее.
+        Enter сразу после последней буквы мог обработаться раньше её
+        on_change и запустить лучшее совпадение для запроса без этой буквы.
+        Значение поля Flet обновляет до того, как раздаёт события, — оно
+        всегда свежее.
         """
         value = self.search_field.value or ""
         if value != self.view.query:
@@ -154,7 +175,7 @@ class PaletteMixin:
     def palette_hover(self, index: int, e):
         if time.monotonic() - self._palette_keyed_at < PALETTE_HOVER_GRACE:
             return
-        if e.data == "true" and (self.view.palette_index != index
+        if Wg.entered(e) and (self.view.palette_index != index
                                  or self.view.palette_focus != "results"):
             self.view.palette_index = index
             self.view.palette_focus = "results"

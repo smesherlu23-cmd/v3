@@ -5,7 +5,7 @@ import flet as ft
 from ..core.text import short_ago, time_ago
 from . import colors as C
 from . import widgets as Wg
-from .format import T
+from .format import T, as_icon
 
 
 def _short_path(path: str) -> str:
@@ -35,9 +35,9 @@ class InspectorPanel:
             T(short_ago(app.get("last_launched")) or "ещё не открывали",
               size=11.5, color=C.MUTED_2)
         name = Wg.track_typing(ft.TextField(
-            value=app["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
+            value=app["name"], border=ft.NoInputBorder(), filled=False, dense=True,
             text_size=15.5, color=C.TEXT, cursor_color=C.TEXT,
-            content_padding=ft.padding.symmetric(0, 0), tooltip="Переименовать",
+            content_padding=ft.Padding.symmetric(vertical=0, horizontal=0), tooltip="Переименовать",
             text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, font_family="Inter Bold"),
             on_blur=lambda e: self.ui.rename_app(app["id"], e.control.value),
             on_submit=lambda e: self.ui.rename_app(app["id"], e.control.value)),
@@ -51,12 +51,12 @@ class InspectorPanel:
                                  on_click=lambda e: self.ui._close_inspector(),
                                  tooltip="Закрыть панель")],
                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
-            padding=ft.padding.only(18, 18, 18, 16))
+            padding=ft.Padding.only(left=18, top=18, right=18, bottom=16))
 
         def square(icon, tooltip, handler, color=C.MUTED):
-            return ft.Container(ft.Icon(icon, size=16, color=color), width=38, height=36,
-                                border=ft.border.all(1, C.LINE_4), border_radius=9,
-                                alignment=ft.alignment.center, tooltip=tooltip,
+            return ft.Container(ft.Icon(as_icon(icon), size=16, color=color), width=38, height=36,
+                                border=ft.Border.all(1, C.LINE_4), border_radius=9,
+                                alignment=ft.Alignment.CENTER, tooltip=tooltip,
                                 on_click=lambda e: handler())
 
         kind = app.get("kind")
@@ -76,7 +76,7 @@ class InspectorPanel:
         if not kind:
             buttons.append(square(ft.Icons.MORE_HORIZ, "Ещё способы запуска",
                                   lambda: self.ui.context_menus.launch_more_menu(app, None)))
-        actions = ft.Container(ft.Row(buttons, spacing=8), padding=ft.padding.only(18, 0, 18, 0))
+        actions = ft.Container(ft.Row(buttons, spacing=8), padding=ft.Padding.only(left=18, top=0, right=18, bottom=0))
 
         props = [
             self._insp_row("Категория", self._cat_selector(app, cat)),
@@ -92,15 +92,15 @@ class InspectorPanel:
         props.append(ft.Container(height=1, bgcolor=C.LINE_2))
         props.append(self._insp_tech(app))
         placement = ft.Container(ft.Column(props, spacing=12),
-                                 padding=ft.padding.only(18, 18, 18, 0))
+                                 padding=ft.Padding.only(left=18, top=18, right=18, bottom=0))
 
         footer = ft.Container(
             ft.Row([ft.Container(expand=True),
                     Wg.outline_btn("Убрать", lambda: self.ui._remove_apps([app["id"]]),
                                      ft.Icons.DELETE_OUTLINE, danger=True, height=30)],
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.symmetric(14, 18),
-            border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)))
+            padding=ft.Padding.symmetric(vertical=14, horizontal=18),
+            border=ft.Border.only(top=ft.BorderSide(1, C.LINE_2)))
 
         return ft.Container(
             ft.Column([header, actions,
@@ -109,7 +109,7 @@ class InspectorPanel:
                                   ft.Container(height=18)],
                                  spacing=0, expand=True, scroll=ft.ScrollMode.AUTO),
                        footer], spacing=0, expand=True),
-            border=ft.border.only(left=ft.BorderSide(1, C.LINE_2)), expand=True)
+            border=ft.Border.only(left=ft.BorderSide(1, C.LINE_2)), expand=True)
 
     def _insp_row(self, label, control, sub=None):
         left = [T(label, size=12.5, color=C.TEXT_2)]
@@ -140,7 +140,7 @@ class InspectorPanel:
             tooltip="Например, «пс, фотошоп» для Adobe Photoshop",
             height=32, text_size=12, color=C.TEXT, bgcolor=C.PANEL, border_color=C.CONTROL,
             focused_border_color=C.LINE_5, border_radius=8, cursor_color=C.TEXT,
-            content_padding=ft.padding.symmetric(0, 10),
+            content_padding=ft.Padding.symmetric(vertical=0, horizontal=10),
             hint_style=ft.TextStyle(color=C.MUTED_2, size=12),
             on_blur=lambda e: self.ui.set_aliases(app["id"], e.control.value),
             on_submit=lambda e: self.ui.set_aliases(app["id"], e.control.value)),
@@ -153,14 +153,14 @@ class InspectorPanel:
                     T(rec["name"], size=11.5, color=C.TEXT_2, max_lines=1,
                       overflow=ft.TextOverflow.ELLIPSIS)], spacing=6, tight=True),
             height=26, border_radius=13, bgcolor=C.SET_SLOT_BG,
-            border=ft.border.all(1, C.CONTROL), padding=ft.padding.symmetric(0, 9),
+            border=ft.Border.all(1, C.CONTROL), padding=ft.Padding.symmetric(vertical=0, horizontal=9),
             on_click=lambda e, sid=rec["id"]: self.ui._open_set(sid)) for rec in members]
         chips.append(ft.Container(
             ft.Row([ft.Icon(ft.Icons.ADD, size=13, color=C.MUTED_2),
                     T("Ещё" if members else "В набор", size=11.5, color=C.MUTED_2)],
                    spacing=6, tight=True),
-            height=26, border_radius=13, border=ft.border.all(1, C.DASHED),
-            padding=ft.padding.symmetric(0, 9), tooltip="Добавить в набор",
+            height=26, border_radius=13, border=ft.Border.all(1, C.DASHED),
+            padding=ft.Padding.symmetric(vertical=0, horizontal=9), tooltip="Добавить в набор",
             on_click=lambda e: self.ui.context_menus.add_to_set_menu(app, e)))
         return ft.Row(chips, spacing=6, wrap=True, run_spacing=6, tight=True)
 
@@ -174,8 +174,8 @@ class InspectorPanel:
                        spacing=6, tight=True, expand=True),
                 ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14, color=C.MUTED_2),
             ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            width=160, height=32, bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL),
-            border_radius=8, padding=ft.padding.symmetric(0, 10),
+            width=160, height=32, bgcolor=C.PANEL, border=ft.Border.all(1, C.CONTROL),
+            border_radius=8, padding=ft.Padding.symmetric(vertical=0, horizontal=10),
             tooltip="Выбрать категорию",
             on_click=lambda e: self.ui.context_menus.category_picker(app, e))
 
@@ -200,13 +200,13 @@ class InspectorPanel:
                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             on_click=lambda e: self.ui._toggle_adv())
         if not open_now:
-            return ft.Container(head, padding=ft.padding.only(18, 18, 18, 0))
+            return ft.Container(head, padding=ft.Padding.only(left=18, top=18, right=18, bottom=0))
 
         args_field = Wg.track_typing(ft.TextField(
             value=args_value, hint_text="не заданы", height=32, text_size=11.5,
             color=C.TEXT, bgcolor=C.PANEL, border_color=C.CONTROL,
             focused_border_color=C.LINE_5, border_radius=8,
-            content_padding=ft.padding.symmetric(0, 10), cursor_color=C.TEXT,
+            content_padding=ft.Padding.symmetric(vertical=0, horizontal=10), cursor_color=C.TEXT,
             hint_style=ft.TextStyle(color=C.MUTED_2, size=11.5),
             text_style=ft.TextStyle(font_family="mono"), expand=True,
             on_blur=lambda e: self.ui._set_args(app["id"], e.control.value),
@@ -221,8 +221,8 @@ class InspectorPanel:
                     ft.Container(ft.Icon(ft.Icons.FOLDER_OPEN, size=15, color=C.MUTED_2),
                                  on_click=lambda e: self.ui._pick_working_dir(app["id"]))],
                    spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=32, bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL), border_radius=8,
-            padding=ft.padding.only(10, 0, 6, 0), expand=True)
+            height=32, bgcolor=C.PANEL, border=ft.Border.all(1, C.CONTROL), border_radius=8,
+            padding=ft.Padding.only(left=10, top=0, right=6, bottom=0), expand=True)
 
         proc = (app.get("track_exe") or "").strip()
         proc_box = ft.Container(
@@ -232,8 +232,8 @@ class InspectorPanel:
                     T("найден" if proc and app["id"] in self.ui.running else "", size=11,
                       color=C.GREEN)],
                    spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=32, bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL), border_radius=8,
-            padding=ft.padding.symmetric(0, 10), expand=True)
+            height=32, bgcolor=C.PANEL, border=ft.Border.all(1, C.CONTROL), border_radius=8,
+            padding=ft.Padding.symmetric(vertical=0, horizontal=10), expand=True)
 
         def labelled(label, control):
             return ft.Row([T(label, size=12, color=C.MUTED, width=74), control],
@@ -248,4 +248,4 @@ class InspectorPanel:
                            Wg.toggle(bool(app.get("run_as_admin")),
                                     lambda v: self.ui._set_admin(app["id"], v),
                                     self.ui._accent())),
-        ], spacing=9), padding=ft.padding.only(18, 18, 18, 0))
+        ], spacing=9), padding=ft.Padding.only(left=18, top=18, right=18, bottom=0))

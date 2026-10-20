@@ -6,14 +6,14 @@ from ... import __version__
 from .. import colors as C
 from .. import theme
 from .. import widgets as Wg
-from ..format import T
+from ..format import T, as_icon
 from .common import _caps, _field, _screen_header
 
 # Порядок ровно как в C.ACCENT_CHOICES — имена без хекс-литералов, иначе
 # цвет утёк бы из colors.py (это сторожит test_colours_come_from_one_file).
 ACCENT_NAMES = dict(zip(C.ACCENT_CHOICES, (
     "Белый", "Синий", "Бирюзовый", "Зелёный",
-    "Оранжевый", "Коралловый", "Красный", "Фиолетовый")))
+    "Оранжевый", "Коралловый", "Красный", "Фиолетовый"), strict=True))
 
 # Тон фона — только градусы, без «нейтрального» серого как отдельного цвета:
 # им управляет `None` (см. theme.py). Порядок — под ряд свотчей в интерфейсе.
@@ -39,13 +39,13 @@ def build_settings_screen(ui):
                               T(f"Centurio v{__version__}", size=11, color=C.MUTED_3,
                                 font_family="monospace")],
                   spacing=3, expand=True),
-        width=C.SETTINGS_NAV_W, padding=ft.padding.only(14, 18, 14, 20),
-        border=ft.border.only(right=ft.BorderSide(1, C.LINE_2)))
+        width=C.SETTINGS_NAV_W, padding=ft.Padding.only(left=14, top=18, right=14, bottom=20),
+        border=ft.Border.only(right=ft.BorderSide(1, C.LINE_2)))
 
     body = ft.Container(
         ft.Column(_settings_pane(ui, tab), spacing=17, scroll=ft.ScrollMode.AUTO,
                   expand=True),
-        expand=True, padding=ft.padding.only(28, 20, 28, 24))
+        expand=True, padding=ft.Padding.only(left=28, top=20, right=28, bottom=24))
 
     return ft.Column([
         _screen_header("Настройки", "Всё сохраняется само", ui.back_to_grid),
@@ -56,11 +56,11 @@ def build_settings_screen(ui):
 
 def _settings_nav_row(ui, key, label, icon, active):
     row = ft.Container(
-        ft.Row([ft.Icon(icon, size=16, color=C.TEXT if active else C.MUTED_2),
+        ft.Row([ft.Icon(as_icon(icon), size=16, color=C.TEXT if active else C.MUTED_2),
                 T(label, size=13, color=C.TEXT if active else C.MUTED,
                   weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400)],
                spacing=11, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=38, border_radius=9, padding=ft.padding.symmetric(0, 11),
+        height=38, border_radius=9, padding=ft.Padding.symmetric(vertical=0, horizontal=11),
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: ui.set_settings_tab(key))
     if active:
@@ -88,7 +88,7 @@ def _accent_swatch(ui, col, current):
     selected = col.lower() == current.lower()
     swatch = ft.Container(
         width=30, height=30, border_radius=9, bgcolor=col,
-        border=ft.border.all(2, C.ACCENT) if selected else ft.border.all(1, C.LINE_4),
+        border=ft.Border.all(2, C.ACCENT) if selected else ft.Border.all(1, C.LINE_4),
         tooltip=ACCENT_NAMES.get(col),
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e, c=col: ui.set_setting("accent", c))
@@ -115,8 +115,8 @@ def _accent_picker(ui):
                        on_submit=lambda e: ui.set_setting(
                            "accent", C.parse_hex(e.control.value) or current))],
                spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        width=116, height=32, bgcolor=C.BG_1, border=ft.border.all(1, C.SLOT_BORDER),
-        border_radius=8, padding=ft.padding.symmetric(0, 9))
+        width=116, height=32, bgcolor=C.BG_1, border=ft.Border.all(1, C.SLOT_BORDER),
+        border_radius=8, padding=ft.Padding.symmetric(vertical=0, horizontal=9))
 
     def slider_row(label, value, maximum, gradient, on_change):
         return ft.Row([
@@ -125,8 +125,8 @@ def _accent_picker(ui):
                 ft.Slider(min=0, max=maximum, value=value, on_change_end=on_change,
                           active_color=C.ACCENT, inactive_color=C.TRANSPARENT,
                           thumb_color=current, height=18, expand=True),
-                gradient=ft.LinearGradient(begin=ft.alignment.center_left,
-                                           end=ft.alignment.center_right,
+                gradient=ft.LinearGradient(begin=ft.Alignment.CENTER_LEFT,
+                                           end=ft.Alignment.CENTER_RIGHT,
                                            colors=list(gradient)),
                 border_radius=3, height=18, expand=True),
         ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -162,18 +162,18 @@ def _theme_preset_chip(ui, preset):
 
     # «Контраст» с тем же белым акцентом, что «Уголь», иначе не отличить:
     # его образец — переход от самого тёмного к самому светлому.
-    contrast_strip = (ft.LinearGradient(begin=ft.alignment.center_left,
-                                        end=ft.alignment.center_right,
+    contrast_strip = (ft.LinearGradient(begin=ft.Alignment.CENTER_LEFT,
+                                        end=ft.Alignment.CENTER_RIGHT,
                                         colors=[C.BG_0, accent_hex])
                       if preset["contrast"] == "strong" else None)
     chip = ft.Container(
         ft.Column([
             ft.Container(width=46, height=30, border_radius=8, bgcolor=swatch_color,
-                        gradient=contrast_strip, border=ft.border.all(1.5, accent_hex)),
+                        gradient=contrast_strip, border=ft.Border.all(1.5, accent_hex)),
             T(preset["label"], size=10.5, color=C.TEXT if active else C.MUTED),
         ], spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
-        padding=ft.padding.all(7), border_radius=11,
-        border=ft.border.all(2, ui._accent()) if active else ft.border.all(1, C.TRANSPARENT),
+        padding=ft.Padding.all(7), border_radius=11,
+        border=ft.Border.all(2, ui._accent()) if active else ft.Border.all(1, C.TRANSPARENT),
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=apply, tooltip=preset["label"])
     return Wg.hover_scale(chip)
@@ -199,8 +199,8 @@ def _bg_tint_swatch(ui, hue, current):
         color = C.hsl_to_hex(hue, 0.5, 0.55)
     swatch = ft.Container(
         width=30, height=30, border_radius=9, bgcolor=color, content=content,
-        alignment=ft.alignment.center,
-        border=ft.border.all(2, ui._accent()) if selected else ft.border.all(1, C.LINE_4),
+        alignment=ft.Alignment.CENTER,
+        border=ft.Border.all(2, ui._accent()) if selected else ft.Border.all(1, C.LINE_4),
         tooltip=BG_TINT_NAMES.get(hue),
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e, h=hue: ui.set_setting("bg_tint", h))
@@ -230,8 +230,8 @@ def _bg_tint_picker(ui):
                               "bg_tint", int(float(e.control.value))),
                           active_color=C.ACCENT, inactive_color=C.TRANSPARENT,
                           thumb_color=thumb, height=18, expand=True),
-                gradient=ft.LinearGradient(begin=ft.alignment.center_left,
-                                           end=ft.alignment.center_right,
+                gradient=ft.LinearGradient(begin=ft.Alignment.CENTER_LEFT,
+                                           end=ft.Alignment.CENTER_RIGHT,
                                            colors=list(C.HUE_STRIP)),
                 border_radius=3, height=18, expand=True),
         ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -273,9 +273,9 @@ KEY_HINTS = (
 
 def _key_hint(keys, text):
     return _row(text, ft.Container(T(keys, size=11.5, color=C.TEXT, font_family="monospace"),
-                                   height=28, padding=ft.padding.symmetric(0, 10),
-                                   bgcolor=C.PANEL, border=ft.border.all(1, C.CONTROL),
-                                   border_radius=7, alignment=ft.alignment.center))
+                                   height=28, padding=ft.Padding.symmetric(vertical=0, horizontal=10),
+                                   bgcolor=C.PANEL, border=ft.Border.all(1, C.CONTROL),
+                                   border_radius=7, alignment=ft.Alignment.CENTER))
 
 
 def _settings_keys(ui):
@@ -348,8 +348,8 @@ def _auto_backup_note(ui):
 def _settings_note(text):
     return ft.Container(
         T(text, size=11.5, color=C.TEXT_DIM),
-        padding=ft.padding.all(12), border_radius=10, bgcolor=C.PANEL,
-        border=ft.border.all(1, C.LINE_2))
+        padding=ft.Padding.all(12), border_radius=10, bgcolor=C.PANEL,
+        border=ft.Border.all(1, C.LINE_2))
 
 
 def _row(title, control, on_click=None):
@@ -372,13 +372,13 @@ def _segments(ui, key, default, options):
         return ft.Container(
             T(label, size=12, weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
               color=C.TEXT if active else C.MUTED),
-            height=26, padding=ft.padding.symmetric(0, 12), border_radius=6,
-            bgcolor=C.PANEL_ACTIVE if active else None, alignment=ft.alignment.center,
+            height=26, padding=ft.Padding.symmetric(vertical=0, horizontal=12), border_radius=6,
+            bgcolor=C.PANEL_ACTIVE if active else None, alignment=ft.Alignment.CENTER,
             animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             on_click=lambda e, v=value: ui.set_setting(key, v))
     return ft.Container(ft.Row([segment(label, value) for label, value in options], spacing=0),
-                        bgcolor=C.PANEL, border=ft.border.all(1, C.SEGMENT_BORDER),
-                        border_radius=8, padding=ft.padding.all(2))
+                        bgcolor=C.PANEL, border=ft.Border.all(1, C.SEGMENT_BORDER),
+                        border_radius=8, padding=ft.Padding.all(2))
 
 
 def _tile_segments(ui):

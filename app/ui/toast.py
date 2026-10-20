@@ -6,6 +6,7 @@ import flet as ft
 
 from ..infra import log
 from . import colors as C
+from . import widgets as Wg
 from .format import T
 
 PLAIN_SECONDS = 2.6
@@ -32,8 +33,8 @@ class ToastHost:
         self.body = ft.Column([self.text, self.detail], spacing=3, expand=True, tight=True)
         self.action_label = T("", size=12.5, weight=ft.FontWeight.W_600, color=C.TEXT)
         self.action_btn = ft.Container(
-            self.action_label, visible=False, padding=ft.padding.only(0, 0, 0, 2),
-            border=ft.border.only(bottom=ft.BorderSide(1, C.TEXT_FAINT)),
+            self.action_label, visible=False, padding=ft.Padding.only(left=0, top=0, right=0, bottom=2),
+            border=ft.Border.only(bottom=ft.BorderSide(1, C.TEXT_FAINT)),
             on_click=lambda e: self.fire_action())
         self.countdown = T("", size=10.5, color=C.MUTED_2, font_family="monospace", visible=False)
 
@@ -41,8 +42,8 @@ class ToastHost:
             ft.Row([self.icon, self.body, self.action_btn, self.countdown],
                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                    tight=True),
-            bgcolor=C.TOAST_BG, border=ft.border.all(1, C.TOAST_BORDER),
-            border_radius=12, padding=ft.padding.symmetric(13, 16), shadow=ft.BoxShadow(blur_radius=50, spread_radius=0,
+            bgcolor=C.TOAST_BG, border=ft.Border.all(1, C.TOAST_BORDER),
+            border_radius=12, padding=ft.Padding.symmetric(vertical=13, horizontal=16), shadow=ft.BoxShadow(blur_radius=50, spread_radius=0,
                                             offset=ft.Offset(0, 20), color=C.SHADOW_TOAST),
             animate_opacity=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         )
@@ -80,13 +81,13 @@ class ToastHost:
             self._action = action
             self._left = UNDO_SECONDS if action else 0
 
-            self.icon.name = ft.Icons.ERROR_OUTLINE if error else icon
+            self.icon.icon = ft.Icons.ERROR_OUTLINE if error else icon
             self.icon.color = C.DANGER if error else icon_color
             self.text.value = text
             self.detail.value = detail or ""
             self.detail.visible = bool(detail)
             self.card.bgcolor = C.ERR_BG if error else C.TOAST_BG
-            self.card.border = ft.border.all(1, C.ERR_BORDER if error else C.TOAST_BORDER)
+            self.card.border = ft.Border.all(1, C.ERR_BORDER if error else C.TOAST_BORDER)
             self.action_btn.visible = bool(action)
             self.action_label.value = action_label or "Вернуть"
             self.countdown.visible = bool(action)
@@ -171,7 +172,7 @@ class ToastHost:
 
     def _safe_update(self):
         try:
-            if self.control.page:
+            if Wg.attached(self.control):
                 self.control.update()
         except Exception:
             log.exception("сбой при обновлении тоста")

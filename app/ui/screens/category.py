@@ -17,7 +17,7 @@ def _image_row(ui, cat):
         art = ft.Container(
             ft.Icon(ft.Icons.ADD_A_PHOTO, size=19, color=C.MUTED),
             width=AVATAR, height=AVATAR, border_radius=AVATAR / 2, bgcolor=C.BG_1,
-            border=ft.border.all(1, C.DASHED), alignment=ft.alignment.center)
+            border=ft.Border.all(1, C.DASHED), alignment=ft.Alignment.CENTER)
 
     avatar = ft.Container(
         art, width=AVATAR, height=AVATAR, border_radius=AVATAR / 2,
@@ -36,8 +36,8 @@ def _image_row(ui, cat):
                            ft.Row(buttons, spacing=14, tight=True)],
                           spacing=4, expand=True, tight=True)],
                spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        border=ft.border.all(1, C.LINE_4), border_radius=12,
-        padding=ft.padding.symmetric(10, 12), margin=ft.margin.only(top=10))
+        border=ft.Border.all(1, C.LINE_4), border_radius=12,
+        padding=ft.Padding.symmetric(vertical=10, horizontal=12), margin=ft.Margin.only(top=10))
 
 
 def build_category_popover(ui, cat):
@@ -45,9 +45,9 @@ def build_category_popover(ui, cat):
     hue, lightness, _sat = C.hex_to_hsl(color)
 
     name_field = Wg.track_typing(ft.TextField(
-        value=cat["name"], border=ft.InputBorder.NONE, filled=False, dense=True,
+        value=cat["name"], border=ft.NoInputBorder(), filled=False, dense=True,
         text_size=13.5, color=C.TEXT, cursor_color=C.TEXT, expand=True,
-        content_padding=ft.padding.symmetric(0, 0),
+        content_padding=ft.Padding.symmetric(vertical=0, horizontal=0),
         text_style=ft.TextStyle(weight=ft.FontWeight.W_600),
         on_blur=lambda e: ui.rename_category(cat["id"], e.control.value),
         on_submit=lambda e: ui.rename_category(cat["id"], e.control.value)),
@@ -57,19 +57,19 @@ def build_category_popover(ui, cat):
         ft.Container(Wg.cat_glyph(cat, size=18, fill=34 if cat.get("image") else None),
                      width=34, height=34,
                      border_radius=17 if cat.get("image") else 10,
-                     bgcolor=C.PANEL_3, border=ft.border.all(1, C.LINE_4),
-                     alignment=ft.alignment.center,
+                     bgcolor=C.PANEL_3, border=ft.Border.all(1, C.LINE_4),
+                     alignment=ft.Alignment.CENTER,
                      clip_behavior=ft.ClipBehavior.ANTI_ALIAS),
         ft.Container(name_field, height=30, bgcolor=C.BG_1,
-                     border=ft.border.all(1, C.SLOT_BORDER), border_radius=7,
-                     padding=ft.padding.symmetric(0, 9), expand=True),
+                     border=ft.Border.all(1, C.SLOT_BORDER), border_radius=7,
+                     padding=ft.Padding.symmetric(vertical=0, horizontal=9), expand=True),
         ft.Container(ft.Icon(ft.Icons.CLOSE, size=17, color=C.MUTED_2),
                      on_click=lambda e: ui.close_popover()),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     swatches = [ft.Container(
         width=24, height=24, border_radius=7, bgcolor=hexval,
-        border=ft.border.all(2, C.ACCENT) if hexval.lower() == color.lower() else None,
+        border=ft.Border.all(2, C.ACCENT) if hexval.lower() == color.lower() else None,
         tooltip=hexval.upper(),
         on_click=lambda e, h=hexval: ui.set_category_color(cat["id"], h))
         for hexval in C.CAT_PALETTE]
@@ -81,8 +81,8 @@ def build_category_popover(ui, cat):
                        on_submit=lambda e: ui.set_category_color(
                            cat["id"], C.parse_hex(e.control.value) or color))],
                spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        width=104, height=32, bgcolor=C.BG_1, border=ft.border.all(1, C.SLOT_BORDER),
-        border_radius=8, padding=ft.padding.symmetric(0, 9))
+        width=104, height=32, bgcolor=C.BG_1, border=ft.Border.all(1, C.SLOT_BORDER),
+        border_radius=8, padding=ft.Padding.symmetric(vertical=0, horizontal=9))
 
     def slider_row(label, value, maximum, gradient, on_change):
         return ft.Row([
@@ -91,11 +91,11 @@ def build_category_popover(ui, cat):
                 ft.Slider(min=0, max=maximum, value=value, on_change_end=on_change,
                           active_color=C.ACCENT, inactive_color=C.TRANSPARENT,
                           thumb_color=color, height=18, expand=True),
-                gradient=ft.LinearGradient(begin=ft.alignment.center_left,
-                                           end=ft.alignment.center_right,
+                gradient=ft.LinearGradient(begin=ft.Alignment.CENTER_LEFT,
+                                           end=ft.Alignment.CENTER_RIGHT,
                                            colors=list(gradient)),
                 border_radius=3, height=18, expand=True,
-                padding=ft.padding.symmetric(0, 0)),
+                padding=ft.Padding.symmetric(vertical=0, horizontal=0)),
         ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     sliders = ft.Column([
@@ -112,9 +112,9 @@ def build_category_popover(ui, cat):
                 color=color if name == cat.get("icon") and not cat.get("image") else C.TEXT_2),
         width=34, height=34, border_radius=9,
         bgcolor=C.PANEL_3 if name == cat.get("icon") else C.BG_1,
-        border=ft.border.all(2, C.ACCENT) if name == cat.get("icon") and not cat.get("image")
-        else ft.border.all(1, C.LINE),
-        alignment=ft.alignment.center, tooltip=name,
+        border=ft.Border.all(2, C.ACCENT) if name == cat.get("icon") and not cat.get("image")
+        else ft.Border.all(1, C.LINE),
+        alignment=ft.Alignment.CENTER, tooltip=name,
         on_click=lambda e, n=name: ui.set_category_icon(cat["id"], n)) for name in ICON_PACK]
 
     image_row = _image_row(ui, cat)
@@ -125,8 +125,8 @@ def build_category_popover(ui, cat):
                     T("Удалить категорию", size=12, color=C.ERR_TEXT)], spacing=6, tight=True),
             on_click=lambda e: ui._remove_category(cat["id"]))],
             vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.padding.only(0, 14, 0, 0), margin=ft.margin.only(top=12),
-        border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)))
+        padding=ft.Padding.only(left=0, top=14, right=0, bottom=0), margin=ft.Margin.only(top=12),
+        border=ft.Border.only(top=ft.BorderSide(1, C.LINE_2)))
 
     return ft.Container(
         ft.Column([
@@ -135,13 +135,13 @@ def build_category_popover(ui, cat):
             ft.Row(swatches, spacing=6, wrap=True, run_spacing=6),
             ft.Row([hex_box, sliders], spacing=10,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.symmetric(10, 0)),
+            ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.Margin.symmetric(vertical=10, horizontal=0)),
             _caps("ИКОНКА"),
             ft.Container(ft.Column([ft.Row(cells, spacing=6, wrap=True, run_spacing=6)],
                                    scroll=ft.ScrollMode.AUTO), height=120),
             image_row,
             footer,
         ], spacing=10, tight=True),
-        width=C.POPOVER_W, bgcolor=C.PANEL, border=ft.border.all(1, C.LINE_4),
-        border_radius=14, padding=ft.padding.all(16),
+        width=C.POPOVER_W, bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE_4),
+        border_radius=14, padding=ft.Padding.all(16),
         shadow=ft.BoxShadow(blur_radius=60, offset=ft.Offset(0, 24), color=C.SHADOW_MENU))

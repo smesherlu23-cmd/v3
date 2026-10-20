@@ -59,24 +59,15 @@ class CategoryMixin:
         self.refresh()
 
     def pick_category_image(self, cat_id):
-        picker = getattr(self, "_image_picker", None)
-        if picker is None:
-            picker = ft.FilePicker()
-            self._image_picker = picker
-            self.page.overlay.append(picker)
-            self.page.update()
-
-        def on_result(e):
-            if not e.files:
+        def picked(src):
+            if not src:
                 return
-            src = e.files[0].path or e.files[0].name
             stored = self._store_category_image(cat_id, src)
             if stored:
                 self.store.update_category(cat_id, {"image": stored})
                 self.refresh()
-        picker.on_result = on_result
-        picker.pick_files(dialog_title="Картинка категории", allow_multiple=False,
-                          allowed_extensions=[e.lstrip(".") for e in CATEGORY_IMAGE_EXTS])
+        self.ask_for_file("Картинка категории", picked,
+                          extensions=[e.lstrip(".") for e in CATEGORY_IMAGE_EXTS])
 
     def _store_category_image(self, cat_id, src) -> str | None:
         import shutil

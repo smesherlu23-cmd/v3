@@ -122,10 +122,10 @@ def _boot() -> None:
     if web:
         # Только с этой машины: веб-режим без пароля, а интерфейс умеет
         # запускать любые программы.
-        ft.app(target=main, view=None, host="127.0.0.1", port=port or 8550,
+        ft.run(main, view=None, host="127.0.0.1", port=port or 8550,
                assets_dir=str(ASSETS_DIR))
     else:
-        ft.app(target=main, assets_dir=str(ASSETS_DIR))
+        ft.run(main, assets_dir=str(ASSETS_DIR))
 
 
 if __name__ == "__main__":

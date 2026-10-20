@@ -13,6 +13,7 @@ from helpers import (
     _run_bounded,
     _texts,
     _ui_for,
+    ft,
     ok,
     skip,
     types_ns,
@@ -224,7 +225,7 @@ def test_second_instance_stops_even_when_flet_disarms_sys_exit():
         os.makedirs(os.path.join(fake, "app", "platform"))
         with open(os.path.join(fake, "flet.py"), "w", encoding="utf-8") as fh:
             fh.write("print('FLET_IMPORTED')\n"
-                     "def app(**kw):\n    print('FT_APP_STARTED')\n")
+                     "def run(*a, **kw):\n    print('FT_APP_STARTED')\n")
         # Подменяется весь пакет app: проверяется только логика точки входа.
         for rel, body in ((("app", "__init__.py"), ""),
                           (("app", "main.py"), "ASSETS_DIR = '.'\ndef main(page):\n    pass\n"),
@@ -552,11 +553,11 @@ def test_first_hide_to_tray_explains_where_the_window_went():
             page = _FakePage()
             finished, raised = _run_bounded(lambda: main_mod.main(page))
             ok(finished and raised is None, f"the window opens ({raised!r})")
-            page.window.on_event(types_ns(data="close"))
+            page.window.on_event(types_ns(type=ft.WindowEventType.CLOSE))
             ok(page.window.visible is False, "the close button hides the window to the tray")
             ok(len(shown) == 1 and "трее" in shown[0], "and says where it went")
             page.window.visible = True
-            page.window.on_event(types_ns(data="close"))
+            page.window.on_event(types_ns(type=ft.WindowEventType.CLOSE))
             ok(len(shown) == 1, "but only the first time")
         finally:
             tr_mod.TrayController.start, main_mod._report_startup_failure = saved
@@ -593,9 +594,6 @@ def test_log_is_ready_before_the_store_is_read():
               if isinstance(n, ast.FunctionDef) and makes_store(n))
 
     def first_line(match):
-        # Без аннотации намеренно: в этом файле нет `from __future__ import
-        # annotations`, а `int | None` вычисляется в момент объявления и
-        # падает на Python 3.9, который есть в матрице CI.
         lines = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and match(n.func)]
         return min(lines) if lines else None
 

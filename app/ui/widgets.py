@@ -4,13 +4,31 @@ import flet as ft
 
 from ..core.view_state import SEARCH_FIELD
 from . import colors as C
-from .format import T, cat_icon
+from .format import T, as_icon, cat_icon
 from .images import icon_image
+
+
+def attached(control) -> bool:
+    """Стоит ли контрол на странице. У отцепленного Flet 1.0 бросает из `.page`."""
+    try:
+        return control.page is not None
+    except RuntimeError:
+        return False
+
+
+def entered(e) -> bool:
+    """Курсор вошёл, а не вышел: `e.data` у on_hover — True или False."""
+    return e.data is True
+
+
+def dragged_data(e):
+    """`data` перетаскиваемого контрола в событиях DragTarget."""
+    return getattr(getattr(e, "src", None), "data", None)
 
 
 def safe_update(control) -> None:
     try:
-        if control.page:
+        if attached(control):
             control.update()
     except Exception:
         from ..infra import log
@@ -57,7 +75,7 @@ def track_typing(field: ft.TextField, view, key: str) -> ft.TextField:
 
 def hoverable(container: ft.Container, normal, hover) -> ft.Container:
     def on_hover(e):
-        container.bgcolor = hover if e.data == "true" else normal
+        container.bgcolor = hover if entered(e) else normal
         safe_update(container)
     container.bgcolor = normal
     container.on_hover = on_hover
@@ -70,7 +88,7 @@ def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE,
     prior = container.on_hover
 
     def on_hover(e):
-        container.scale = scale if e.data == "true" else 1.0
+        container.scale = scale if entered(e) else 1.0
         safe_update(container)
         if prior:
             prior(e)
@@ -89,8 +107,8 @@ def key_chip(label, accent, bright=False):
         T(label, size=10.5, weight=ft.FontWeight.W_600 if bright else None,
           color=C.ON_ACCENT if bright else C.SLOT_GLYPH, font_family="monospace"),
         bgcolor=accent if bright else C.PANEL_3,
-        border=None if bright else ft.border.all(1, C.CONTROL),
-        border_radius=5, padding=ft.padding.symmetric(3, 7))
+        border=None if bright else ft.Border.all(1, C.CONTROL),
+        border_radius=5, padding=ft.Padding.symmetric(vertical=3, horizontal=7))
 
 
 def toggle(value: bool, on_toggle, accent):
@@ -99,7 +117,7 @@ def toggle(value: bool, on_toggle, accent):
     return ft.Container(
         ft.Row([knob], alignment=ft.MainAxisAlignment.END if value
                else ft.MainAxisAlignment.START),
-        width=34, height=19, border_radius=10, padding=ft.padding.all(2.5),
+        width=34, height=19, border_radius=10, padding=ft.Padding.all(2.5),
         bgcolor=accent if value else C.LINE_4,
         on_click=lambda e: on_toggle(not value),
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT))
@@ -109,11 +127,11 @@ def primary_btn(label, on_click, accent, icon=None, height=36, expand=False):
     row = [T(label, size=13 if height >= 38 else 12.5, weight=ft.FontWeight.W_600,
              color=C.ON_ACCENT)]
     if icon:
-        row.insert(0, ft.Icon(icon, size=15, color=C.ON_ACCENT))
+        row.insert(0, ft.Icon(as_icon(icon), size=15, color=C.ON_ACCENT))
     btn = ft.Container(
         ft.Row(row, spacing=7, tight=True, alignment=ft.MainAxisAlignment.CENTER),
-        height=height, padding=ft.padding.symmetric(0, 14), bgcolor=accent,
-        border_radius=9, alignment=ft.alignment.center, expand=expand,
+        height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=14), bgcolor=accent,
+        border_radius=9, alignment=ft.Alignment.CENTER, expand=expand,
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: on_click())
     return hover_scale(hoverable(btn, accent, C.WHITE))
@@ -126,16 +144,16 @@ def outline_btn(label, on_click, icon=None, danger=False, height=34,
              weight=weight or (ft.FontWeight.W_600 if danger or active
                                else ft.FontWeight.W_500), color=color)]
     if icon:
-        row.insert(0, ft.Icon(icon, size=14,
+        row.insert(0, ft.Icon(as_icon(icon), size=14,
                               color=C.ERR_TEXT if danger
                               else (icon_color or (C.TEXT if active else C.MUTED))))
     btn = ft.Container(
         ft.Row(row, spacing=7, tight=True, alignment=ft.MainAxisAlignment.CENTER),
-        height=height, padding=ft.padding.symmetric(0, 12),
+        height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
         bgcolor=C.PANEL_ACTIVE if active else None,
-        border=ft.border.all(1, C.ERR_BORDER if danger
+        border=ft.Border.all(1, C.ERR_BORDER if danger
                              else (C.LINE_5 if active else C.CONTROL)),
-        border_radius=9, alignment=ft.alignment.center,
+        border_radius=9, alignment=ft.Alignment.CENTER,
         animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: on_click())
     return btn if active else hover_scale(hoverable(btn, None, C.SELECTED_BG))
@@ -144,8 +162,8 @@ def outline_btn(label, on_click, icon=None, danger=False, height=34,
 def link_btn(label, on_click):
     return ft.Container(
         T(label, size=12.5, weight=ft.FontWeight.W_600, color=C.TEXT),
-        border=ft.border.only(bottom=ft.BorderSide(1, C.TEXT_FAINT)),
-        padding=ft.padding.only(0, 0, 0, 2), on_click=lambda e: on_click())
+        border=ft.Border.only(bottom=ft.BorderSide(1, C.TEXT_FAINT)),
+        padding=ft.Padding.only(left=0, top=0, right=0, bottom=2), on_click=lambda e: on_click())
 
 
 def spinner(size=38):
@@ -157,8 +175,8 @@ def set_slot(size: int, radius: int, glyph: int, muted=False):
     return ft.Container(
         ft.Icon(ft.Icons.LAYERS, size=glyph, color=C.TEXT_FAINT if muted else C.MUTED),
         width=size, height=size, border_radius=radius, bgcolor=C.SET_SLOT_BG,
-        border=ft.border.all(1, C.SET_SLOT_BORDER if muted else C.CONTROL),
-        alignment=ft.alignment.center)
+        border=ft.Border.all(1, C.SET_SLOT_BORDER if muted else C.CONTROL),
+        alignment=ft.Alignment.CENTER)
 
 
 def dot(size=6, color=C.GREEN):
@@ -167,13 +185,13 @@ def dot(size=6, color=C.GREEN):
 
 def win_btn(icon_name, tooltip, handler, danger=False):
     c = ft.Container(
-        ft.Icon(icon_name, size=14, color=C.MUTED),
-        width=40, height=32, border_radius=6, alignment=ft.alignment.center,
+        ft.Icon(as_icon(icon_name), size=14, color=C.MUTED),
+        width=40, height=32, border_radius=6, alignment=ft.Alignment.CENTER,
         on_click=lambda e: handler(),
     )
 
     def on_hover(e):
-        if e.data == "true":
+        if entered(e):
             c.bgcolor = C.DANGER if danger else C.PANEL_3
             c.content.color = C.WHITE if danger else C.TEXT
         else:
@@ -194,7 +212,7 @@ def cat_image(cat, size: int, fill: int | None = None):
     if not path:
         return None
     box = fill or (size + 3)
-    art = icon_image(path, width=box, height=box, fit=ft.ImageFit.COVER)
+    art = icon_image(path, width=box, height=box, fit=ft.BoxFit.COVER)
     if art is None:
         return None
     return ft.Container(art, width=box, height=box, border_radius=box / 2,
@@ -210,14 +228,14 @@ def cat_glyph(cat, size=19, color=None, fill: int | None = None):
     return ft.Icon(cat_icon(cat_glyph_name(cat)), size=size, color=col)
 
 
-_FIT_BY_KIND = {"cover": ft.ImageFit.COVER, "logo": ft.ImageFit.CONTAIN,
-                "contain": ft.ImageFit.CONTAIN}
+_FIT_BY_KIND = {"cover": ft.BoxFit.COVER, "logo": ft.BoxFit.CONTAIN,
+                "contain": ft.BoxFit.CONTAIN}
 
 
 def icon_slot(app, size: int, radius: int, glyph: int | None = None,
               border=None, glyph_color=None, bgcolor=None, cat=None,
               source_glyph: str = "folder"):
-    fit = _FIT_BY_KIND.get(app.get("icon_fit"), ft.ImageFit.CONTAIN)
+    fit = _FIT_BY_KIND.get(app.get("icon_fit"), ft.BoxFit.CONTAIN)
     name = cat_glyph_name(cat) if cat else source_glyph
     placeholder = ft.Icon(cat_icon(name), size=glyph or round(size * 0.46),
                           color=glyph_color or C.SLOT_GLYPH)
@@ -228,5 +246,5 @@ def icon_slot(app, size: int, radius: int, glyph: int | None = None,
     return ft.Container(
         inner, width=size, height=size, border_radius=radius,
         bgcolor=bgcolor or C.SLOT_BG,
-        border=ft.border.all(1, border or C.SLOT_BORDER), alignment=ft.alignment.center,
+        border=ft.Border.all(1, border or C.SLOT_BORDER), alignment=ft.Alignment.CENTER,
         clip_behavior=ft.ClipBehavior.HARD_EDGE)
