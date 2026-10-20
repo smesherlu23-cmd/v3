@@ -306,6 +306,31 @@ def screenshot(path: Path) -> None:
         print(f"  (снимок экрана не вышел: {exc})")
 
 
+def print_search_strip(session: Session) -> None:
+    """Строка поиска как она видна на экране — прямо в вывод.
+
+    Артефакт со снимками в CI не всегда доступен тому, кто разбирает
+    провал, а по одному снимку состояния не понять, что на самом деле в
+    поле и где курсор. Полоса 640×36 в оттенках серого — несколько КБ base64.
+    """
+    try:
+        import base64
+        import io
+
+        from PIL import ImageGrab
+        g = session.geometry
+        cx = g.get("X", 0) + g.get("WIDTH", 1280) // 2
+        top = g.get("Y", 0) + 8
+        strip = ImageGrab.grab(bbox=(cx - 320, top, cx + 320, top + 36)).convert("L")
+        buf = io.BytesIO()
+        strip.quantize(16).save(buf, "PNG", optimize=True)
+        pointer = session.xdo("getmouselocation", check=False)
+        print(f"  окно {g}, указатель: {pointer}")
+        print(f"  строка поиска (PNG base64): {base64.b64encode(buf.getvalue()).decode()}")
+    except Exception as exc:
+        print(f"  (полоса поиска не вышла: {exc})")
+
+
 def main() -> int:
     if not shutil.which("xdotool") or not os.environ.get("DISPLAY"):
         print("Нужны xdotool и X-сервер (DISPLAY); запустите через xvfb-run.")
@@ -327,6 +352,8 @@ def main() -> int:
                     failed += 1
                     print(f"FAIL  {label}: {exc}")
                     screenshot(out_dir / f"{check.__name__}.png")
+                    if failed == 1:
+                        print_search_strip(session)
         except CheckFailed as exc:
             failed += 1
             print(f"FAIL  запуск: {exc}")
