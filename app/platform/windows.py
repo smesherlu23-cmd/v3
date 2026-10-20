@@ -37,6 +37,27 @@ def _pid_names(pids) -> dict[int, str]:
     return {pid: name for pid, name in procs.snapshot().items() if pid in wanted}
 
 
+_FRAME_CLASS = "ApplicationFrameWindow"
+_CORE_CLASS = "Windows.UI.Core.CoreWindow"
+
+
+def hosted_pid(hwnd, pid, class_of, children_of, pid_of) -> int:
+    """Чей на самом деле процесс у окна.
+
+    Окно приложения из Store (UWP) — рамка процесса ApplicationFrameHost.exe,
+    а само приложение живёт в дочернем CoreWindow своего процесса. По рамке
+    Centurio видел бы у всех таких приложений один и тот же «exe».
+    """
+    if class_of(hwnd) != _FRAME_CLASS:
+        return pid
+    for child in children_of(hwnd):
+        if class_of(child) == _CORE_CLASS:
+            inner = pid_of(child)
+            if inner and inner != pid:
+                return inner
+    return pid
+
+
 def list_windows() -> list[dict]:
     if not available():
         return []
@@ -52,6 +73,21 @@ def list_windows() -> list[dict]:
 
     proto = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
+    def class_of(hwnd) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+
+    def pid_of(hwnd) -> int:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+
+    def children_of(hwnd) -> list:
+        kids = []
+        user32.EnumChildWindows(hwnd, proto(lambda child, _p: kids.append(child) or True), 0)
+        return kids
+
     def visit(hwnd, _param):
         try:
             if not user32.IsWindowVisible(hwnd):
@@ -63,12 +99,11 @@ def list_windows() -> list[dict]:
                 return True
             buf = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buf, length + 1)
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            pid = hosted_pid(hwnd, pid_of(hwnd), class_of, children_of, pid_of)
             rect = RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             found.append({
-                "hwnd": int(hwnd), "pid": int(pid.value), "exe": "",
+                "hwnd": int(hwnd), "pid": pid, "exe": "",
                 "title": buf.value,
                 "rect": (rect.left, rect.top, rect.right - rect.left,
                          rect.bottom - rect.top),

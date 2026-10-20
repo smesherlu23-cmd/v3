@@ -132,8 +132,17 @@ class ScanController:
         for item in found:
             if item.get("args"):
                 by_path.setdefault((item.get("path") or "").lower(), []).append(item)
+        store_exe = {(i.get("path") or "").lower(): i["track_exe"] for i in found
+                     if i.get("source") == "store" and i.get("track_exe")}
         repaired = 0
         for app in self.store.state()["apps"]:
+            exe = store_exe.get((app.get("path") or "").lower())
+            if exe and not app.get("track_exe"):
+                # Приложения из Store, добавленные раньше, чем Centurio научился
+                # узнавать их процесс.
+                self.store.update_app(app["id"], {"track_exe": exe}, persist=False)
+                repaired += 1
+                continue
             if app.get("args"):
                 continue
             candidates = by_path.get((app.get("path") or "").lower()) or []
@@ -149,7 +158,7 @@ class ScanController:
             repaired += 1
         if repaired:
             self.store.flush()
-            log.info("ярлыкам вернули аргументы: %s", repaired)
+            log.info("записям дописали аргументы или процесс: %s", repaired)
         return repaired
 
     def scanning(self) -> bool:

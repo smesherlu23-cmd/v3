@@ -453,6 +453,82 @@ def test_native_registry_and_localapps_discovery():
        "system-directory exes are recognised so they can be filtered out")
 
 
+def test_store_apps_are_tracked():
+    """Приложение из Store видно открытым, и на его окно можно переключиться.
+
+    Запись `shell:AppsFolder\\…` не несёт exe, а окна UWP принадлежат
+    ApplicationFrameHost.exe — Centurio не знал, что такие приложения
+    запущены, и не мог ни переключиться на них, ни расставить в наборе.
+    """
+    from app.platform import windows as W
+    from app.platform.discovery import windows as win
+    from app.platform.launcher import Launcher
+
+    ok(win.store_exe("app\\Spotify.exe") == "Spotify.exe",
+       "the manifest's Executable names the process, folder dropped")
+    ok(win.store_exe("$targetnametoken$.exe") is None and win.store_exe("") is None
+       and win.store_exe("Calc") is None, "placeholders and junk are ignored")
+
+    saved = win.raw_windows_entries
+    try:
+        win.raw_windows_entries = lambda cache: ([
+            {"name": "Spotify", "path": "shell:AppsFolder\\Spotify.Spotify_x!Spotify",
+             "src": "store", "exe": "Spotify.exe"},
+            {"name": "Calculator", "path": "shell:AppsFolder\\Microsoft.Calc_y!App",
+             "src": "store", "exe": None}], "", 0)
+        found = {a["name"]: a for a in win._discover_windows(None)}
+    finally:
+        win.raw_windows_entries = saved
+    ok(found["Spotify"]["track_exe"] == "Spotify.exe", "discovery records the Store app's process")
+    ok(found["Calculator"]["track_exe"] is None, "and leaves it empty when the manifest is silent")
+
+    launcher = Launcher()
+    launcher.set_apps([dict(found["Spotify"], id="s")])
+    ok(launcher._exe_index.get("spotify.exe") == {"s"},
+       "the process monitor now watches for it")
+
+    classes = {1: "ApplicationFrameWindow", 2: "Windows.UI.Core.CoreWindow", 3: "Chrome_Widget"}
+    pids = {1: 100, 2: 200, 3: 300}
+    ok(W.hosted_pid(1, 100, classes.get, lambda h: [3, 2], pids.get) == 200,
+       "a UWP frame window is credited to the app inside it, not to ApplicationFrameHost")
+    ok(W.hosted_pid(1, 100, classes.get, lambda h: [], pids.get) == 100,
+       "a frame with no app inside (suspended) keeps its own process")
+    ok(W.hosted_pid(3, 300, classes.get, lambda h: [2], pids.get) == 300,
+       "ordinary windows are left alone")
+
+    with tempfile.TemporaryDirectory() as d:
+        store = Store(os.path.join(d, "data.json"))
+        old = store.add_app({"name": "Spotify",
+                             "path": "shell:AppsFolder\\Spotify.Spotify_x!Spotify"})
+        from unittest.mock import MagicMock
+
+        from app.controllers.scan import ScanController
+        host = MagicMock()
+        host.store = store
+        ScanController(host)._remember_discovery(list(found.values()))
+        ok(store.get_app(old["id"])["track_exe"] == "Spotify.exe",
+           "a Store app added earlier learns its process on the next scan")
+
+
+def test_windows_discovery_script_runs():
+    """Сценарий PowerShell, который ищет программы, работает на настоящем Windows.
+
+    Ошибка в нём не роняет Centurio — поиск просто молча возвращает пустой
+    список. Поэтому на Windows-машине CI сценарий запускается по-настоящему.
+    """
+    if os.name != "nt":
+        return
+    from app.platform.discovery import windows as win
+
+    with tempfile.TemporaryDirectory() as d:
+        data, stderr, code = win.raw_windows_entries(d)
+    ok(code == 0 and "ParserError" not in stderr and "Exception" not in stderr,
+       f"the discovery script runs cleanly (code {code}): {stderr[:500]}")
+    ok(data, "and finds something in the Start menu")
+    store = [x for x in data if x.get("src") == "store"]
+    ok(all("exe" in x for x in store), "Store entries carry their process name field")
+
+
 def test_shortcut_arguments_survive_discovery():
     """Ярлык меню «Пуск» приносит аргументы и рабочую папку, а не только exe.
 

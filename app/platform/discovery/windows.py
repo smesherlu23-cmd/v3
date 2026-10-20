@@ -321,6 +321,29 @@ function Get-Pkg($family){
   }
   return $script:AllPkgs | Where-Object { $_.PackageFamilyName -eq $family } | Select-Object -First 1
 }
+$script:Manifests=@{}
+function Get-Manifest($family){
+  if($script:Manifests.ContainsKey($family)){ return $script:Manifests[$family] }
+  $text=$null
+  try{
+    $pkg=Get-Pkg $family
+    if($pkg -and $pkg.InstallLocation){
+      $manifestPath=Join-Path $pkg.InstallLocation 'AppxManifest.xml'
+      if(Test-Path -LiteralPath $manifestPath){ $text=Get-Content -LiteralPath $manifestPath -Raw }
+    }
+  }catch{ $text=$null }
+  $script:Manifests[$family]=$text
+  return $text
+}
+function Get-StoreExe($family,$appId){
+  $text=Get-Manifest $family
+  if(-not $text){ return $null }
+  $esc=[regex]::Escape($appId)
+  $tag=[regex]::Match($text,"<Application\b[^>]*\bId=`"$esc`"[^>]*>",
+                      [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if(-not $tag.Success){ return $null }
+  return Get-LogoAttr $tag.Value 'Executable'
+}
 function Save-StoreIcon($family,$appId){
   if(-not $cache -or -not $family){ return [PSCustomObject]@{icon=$null;err='no cache dir'} }
   $f=Join-Path $cache ((Md5 "store:$family!$appId")+'_store.png')
@@ -371,7 +394,8 @@ function Add-Store($n,$id){
   $family=$parts[0]
   $appId=if($parts.Count -gt 1){ $parts[1] } else { 'App' }
   $r=Save-StoreIcon $family $appId
-  [void]$out.Add([PSCustomObject]@{name="$n";path="shell:AppsFolder\$id";icon=$r.icon;src='store';icon_err=$r.err})
+  $exe=Get-StoreExe $family $appId
+  [void]$out.Add([PSCustomObject]@{name="$n";path="shell:AppsFolder\$id";icon=$r.icon;src='store';icon_err=$r.err;exe=$exe})
 }
 
 $menus=@(__DIRS__)
@@ -517,6 +541,19 @@ def squirrel_target(args) -> str | None:
     return None
 
 
+def store_exe(raw) -> str | None:
+    """Имя процесса приложения из Store по атрибуту `Executable` манифеста.
+
+    Без него Centurio не видел, что такое приложение открыто, и не мог ни
+    переключиться на его окно, ни поставить его в раскладку набора.
+    """
+    raw = str(raw or "").strip()
+    if not raw or "$" in raw:
+        return None
+    base = ntpath.basename(raw.replace("/", "\\"))
+    return base if base.lower().endswith(".exe") else None
+
+
 def _discover_windows(icon_cache: str | None) -> list[dict]:
     data, stderr, code = raw_windows_entries(icon_cache)
     if not data and (code != 0 or stderr):
@@ -548,7 +585,8 @@ def _discover_windows(icon_cache: str | None) -> list[dict]:
         apps.append({"name": name, "path": path, "args": args,
                      "working_dir": str(x.get("wd") or ""), "icon": icon,
                      "icon_fit": "contain", "source": src,
-                     "track_exe": squirrel_target(args),
+                     "track_exe": store_exe(x.get("exe")) if src == "store"
+                     else squirrel_target(args),
                      "sub": "Microsoft Store" if src == "store" else ""})
     return apps
 
