@@ -31,22 +31,8 @@ APPS = ("Telegram", "Microsoft Teams", "Google Chrome", "Visual Studio Code", "S
         "Notion", "Figma", "Spotify")
 
 
-# Встроенный метод ввода GTK. Через метод ввода Flutter под Linux получает
-# набранное, и у него своя копия текста поля: с внешним (ibus и т. п.) на
-# раннере очистка поля из Python до окна не доходила, пока поле в фокусе, —
-# следующая буква дописывалась к старому запросу. Centurio — программа для
-# Windows; здесь проверяется она, а не стек ввода Linux.
-SIMPLE_INPUT = {"GTK_IM_MODULE": "gtk-im-context-simple", "XMODIFIERS": "@im=none"}
-
-
 class CheckFailed(Exception):
     pass
-
-
-def input_environment() -> str:
-    found = sorted(path.stem for path in Path("/usr/lib").glob("*/gtk-3.0/3.0.0/immodules/*.so"))
-    outer = ", ".join(f"{k}={os.environ.get(k, '')!r}" for k in ("GTK_IM_MODULE", "XMODIFIERS"))
-    return f"ввод: снаружи {outer}; модули GTK: {', '.join(found) or 'нет'}"
 
 
 def make_library(folder: Path) -> None:
@@ -87,7 +73,7 @@ class Session:
     def _start_once(self) -> None:
         self.state_path.unlink(missing_ok=True)
         env = dict(os.environ, APPDATA=str(self.workdir), CENTURIO_NO_DIALOG="1",
-                   CENTURIO_UI_CHECK=str(self.state_path), **SIMPLE_INPUT)
+                   CENTURIO_UI_CHECK=str(self.state_path))
         env.pop("CENTURIO_WEB", None)
         # Своя группа процессов: клиент Flet — дочерний процесс Python, и при
         # остановке его надо гасить вместе с программой, иначе окна копятся.
@@ -324,7 +310,6 @@ def main() -> int:
     if not shutil.which("xdotool") or not os.environ.get("DISPLAY"):
         print("Нужны xdotool и X-сервер (DISPLAY); запустите через xvfb-run.")
         return 2
-    print(input_environment())
     out_dir = Path(os.environ.get("UI_CHECK_OUT") or ROOT / "ui-check-output")
     out_dir.mkdir(parents=True, exist_ok=True)
     failed = 0
