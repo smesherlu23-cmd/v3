@@ -118,6 +118,11 @@ def _boot() -> None:
     import flet as ft
 
     from app.main import ASSETS_DIR, main
+    from app.ui import flet_threads
+
+    # До ft.run: иначе изменения из фоновых потоков (метка «открыто», меню
+    # трея, найденные программы) не доходят до окна без движения мыши.
+    flet_threads.install()
 
     if web:
         # Только с этой машины: веб-режим без пароля, а интерфейс умеет

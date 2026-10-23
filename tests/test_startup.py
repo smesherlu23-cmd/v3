@@ -23,6 +23,66 @@ from app.core.store import Store
 from app.ui import colors as C
 
 
+def test_background_updates_reach_the_window():
+    """Изменение из фонового потока уходит окну сразу, а не по следующему событию.
+
+    Flet 1.0 кладёт сообщение окну в asyncio.Queue через put_nowait; из
+    чужого потока цикл событий при этом не просыпается, и метка «открыто»,
+    найденные программы, меню трея ждали движения мыши над окном.
+    """
+    import asyncio
+    import threading
+
+    try:
+        from flet.messaging.flet_socket_server import FletSocketServer
+
+        from app.ui import flet_threads
+    except Exception as exc:
+        skip("background window updates", exc)
+        return
+    ok(flet_threads.install(), "the send wrapper is installed")
+    ok(flet_threads.install(), "and installing twice is harmless")
+    boot = _read("main.py")
+    ok(-1 < boot.find("flet_threads.install()") < boot.find("ft.run("),
+       "main.py installs it before starting Flet")
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        async def make_queue():
+            return asyncio.Queue()
+        queue = asyncio.run_coroutine_threadsafe(make_queue(), loop).result(5)
+        server = object.__new__(FletSocketServer)
+        server.loop = loop
+        server._FletSocketServer__send_queue = queue
+        waiting = threading.Event()
+
+        async def wait_for_message():
+            # Отметка ставится, когда get() уже ждёт, а цикл уходит спать.
+            loop.call_soon(waiting.set)
+            return await queue.get()
+        received = asyncio.run_coroutine_threadsafe(wait_for_message(), loop)
+        ok(waiting.wait(5), "the send loop is waiting for messages")
+        time.sleep(0.1)
+        server.send_message(types_ns(action=1, body={"value": "открыто"}))
+        try:
+            received.result(timeout=3)
+            ok(True, "a message sent from a background thread reaches the send loop")
+        except Exception:
+            ok(False, "a message sent from a background thread reaches the send loop")
+
+        async def send_on_loop():
+            server.send_message(types_ns(action=1, body={"value": 2}))
+            return queue.qsize()
+        ok(asyncio.run_coroutine_threadsafe(send_on_loop(), loop).result(5) == 1,
+           "and one sent from the loop itself is queued at once, as before")
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(5)
+        loop.close()
+
+
 def test_single_instance_mutex_is_per_session():
     """Мьютекс живёт в `Local\\`, а не в `Global\\`.
 
