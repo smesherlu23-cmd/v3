@@ -345,6 +345,7 @@ def main() -> int:
     out_dir = Path(os.environ.get("UI_CHECK_OUT") or ROOT / "ui-check-output")
     out_dir.mkdir(parents=True, exist_ok=True)
     failed = 0
+    start_failed = False
     with tempfile.TemporaryDirectory() as tmp:
         session = Session(Path(tmp))
         make_library(Path(tmp))
@@ -363,6 +364,7 @@ def main() -> int:
                         print_search_strip(session)
         except CheckFailed as exc:
             failed += 1
+            start_failed = True
             print(f"FAIL  запуск: {exc}")
             screenshot(out_dir / "start.png")
         finally:
@@ -372,6 +374,12 @@ def main() -> int:
                 own = Path(tmp) / "Centurio" / name
                 if own.exists():
                     shutil.copy(own, out_dir / name)
+    if start_failed:
+        # Программа закрылась до окна — значит, закрылся клиент Flet, и
+        # причина в его выводе, а не в centurio.log.
+        print("--- вывод программы и клиента Flet ---")
+        lines = (out_dir / "app.log").read_text(encoding="utf-8", errors="replace").splitlines()
+        print("\n".join(lines[-60:]))
     own_log = out_dir / "centurio.log"
     if failed and own_log.exists():
         # Хвост лога прямо в выводе: в CI это видно без скачивания артефакта.
