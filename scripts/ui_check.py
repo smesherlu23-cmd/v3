@@ -42,7 +42,11 @@ def make_library(folder: Path) -> None:
     for name in APPS:
         store.add_app({"name": name, "path": f"/nonexistent/{name.lower()}.exe",
                        "category_id": "work"})
-    for key, value in (("win_w", 1280), ("win_h", 800), ("win_x", 40), ("win_y", 40),
+    # 1280×720 — размер, с которым клиент Flet под Linux создаёт окно. Если
+    # программа сразу просит другой, клиент на экране без видеокарты в
+    # нескольких запусках из ста падает на этом изменении размера (SIGSEGV
+    # после «Timed out waiting for OpenGL frame»), и Centurio выходит до окна.
+    for key, value in (("win_w", 1280), ("win_h", 720), ("win_x", 40), ("win_y", 40),
                        ("hide_after", False), ("tray_hint_shown", True),
                        ("first_run_done", True), ("autostart_adopted", True),
                        ("check_updates", False), ("debug_log", True)):
@@ -59,10 +63,9 @@ class Session:
         self.geometry = {}
 
     def start(self) -> None:
-        # Клиент Flet под Linux на экране без видеокарты изредка (порядка
-        # одного запуска из двадцати) отваливается при первом изменении
-        # размера окна: «Session closed», и программа выходит с кодом 0.
-        # Повтор один, и он виден в выводе; второй провал — настоящий.
+        # Клиент Flet под Linux на экране без видеокарты может упасть при
+        # старте (см. размер окна в make_library). Повтор один, и он виден в
+        # выводе; второй провал — настоящий.
         try:
             self._start_once()
         except CheckFailed as exc:
@@ -286,7 +289,7 @@ def scenarios(s: Session):
         s.wait(lambda st: st["screen"] == "grid", "Esc вернул к библиотеке")
 
     def dragging_a_tile_does_not_launch_it():
-        # Середина первой плитки (по алфавиту это Figma) в окне 1280×800:
+        # Середина первой плитки (по алфавиту это Figma) в окне 1280×720:
         # над ней ряд «Быстрый запуск» и заголовок категории.
         tile = (408, 373)
         before = s.state()["launched"]
