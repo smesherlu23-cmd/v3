@@ -1,12 +1,12 @@
 [project]
 name = "centurio"
 version = "1.2.0"
-description = "Centurio — персональная, всегда доступная из трея горячая панель приложений."
+description = "Centurio — панель запуска приложений для Windows, всегда доступная из трея."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 dependencies = [
-    "flet[desktop]==0.28.3",
+    "flet[desktop]==1.0.4",
     "pystray>=0.19.5",
     "Pillow>=10.0.0",
     "psutil>=5.9.0",
@@ -14,7 +14,7 @@ dependencies = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
@@ -25,6 +25,8 @@ ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Корень — чтобы импортировался пакет app, tests — для общего helpers.py.
+pythonpath = [".", "tests"]
 addopts = "-q"
 
 [tool.flet]
@@ -41,3 +43,21 @@ build_number = 1
 
 [tool.flet.app]
 path = "."
+# Всё, кроме самого приложения, в app.zip не нужно. Без этого списка туда
+# уезжал весь репозиторий — вместе с .git (на раннере в .git/config лежит
+# токен actions/checkout), тестами и кэшами. Сравнивается точный путь от
+# корня проекта; каталог build исключает сам `flet build`.
+exclude = [
+    ".git",
+    ".github",
+    ".gitattributes",
+    ".gitignore",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "installer",
+    "scripts",
+    "tests",
+]

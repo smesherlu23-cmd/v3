@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ntpath
 import os
 
+from ...core.text import launch_key
 from ...infra import log
 from . import epic_art, steam_art, steam_paths, windows  # noqa: F401
 from .epic import _epic_games
@@ -13,7 +15,7 @@ from .icons import (  # noqa: F401
     prune_icon_cache,
     resolve_icon_for,
 )
-from .shortcuts import autostart_names, desktop_names, suggest_first_run  # noqa: F401
+from .shortcuts import autostart_names, desktop_names, suggest_first_run, taskbar_names  # noqa: F401
 from .steam_art import (  # noqa: F401
     _CDN_MAX_FAILURES,
     _cdn_available,
@@ -62,6 +64,7 @@ __all__ = [
     "resolve_icon_for",
     "steam_exe_for",
     "suggest_first_run",
+    "taskbar_names",
     "trim_transparent_padding",
 ]
 
@@ -120,16 +123,23 @@ def discover_apps(icon_cache: str | None = None, on_progress=None,
     return _dedupe(apps)
 
 
+def _is_self(path: str) -> bool:
+    # Свой ярлык в «Пуске» Centurio находит, как любой другой, но плитка,
+    # открывающая окно, в котором она лежит, никому не нужна.
+    return ntpath.basename(path).lower() == "centurio.exe"
+
+
 def _dedupe(apps: list[dict]) -> list[dict]:
     seen: dict[str, dict] = {}
     for a in apps:
         path = (a.get("path") or "").strip()
         name = (a.get("name") or "").strip()
-        if not path or not name:
+        if not path or not name or _is_self(path):
             continue
-        key = path.lower()
+        key = launch_key(a)
         if key not in seen:
-            seen[key] = {"name": name, "path": path, "icon": a.get("icon"),
+            seen[key] = {"name": name, "path": path, "args": list(a.get("args") or []),
+                         "working_dir": a.get("working_dir") or "", "icon": a.get("icon"),
                          "icon_fit": a.get("icon_fit", "contain"), "source": a.get("source", ""),
                          "sub": a.get("sub", ""), "track_exe": a.get("track_exe"),
                          "poster": a.get("poster")}

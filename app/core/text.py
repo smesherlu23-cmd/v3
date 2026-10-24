@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+import re
 import shlex
 import time
 
@@ -10,6 +12,74 @@ def split_args(text: str) -> list[str]:
     lexer.escape = ""
     lexer.commenters = ""
     return list(lexer)
+
+
+def launch_key(item) -> str:
+    """Что именно запускается: путь и аргументы, без учёта регистра.
+
+    Ярлыки приложений Chrome или Discord ведут на один и тот же exe с разными
+    аргументами — по одному пути они склеивались в одну запись.
+    """
+    path = str(item.get("path") or "").strip().lower()
+    args = item.get("args")
+    if isinstance(args, (list, tuple)):
+        args = " ".join(str(a) for a in args)
+    args = str(args or "").strip().lower()
+    return f"{path}\x00{args}" if args else path
+
+
+# Что лежит в библиотеке кроме программ. У программы вида нет.
+KINDS = {"web": "сайт", "folder": "папка", "file": "документ"}
+
+_FILE_EXTS = frozenset((
+    "exe", "bat", "cmd", "lnk", "url", "msi", "dll", "sys", "ini", "log", "txt", "md",
+    "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "rtf", "pdf", "csv", "json",
+    "xml", "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "mp3", "wav", "flac",
+    "mp4", "mkv", "avi", "mov", "zip", "rar", "7z", "iso", "psd", "ps1", "js", "html",
+))
+_DOMAIN = re.compile(r"^(?:[\w-]+\.)+([a-zа-яё]{2,}|xn--[a-z0-9-]+)(?::\d+)?(?:[/?#]\S*)?$",
+                     re.IGNORECASE)
+
+
+def web_address(raw: str) -> str | None:
+    """Адрес сайта из того, что человек вставил: `https://…` или просто `youtube.com`.
+
+    Имя файла вида `notes.txt` за сайт не принимается, даже если такого
+    файла нет: опечатка в пути не должна превращаться в поход в интернет.
+    """
+    text = (raw or "").strip().strip('"')
+    if re.match(r"^https?://[^\s/]+\S*$", text, re.IGNORECASE):
+        return text
+    if not text or "\\" in text or text.startswith((".", "/")):
+        return None
+    m = _DOMAIN.match(text)
+    if not m or m.group(1).lower() in _FILE_EXTS:
+        return None
+    return "https://" + text
+
+
+def looks_like_target(raw: str) -> bool:
+    """Похоже ли введённое на путь или адрес сайта, а не на имя программы.
+
+    На экране «Найти и добавить» одно поле: имя ищет среди найденного, путь
+    или адрес предлагает добавить как есть.
+    """
+    text = (raw or "").strip().strip('"')
+    if not text:
+        return False
+    if re.match(r"^[a-zA-Z]:[\\/]", text) or text.startswith(("\\\\", "/", "~", "%")):
+        return True
+    if "\\" in text:
+        return True
+    return web_address(text) is not None
+
+
+def web_name(url: str) -> str:
+    host = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url or "", flags=re.IGNORECASE)
+    host = re.split(r"[/?#]", host, maxsplit=1)[0].split("@")[-1]
+    host = host.rsplit(":", 1)[0] if re.search(r":\d+$", host) else host
+    host = host.lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def _plural(n, one, few, many):
@@ -55,6 +125,25 @@ def short_ago(ms: int) -> str:
     return f"{days} {_plural(days, 'день', 'дня', 'дней')} назад"
 
 
+_MONTHS = ("янв.", "февр.", "марта", "апр.", "мая", "июня", "июля", "авг.", "сент.",
+           "окт.", "нояб.", "дек.")
+
+
+def moment_label(ts: float, now: float | None = None) -> str:
+    """«сегодня, 09:14», «вчера, 21:40» или «20 окт., 09:14» — для списка копий."""
+    when = time.localtime(ts)
+    today = time.localtime(time.time() if now is None else now)
+    clock = time.strftime("%H:%M", when)
+    days = (time.mktime(today[:3] + (0, 0, 0, 0, 0, -1))
+            - time.mktime(when[:3] + (0, 0, 0, 0, 0, -1))) // 86400
+    if days == 0:
+        return f"сегодня, {clock}"
+    if days == 1:
+        return f"вчера, {clock}"
+    year = f" {when.tm_year}" if when.tm_year != today.tm_year else ""
+    return f"{when.tm_mday} {_MONTHS[when.tm_mon - 1]}{year}, {clock}"
+
+
 def plu_apps(n):
     return _plural(n, "приложение", "приложения", "приложений")
 
@@ -65,3 +154,141 @@ def plu_programs(n):
 
 def plu_windows(n):
     return _plural(n, "окно", "окна", "окон")
+
+
+# Поиск. Пользователь набирает не в той раскладке («еуд» вместо «tel») и
+# по-русски («телеграм», «ворд»), а имена программ чаще латиницей.
+_EN_KEYS = "`qwertyuiop[]asdfghjkl;'zxcvbnm,."
+_RU_KEYS = "ёйцукенгшщзхъфывапролджэячсмитьбю"
+_TO_RU = str.maketrans(_EN_KEYS, _RU_KEYS)
+_TO_EN = str.maketrans(_RU_KEYS, _EN_KEYS)
+
+_TRANSLIT = (
+    ("shch", "щ"), ("sch", "щ"), ("chr", "хр"), ("dge", "дж"), ("you", "ю"),
+    ("ch", "ч"), ("sh", "ш"), ("zh", "ж"), ("kh", "х"), ("ts", "ц"), ("wh", "в"),
+    ("ph", "ф"), ("th", "т"), ("ya", "я"), ("yu", "ю"), ("yo", "ё"), ("oo", "у"),
+    ("ee", "и"), ("ea", "и"), ("xc", "кс"), ("ck", "к"),
+    ("a", "а"), ("b", "б"), ("c", "к"), ("d", "д"), ("e", "е"), ("f", "ф"), ("g", "г"),
+    ("h", "х"), ("i", "и"), ("j", "дж"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"),
+    ("o", "о"), ("p", "п"), ("q", "к"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"),
+    ("v", "в"), ("w", "в"), ("x", "кс"), ("y", "и"), ("z", "з"),
+)
+
+
+def _words_of(text: str) -> list[str]:
+    return [w for w in re.split(r"[^0-9a-zа-яё+#]+", text.lower()) if w]
+
+
+def _translit_word(word: str) -> str:
+    out = ["э"] if word.startswith("e") else []
+    i = 1 if out else 0
+    while i < len(word):
+        for lat, cyr in _TRANSLIT:
+            if word.startswith(lat, i):
+                out.append(cyr)
+                i += len(lat)
+                break
+        else:
+            out.append(word[i])
+            i += 1
+    return "".join(out)
+
+
+def _swap_layout(text: str) -> str:
+    """Тот же набор клавиш в другой раскладке: «еуд» и «tel»."""
+    return text.translate(_TO_EN if _CYRILLIC.search(text) else _TO_RU)
+
+
+_CYRILLIC = re.compile("[а-яё]")
+
+
+@functools.lru_cache(maxsize=4096)
+def _name_index(name: str):
+    words = tuple(_words_of(name))
+    translit = tuple(_translit_word(w) for w in words)
+    return " ".join(words), words, " ".join(translit), translit, "".join(w[0] for w in words)
+
+
+def _rank(flat: str, plain: str, words, acronym: str, substring: bool) -> int | None:
+    if plain.startswith(flat):
+        return 0
+    if any(w.startswith(flat) for w in words):
+        return 1
+    if acronym and len(flat) >= 2 and " " not in flat and acronym.startswith(flat):
+        return 2
+    if substring and flat in plain:
+        return 3
+    return None
+
+
+def _best(*ranks):
+    found = [r for r in ranks if r is not None]
+    return min(found) if found else None
+
+
+SWAPPED_PENALTY = 5
+
+
+def match_rank(name: str, query: str) -> int | None:
+    """Насколько хорошо `name` подходит под запрос; меньше — лучше, None — мимо.
+
+    0 — имя начинается с запроса, 1 — какое-то слово, 2 — первые буквы слов
+    («vsc» → Visual Studio Code), 3 — вхождение (от двух букв: одна буква
+    внутри слова ничего не говорит). Запрос кириллицей сверяется ещё и с
+    именем, прочитанным русскими буквами («хром» → Chrome). Запрос в другой
+    раскладке («еуд» → Telegram) — только если прямо ничего не подошло, и с
+    понижением, чтобы не обгонять настоящие совпадения.
+    """
+    flat = " ".join(_words_of(query or ""))
+    if not flat:
+        return None
+    plain, words, translit, translit_words, acronym = _name_index(name or "")
+    if not words:
+        return None
+    longer = len(flat) >= 2
+    best = _rank(flat, plain, words, acronym, longer)
+    if _CYRILLIC.search(flat):
+        best = _best(best, _rank(flat, translit, translit_words, "", longer))
+    if best is not None or not longer:
+        return best
+    swapped = " ".join(_words_of(_swap_layout(flat)))
+    if not swapped or swapped == flat:
+        return None
+    rank = _rank(swapped, plain, words, acronym, len(swapped) >= 3)
+    return None if rank is None else rank + SWAPPED_PENALTY
+
+
+def match_spans(name: str, query: str) -> list[tuple[str, bool]]:
+    """Куски имени для подсветки того, что совпало с запросом."""
+    name = name or ""
+    low = name.lower()
+    flat = " ".join(_words_of(query or ""))
+    if not flat or len(low) != len(name):
+        return [(name, False)]
+    spans = []
+    for needle in (flat, " ".join(_words_of(_swap_layout(flat)))):
+        if not needle:
+            continue
+        for part in needle.split(" "):
+            start = low.find(part)
+            if start >= 0:
+                spans.append((start, start + len(part)))
+        if spans:
+            break
+    if not spans and len(flat) >= 2 and " " not in flat:
+        starts = [m.start() for m in re.finditer(r"[0-9a-zа-яё+#]+", low)]
+        if "".join(low[i] for i in starts).startswith(flat):
+            spans = [(i, i + 1) for i in starts[:len(flat)]]
+    if not spans:
+        return [(name, False)]
+    out, pos = [], 0
+    for start, end in sorted(set(spans)):
+        if start < pos:
+            continue
+        if start > pos:
+            out.append((name[pos:start], False))
+        out.append((name[start:end], True))
+        pos = end
+    if pos < len(name):
+        out.append((name[pos:], False))
+    return out

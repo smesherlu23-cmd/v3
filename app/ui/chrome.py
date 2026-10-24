@@ -2,350 +2,418 @@ from __future__ import annotations
 
 import flet as ft
 
-from .. import __version__
 from ..core import queries
 from ..infra import log
 from . import colors as C
 from . import widgets as Wg
-from .format import T
+from .format import T, as_icon
 
-HEADER_SIDES_W = 320
+SIDEBAR_PAD = 10
+SECTION_H = 30
+ROW_GAP = 2
+# Заголовок окна — ряд из частей заданной ширины: кнопки окна (три по 40 и
+# промежутки) с отступами, панель инструментов сетки, название раздела. Что
+# остаётся — строке поиска. Название получает место по оценке с запасом и
+# обрезается, если оценка мала, — так ничего не наезжает: раньше в узком окне
+# поиск ложился на название и уходил под переключатель вида.
+WINDOW_BTNS_W = 3 * 40 + 2 * 2 + 8 + 8
+TOOLBAR_W = 204
+TITLE_PAD = 8
+TITLE_MIN_W = 96
+SEARCH_GAP = 24
+
+
+def text_width(text: str, size: float, bold: bool = False) -> float:
+    """Ширина строки с запасом: средняя буква Inter — около 0,6 кегля."""
+    return len(text) * size * (0.66 if bold else 0.6)
 
 
 class Chrome:
+    """Заголовок окна и боковая панель.
+
+    Как в macOS: панель инструментов живёт в заголовке окна, а слева одна
+    боковая панель — библиотека, категории, наборы. В узком окне (или по
+    кнопке) она сворачивается в полосу значков, плавно.
+    """
+
     def __init__(self, ui):
         self.ui = ui
+        # Где по вертикали стоит строка категории — к ней прикладывается
+        # поповер «Изменить».
+        self.row_tops: dict[str, float] = {}
+        self.sidebar_scroll = 0.0
+        self.sidebar_zone = ft.Container(animate=Wg.anim(C.ANIM_BAR),
+                                         clip_behavior=ft.ClipBehavior.HARD_EDGE)
+        self.title_holder = ft.Container(padding=ft.Padding.only(left=TITLE_PAD))
+        # Сколько места в заголовке осталось строке поиска — считает sync_header.
+        self.search_room = float(C.SEARCH_W + SEARCH_GAP)
+
+    # --- заголовок окна -------------------------------------------------
 
     def sync_search_box(self):
         active = self.ui.view.palette_open
-        room = self.ui._window_width() - HEADER_SIDES_W
-        self.ui.search_box.width = max(C.SEARCH_MIN_W, min(C.SEARCH_W, room))
-        self.ui.search_box.bgcolor = C.FIELD_ACTIVE_BG if active else C.PANEL
-        self.ui.search_box.border = ft.border.all(
-            1, C.FIELD_ACTIVE_BORDER if active else C.CONTROL)
+        box, field = self.ui.search_box, self.ui.search_field
+        box.width = max(C.SEARCH_MIN_W, min(C.SEARCH_W, self.search_room - SEARCH_GAP))
+        box.bgcolor = C.CARD
+        # Фокус — кольцо цвета акцента, как у полей macOS.
+        box.border = ft.Border.all(2 if active else 1,
+                                   C.with_alpha(self.ui._accent(), 0.7) if active
+                                   else C.TRANSPARENT)
+        # Поле живёт всё время работы окна — цвета темы ему переставляются
+        # здесь, и только когда тема сменилась: иначе каждая перерисовка
+        # слала бы клиенту новый стиль подсказки.
+        if field.color != C.TEXT or getattr(field.hint_style, "color", None) != C.MUTED_2:
+            field.color = C.TEXT
+            field.cursor_color = C.TEXT
+            field.hint_style = ft.TextStyle(color=C.MUTED_2, size=C.FS_BODY)
         self.ui.search_icon.color = C.TEXT_2 if active else C.MUTED_2
         if active:
-            tail = [ft.Container(ft.Icon(ft.Icons.CLOSE, size=15, color=C.MUTED_2),
+            tail = [ft.Container(ft.Icon(ft.Icons.CANCEL_ROUNDED, size=16, color=C.FAINT),
                                  tooltip="Закрыть поиск",
                                  on_click=lambda e: self.ui._close_palette())]
-            self.ui.search_tail.content = ft.Row(tail, spacing=10, tight=True,
-                                              vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            self.ui.search_tail.content = ft.Row(tail, spacing=8, tight=True,
+                                                 vertical_alignment=ft.CrossAxisAlignment.CENTER)
         else:
             self.ui.search_tail.content = None
 
     def build_header(self):
-        logo = ft.WindowDragArea(
-            ft.Container(T("Centurio", size=13.5, weight=ft.FontWeight.BOLD, color=C.TEXT),
-                         width=150, padding=ft.padding.only(18, 0, 0, 0),
-                         alignment=ft.alignment.center_left))
         centre = ft.Container(
             ft.Row([ft.WindowDragArea(ft.Container(height=36), expand=True),
                     self.ui.search_box,
                     ft.WindowDragArea(ft.Container(height=36), expand=True)],
                    spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             expand=True)
-        buttons = ft.Container(
-            ft.Row([Wg.win_btn(ft.Icons.REMOVE, "Свернуть", self.ui._minimize),
-                    Wg.win_btn(ft.Icons.CROP_SQUARE, "Развернуть", self.ui._toggle_maximize),
-                    Wg.win_btn(ft.Icons.CLOSE, "Закрыть", self.ui._close, danger=True)],
-                   spacing=2, alignment=ft.MainAxisAlignment.END),
-            width=150, alignment=ft.alignment.center_right)
-        return ft.Container(
-            ft.Row([logo, centre, buttons], spacing=16,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=C.HEADER_H, bgcolor=C.BG_1,
-            border=ft.border.only(bottom=ft.BorderSide(1, C.LINE_2)),
-            padding=ft.padding.only(0, 0, 6, 0),
-        )
+        buttons = ft.Row([Wg.win_btn(ft.Icons.REMOVE_ROUNDED, "Свернуть", self.ui._minimize),
+                          Wg.win_btn(ft.Icons.CROP_SQUARE_ROUNDED, "Развернуть",
+                                     self.ui._toggle_maximize),
+                          Wg.win_btn(ft.Icons.CLOSE_ROUNDED, "Закрыть", self.ui._close,
+                                     danger=True)],
+                         spacing=2, tight=True)
+        # Боковая панель тянется до верха окна, как в Finder: над ней нет
+        # линии заголовка, и кнопка панели стоит на её же фоне.
+        main = ft.Container(
+            ft.Row([ft.WindowDragArea(self.title_holder),
+                    centre, self.ui.toolbar_holder, ft.Container(width=8), buttons],
+                   spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            height=C.HEADER_H, bgcolor=C.BG, expand=True,
+            border=ft.Border.only(bottom=ft.BorderSide(1, C.LINE)),
+            padding=ft.Padding.only(right=8))
+        return ft.Row([self.sidebar_zone, main], spacing=0, height=C.HEADER_H,
+                      vertical_alignment=ft.CrossAxisAlignment.START)
 
-    def _rail_item(self, glyph, active, on_click, tooltip, fixed_color=None,
-                   on_drop_app=None, on_drop_category=None, on_context=None,
-                   badge=None, outlined=False):
-        btn = self.ui.rail()["btn"]
+    def sync_header(self):
+        """Части заголовка, которые меняются: ширина над панелью, название, кнопки."""
+        width = self.ui._sidebar_width()
+        expanded = self.ui._sidebar_expanded()
+        # Над настройками — их собственная колонка разделов, без кнопки панели.
+        settings = self.ui.view.screen == "settings"
+        self.sidebar_zone.width = C.SETTINGS_NAV_W if settings else max(width,
+                                                                         C.SIDEBAR_RAIL_W)
+        self.sidebar_zone.bgcolor = C.PANEL
+        self.sidebar_zone.border = ft.Border.only(right=ft.BorderSide(1, C.LINE))
+        toggle = Wg.icon_btn(ft.Icons.VIEW_SIDEBAR_OUTLINED,
+                             "Свернуть панель" if expanded else "Развернуть панель",
+                             self.ui._toggle_sidebar, size=30, glyph=18)
+        self.sidebar_zone.content = ft.WindowDragArea(ft.Container(
+            None if settings else
+            ft.Row([toggle], alignment=ft.MainAxisAlignment.START
+                   if width > C.SIDEBAR_RAIL_W else ft.MainAxisAlignment.CENTER),
+            padding=ft.Padding.only(left=14 if width > C.SIDEBAR_RAIL_W else 0),
+            height=C.HEADER_H, alignment=ft.Alignment.CENTER_LEFT))
+        on_grid = self.ui.view.screen == "grid" and not self.ui.view.active_set
+        # Всё, что в заголовке не поиск: колонка над панелью, кнопки окна,
+        # инструменты сетки.
+        room = (self.ui._window_width() - self.sidebar_zone.width - WINDOW_BTNS_W
+                - (TOOLBAR_W if on_grid else 0) - TITLE_PAD)
+        if on_grid:
+            title = self.ui._current_title()
+            # Число — все программы раздела, и в свёрнутых группах тоже: как
+            # рядом с ним в боковой панели.
+            count = str(sum(len(sec["apps"]) for sec in self.ui.sections()))
+            want = text_width(title, C.FS_TITLE, bold=True) + 8 + text_width(count, C.FS_BODY)
+            # Длинное имя категории уступает место поиску и обрезается.
+            width = max(TITLE_MIN_W, min(want + 4, room - C.SEARCH_MIN_W - SEARCH_GAP))
+            self.title_holder.width = width + TITLE_PAD
+            self.title_holder.content = ft.Row(
+                [T(title, size=C.FS_TITLE, weight=ft.FontWeight.BOLD, color=C.TEXT,
+                   max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                   expand_loose=True),
+                 T(count, size=C.FS_BODY, color=C.MUTED_2)],
+                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            room -= width
+        else:
+            self.title_holder.width = None
+            self.title_holder.content = None
+        self.search_room = room
+        self.ui.toolbar_holder.width = TOOLBAR_W if on_grid else None
+        self.ui.toolbar_holder.alignment = ft.Alignment.CENTER_RIGHT
+        self.ui.toolbar_holder.content = self.build_toolbar() if on_grid else None
+        self.ui.toolbar_holder.visible = on_grid
 
-        round_r, square_r = btn / 2, btn / 3
-        inner = ft.Container(
-            glyph, width=btn, height=btn,
-            border_radius=square_r if active else round_r,
-            bgcolor=C.PANEL_ACTIVE if active else C.RAIL_BTN_BG,
-            border=ft.border.all(1, C.LINE_4) if outlined else None,
-            alignment=ft.alignment.center, tooltip=tooltip,
-            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-            animate=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT),
-            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
-        )
+    def _tool(self, icon, tooltip, on_press, active=False):
+        """Кнопка панели инструментов; меню у неё открывается под ней."""
+        box = ft.Container(
+            ft.Icon(as_icon(icon), size=18, color=C.TEXT if active else C.MUTED),
+            width=32, height=30, border_radius=C.R, alignment=ft.Alignment.CENTER,
+            bgcolor=C.RAISED if active else None, tooltip=tooltip,
+            animate=Wg.anim(C.ANIM_FAST))
+        if not active:
+            Wg.hoverable(box, None, C.CARD)
+        return ft.GestureDetector(box, mouse_cursor=ft.MouseCursor.CLICK,
+                                  on_tap_down=lambda e: on_press(e))
 
-        def on_hover(e):
-            if active:
-                return
-            highlight = e.data == "true"
-            inner.bgcolor = C.PANEL_ACTIVE if highlight else C.RAIL_BTN_BG
-            inner.border_radius = square_r if highlight else round_r
-            inner.scale = C.HOVER_SCALE if highlight else 1.0
-            if fixed_color is None and isinstance(inner.content, ft.Icon):
-                inner.content.color = C.TEXT if highlight else C.MUTED
-            Wg.safe_update(inner)
-        inner.on_hover = on_hover
+    def build_toolbar(self):
+        view = self.ui.view
+        if view.select_mode:
+            # Какой раздел — видно в названии слева; «Выбрать всё в «…»» с длинным
+            # именем категории не помещалось в заголовок.
+            items = [Wg.quiet_btn("Выбрать всё", self.ui._select_all_visible),
+                     Wg.primary_btn("Готово", self.ui.toggle_select_mode, self.ui._accent(),
+                                    height=28)]
+        else:
+            items = [
+                Wg.segmented([(None, "grid", ft.Icons.GRID_VIEW_ROUNDED, "Значки"),
+                              (None, "list", ft.Icons.VIEW_LIST_ROUNDED, "Список")],
+                             view.mode, self.ui._set_mode),
+                self._tool(ft.Icons.SORT_ROUNDED,
+                           f"Порядок: {queries.SORT_LABELS[view.sort].lower()}",
+                           self.ui.context_menus.sort_menu),
+                self._tool(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, "Выбрать несколько",
+                           lambda e: self.ui.toggle_select_mode()),
+                self._tool(ft.Icons.ADD_ROUNDED, "Найти и добавить программы",
+                           lambda e: self.ui.open_add()),
+            ]
+        return ft.Row(items, spacing=6, tight=True,
+                      vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
-        button = inner
-        if badge is not None:
-            button = ft.Stack([inner, ft.Container(badge, right=-3, top=-3)],
-                              width=btn + 6, height=btn + 6)
+    # --- боковая панель -------------------------------------------------
 
-        tapper = ft.GestureDetector(
-            button, mouse_cursor=ft.MouseCursor.CLICK,
-            on_tap=lambda e: on_click(),
+    def _on_sidebar_scroll(self, e: ft.OnScrollEvent):
+        self.sidebar_scroll = e.pixels or 0.0
+
+    def _row(self, icon_ctl, label, active, on_click, count=None, tooltip=None,
+             on_context=None, badge=None):
+        """Строка панели: значок, имя, справа счётчик. В узкой полосе — один значок."""
+        expanded = self.ui._sidebar_expanded()
+        if expanded:
+            right = []
+            if badge:
+                right.append(self._badge(badge))
+            elif count:
+                right.append(T(str(count), size=C.FS_SMALL, color=C.MUTED_2))
+            body = ft.Row([ft.Container(icon_ctl, width=20, alignment=ft.Alignment.CENTER),
+                           T(label, size=C.FS_BODY, color=C.TEXT, max_lines=1,
+                             overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                             weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400)]
+                          + right, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            row = ft.Container(body, height=C.SIDEBAR_ROW_H,
+                               padding=ft.Padding.symmetric(horizontal=8),
+                               border_radius=C.R_SMALL, tooltip=tooltip)
+        else:
+            inner = icon_ctl
+            if badge:
+                inner = ft.Stack([ft.Container(icon_ctl, width=36, height=36,
+                                               alignment=ft.Alignment.CENTER),
+                                  ft.Container(self._badge(badge), right=-2, top=-2)],
+                                 width=36, height=36)
+            row = ft.Container(inner, width=40, height=36, border_radius=C.R,
+                               alignment=ft.Alignment.CENTER, tooltip=tooltip or label)
+        row.bgcolor = C.RAISED if active else None
+        row.animate = Wg.anim(C.ANIM_FAST)
+        if not active:
+            Wg.hoverable(row, None, C.CARD)
+        return ft.GestureDetector(
+            row, mouse_cursor=ft.MouseCursor.CLICK, on_tap=lambda e: on_click(),
             on_secondary_tap_down=(lambda e: on_context(e)) if on_context else None)
 
-        content = tapper
-        if on_drop_app is not None or on_drop_category is not None:
-            def _accept(e):
-                src = self.ui.page.get_control(e.src_id)
-                payload = getattr(src, "data", None) if src is not None else None
-                inner.border = ft.border.all(1, C.LINE_4) if outlined else None
-                Wg.safe_update(inner)
-
-                if isinstance(payload, dict) and payload.get("category_id"):
-                    if on_drop_category:
-                        on_drop_category(payload["category_id"])
-                elif on_drop_app is not None:
-                    if isinstance(payload, dict) and payload.get("ids"):
-                        on_drop_app(payload["ids"])
-                    elif payload:
-                        on_drop_app([payload])
-
-            def _will(e):
-                inner.border = ft.border.all(2, self.ui._accent())
-                Wg.safe_update(inner)
-
-            def _leave(e):
-                inner.border = ft.border.all(1, C.LINE_4) if outlined else None
-                Wg.safe_update(inner)
-            content = ft.DragTarget(group="apps", content=tapper,
-                                    on_accept=_accept, on_will_accept=_will, on_leave=_leave)
-
-        bar = ft.Container(width=3, height=round(btn * 0.62),
-                           border_radius=ft.border_radius.only(0, 3, 0, 3),
-                           bgcolor=self.ui._accent()) if active else ft.Container(width=3)
-        return ft.Row([bar, ft.Container(content, expand=True, alignment=ft.alignment.center)],
-                      spacing=0)
-
-    def _inbox_badge(self, count: int):
+    def _badge(self, count: int):
+        accent = self.ui._accent()
         return ft.Container(
-            T(str(count if count < 100 else 99), size=10, weight=ft.FontWeight.BOLD,
-              color=C.ON_ACCENT, font_family="monospace"),
-            height=17, border_radius=9, bgcolor=self.ui._accent(),
-            padding=ft.padding.symmetric(0, 5), alignment=ft.alignment.center)
+            T(str(count if count < 100 else 99), size=C.FS_CAPTION, weight=ft.FontWeight.BOLD,
+              color=C.on_color(accent)),
+            height=18, border_radius=9, bgcolor=accent,
+            padding=ft.Padding.symmetric(horizontal=6), alignment=ft.Alignment.CENTER)
 
-    def _on_rail_scroll(self, e: ft.OnScrollEvent):
-        self.ui._rail_scroll = e.pixels or 0.0
+    def _section(self, label, on_add=None, add_tip=None):
+        if not self.ui._sidebar_expanded():
+            return ft.Container(height=1, bgcolor=C.LINE, width=28,
+                                margin=ft.Margin.symmetric(vertical=8))
+        row = [ft.Container(Wg.caps(label), expand=True)]
+        if on_add:
+            row.append(Wg.icon_btn(ft.Icons.ADD_ROUNDED, add_tip, on_add, size=22, glyph=16))
+        return ft.Container(ft.Row(row, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            height=SECTION_H, padding=ft.Padding.only(left=8, right=2, top=8))
 
-    def build_rail(self):
-        self.ui._rail_scroll = 0.0
-        on_grid = self.ui.view.screen == "grid" and not self.ui.view.active_set
-        all_active = self.ui.is_all_view() and on_grid
-        waiting = len(self.ui.inbox())
-        metrics = self.ui.rail()
-        btn, glyph, gap = metrics["btn"], metrics["glyph"], metrics["gap"]
+    def _icon(self, name, color=None, size=18):
+        return ft.Icon(as_icon(name), size=size, color=color or self.ui._accent())
 
-        top = [
-            self._rail_item(ft.Icon(ft.Icons.GRID_VIEW, size=glyph,
-                                    color=C.TEXT if all_active else C.MUTED),
-                            all_active, lambda: self.ui._set_filter("all"), "Все программы"),
-            self._rail_item(ft.Icon(ft.Icons.VIEW_SIDEBAR, size=glyph - 1,
-                                    color=C.TEXT if self.ui.view.sidebar_open else C.MUTED),
-                            self.ui.view.sidebar_open, lambda: self.ui._toggle_sidebar(),
-                            "Показать/скрыть панель"),
-            ft.Container(width=round(btn * 0.72), height=1, bgcolor=C.LINE_2,
-                         margin=ft.margin.symmetric(3, 0)),
-        ]
-
-        cats = []
-        for cat in self.ui.categories():
-            active = self.ui.view.filter == f"category:{cat['id']}" and on_grid
-            item = self._rail_item(
-                Wg.cat_glyph(cat, size=glyph, color=C.TEXT if active else None,
-                             fill=btn), active,
-                lambda cid=cat["id"]: self.ui._set_filter(f"category:{cid}"), cat["name"],
-                fixed_color=C.category_color(cat),
-                on_drop_app=lambda ids, cid=cat["id"]: self.ui._move_apps_to_category(ids, cid),
-                on_drop_category=lambda dragged, cid=cat["id"]: self.ui._reorder_category(
-                    dragged, cid),
-                on_context=lambda e, c=cat: self.ui.context_menus.category_menu(c, e))
-            cats.append(ft.Draggable(group="apps", content=item,
-                                     data={"category_id": cat["id"]}))
-        add = ft.Container(ft.Icon(ft.Icons.ADD, size=glyph - 3, color=C.TEXT_FAINT),
-                           width=btn, height=btn, border_radius=btn / 2,
-                           alignment=ft.alignment.center,
-                           border=ft.border.all(1.5, C.CONTROL),
-                           on_click=lambda e: self.ui._add_category(),
-                           tooltip="Добавить категорию")
-        cats.append(ft.Row([ft.Container(width=3),
-                            ft.Container(add, expand=True, alignment=ft.alignment.center)],
-                           spacing=0))
-        middle = ft.Container(
-            ft.Column(cats, spacing=gap, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                      scroll=ft.ScrollMode.AUTO, on_scroll=self._on_rail_scroll, expand=True),
-            expand=True)
-
-        triage_active = self.ui.view.screen == "triage"
-        bottom = [
-            self._rail_item(
-                ft.Icon(ft.Icons.INBOX, size=glyph - 1,
-                       color=C.TEXT if triage_active else C.TEXT_2),
-                triage_active, lambda: self.ui.open_triage(),
-                f"Разбор · {waiting}" if waiting else "Разбор",
-                badge=self._inbox_badge(waiting) if waiting else None,
-                outlined=True),
-            ft.Container(height=4),
-            ft.Container(ft.Icon(ft.Icons.SETTINGS, size=glyph - 1,
-                                 color=C.TEXT if self.ui.view.screen == "settings"
-                                 else C.MUTED_2),
-                        width=btn, height=btn, border_radius=btn / 2,
-                        alignment=ft.alignment.center,
-                        on_click=lambda e: self.ui._open_settings(), tooltip="Настройки"),
-        ]
-
-        return ft.Container(
-            ft.Column(top + [middle] + bottom, spacing=gap,
-                      horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
-            padding=ft.padding.only(0, 14, 0, 12),
-            border=ft.border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
-        )
-
-    def _sidebar_filter(self, icon_ctl, label, key):
-        active = self.ui.view.filter == key and self.ui.view.screen == "grid" and not self.ui.view.active_set
-        row = ft.Container(
-            ft.Row([
-                ft.Container(icon_ctl, width=16, height=16, alignment=ft.alignment.center),
-                T(label, size=13, color=C.TEXT if active else C.TEXT_2,
-                  weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400, expand=True),
-            ], spacing=11),
-            padding=ft.padding.symmetric(7, 10), border_radius=9,
-            bgcolor=C.SET_SLOT_BG if active else None,
-            border=ft.border.all(1, C.CONTROL) if active else None,
-            animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
-            on_click=lambda e: self.ui._set_filter(key),
-        )
-        if not active:
-            Wg.hoverable(row, None, C.SET_SLOT_BG)
-        return row
+    def _filter_row(self, icon_ctl, label, key, count=None):
+        view = self.ui.view
+        active = view.filter == key and view.screen == "grid" and not view.active_set
+        return self._row(icon_ctl, label, active, lambda: self.ui._set_filter(key),
+                         count=count)
 
     def build_sidebar(self):
         apps = self.ui.apps()
+        shown = queries.visible(apps)
         buried = sum(1 for a in apps if a.get("hidden"))
+        running = sum(1 for a in shown if a["id"] in self.ui.running)
+        favorites = sum(1 for a in shown if a.get("favorite"))
+        expanded = self.ui._sidebar_expanded()
+        self.row_tops = {}
+        top = SIDEBAR_PAD
 
-        top = [ft.Container(T(self.ui._current_title(), size=18, weight=ft.FontWeight.BOLD,
-                              color=C.TEXT, max_lines=1,
-                              overflow=ft.TextOverflow.ELLIPSIS),
-                            padding=ft.padding.only(8, 0, 8, 0))]
-        top += [
-            ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.symmetric(10, 0)),
-            self._sidebar_filter(ft.Icon(ft.Icons.STAR, size=16, color=C.STAR),
-                                 "Избранное", "favorites"),
-            self._sidebar_filter(ft.Icon(ft.Icons.SCHEDULE, size=16, color=C.MUTED),
-                                 "Недавние", "recent"),
-            self._sidebar_filter(Wg.dot(8), "Запущено", "running"),
+        items = [self._section("Библиотека")]
+        top += SECTION_H if expanded else 17
+        library = [
+            self._filter_row(self._icon(ft.Icons.APPS_ROUNDED), "Все программы", "all",
+                             len(shown)),
+            self._filter_row(self._icon(ft.Icons.STAR_ROUNDED, C.STAR), "Избранное",
+                             "favorites", favorites),
+            self._filter_row(self._icon(ft.Icons.SCHEDULE_ROUNDED), "Недавние", "recent"),
+            self._filter_row(Wg.dot(8), "Запущено", "running", running),
         ]
         if buried:
-            top.append(self._sidebar_filter(
-                ft.Icon(ft.Icons.VISIBILITY_OFF, size=16, color=C.MUTED),
-                "Скрытые", "hidden"))
+            library.append(self._filter_row(self._icon(ft.Icons.VISIBILITY_OFF_ROUNDED,
+                                                       C.MUTED), "Скрытые", "hidden", buried))
+        items += library
+        row_h = (C.SIDEBAR_ROW_H if expanded else 36) + ROW_GAP
+        top += len(library) * row_h
 
-        top += [ft.Container(height=1, bgcolor=C.LINE_2, margin=ft.margin.symmetric(10, 0)),
-                ft.Container(ft.Row([Wg.caps("НАБОРЫ"), ft.Container(expand=True),
-                                     ft.Container(ft.Icon(ft.Icons.ADD, size=15,
-                                                          color=C.MUTED_2),
-                                                  tooltip="Собрать набор из выбранного",
-                                                  on_click=lambda e: self.ui.set_ops.new_set())],
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                             padding=ft.padding.only(10, 0, 10, 8))]
+        items.append(self._section("Категории", self.ui._add_category, "Новая категория"))
+        top += SECTION_H if expanded else 17
+        counts: dict[str, int] = {}
+        for a in shown:
+            counts[a.get("category_id")] = counts.get(a.get("category_id"), 0) + 1
+        for cat in self.ui.categories():
+            self.row_tops[cat["id"]] = top
+            items.append(self._category_row(cat, counts.get(cat["id"], 0)))
+            top += row_h
 
-        sets_block = []
+        items.append(self._section("Наборы", self.ui.set_ops.new_set,
+                                   "Собрать набор из выбранного"))
         if self.ui.view.select_mode:
-            sets_block.append(self._set_drop_hint())
+            items.append(self._set_drop_hint())
         records = self.ui.sets()
         for rec in records:
-            sets_block.append(self._sidebar_set_row(rec))
-        if not records and not self.ui.view.select_mode:
-            sets_block.append(ft.Container(
-                T("Выберите плитки и нажмите «плюс»", size=11.5, color=C.TEXT_DIM),
-                padding=ft.padding.only(10, 0, 10, 4)))
-        return ft.Container(
-            ft.Column([ft.Column(top, spacing=3, tight=True),
-                       ft.Column(sets_block, spacing=3, expand=True,
-                                 scroll=ft.ScrollMode.AUTO),
-                       self._sidebar_footer()],
-                      spacing=3, expand=True),
-            padding=ft.padding.only(14, 20, 14, 12),
-            border=ft.border.only(right=ft.BorderSide(1, C.LINE_2)), expand=True,
-        )
+            items.append(self._set_row(rec))
+        if not records and not self.ui.view.select_mode and expanded:
+            items.append(ft.Container(
+                T("Выберите программы и нажмите «+»", size=C.FS_SMALL, color=C.MUTED_2),
+                padding=ft.Padding.symmetric(horizontal=8, vertical=4)))
 
-    def _sidebar_set_row(self, rec):
+        waiting = len(self.ui.inbox())
+        view = self.ui.view
+        footer = [
+            self._row(self._icon(ft.Icons.INBOX_ROUNDED), "Новые программы",
+                      view.screen == "triage", self.ui.open_triage, badge=waiting or None,
+                      tooltip=f"Новые программы · {waiting}" if waiting else None),
+            self._row(self._icon(ft.Icons.SETTINGS_ROUNDED, C.MUTED), "Настройки", False,
+                      self.ui._open_settings),
+        ]
+        newer = self.ui.updates.available()
+        if newer:
+            footer.append(self._row(self._icon(ft.Icons.DOWNLOAD_ROUNDED, C.GREEN),
+                                    f"Вышла {newer}", False,
+                                    lambda: self.ui.open_url(self.ui.updates.url()),
+                                    tooltip="Скачать новую версию"))
+        align = (ft.CrossAxisAlignment.STRETCH if expanded
+                 else ft.CrossAxisAlignment.CENTER)
+        return ft.Container(
+            ft.Column([
+                ft.Column(items, spacing=ROW_GAP, expand=True, scroll=ft.ScrollMode.AUTO,
+                          on_scroll=self._on_sidebar_scroll, horizontal_alignment=align),
+                ft.Container(ft.Column(footer, spacing=ROW_GAP, horizontal_alignment=align),
+                             border=ft.Border.only(top=ft.BorderSide(1, C.LINE)),
+                             padding=ft.Padding.only(top=8)),
+            ], spacing=8, expand=True, horizontal_alignment=align),
+            padding=ft.Padding.only(left=SIDEBAR_PAD, top=SIDEBAR_PAD, right=SIDEBAR_PAD,
+                                    bottom=SIDEBAR_PAD),
+            bgcolor=C.PANEL, border=ft.Border.only(right=ft.BorderSide(1, C.LINE)),
+            expand=True)
+
+    def _category_row(self, cat, count):
+        view = self.ui.view
+        active = view.filter == f"category:{cat['id']}" and view.screen == "grid" \
+            and not view.active_set
+        glyph = Wg.cat_glyph(cat, size=18, fill=20)
+        tapper = self._row(glyph, cat["name"], active,
+                           lambda cid=cat["id"]: self.ui._set_filter(f"category:{cid}"),
+                           count=count,
+                           on_context=lambda e, c=cat: self.ui.context_menus.category_menu(c, e))
+        row = tapper.content
+
+        def _accept(e):
+            payload = Wg.dragged_data(e)
+            self.highlight_drop(row, False)
+            if isinstance(payload, dict) and payload.get("category_id"):
+                self.ui._reorder_category(payload["category_id"], cat["id"])
+            elif isinstance(payload, dict) and payload.get("ids"):
+                self.ui._move_apps_to_category(payload["ids"], cat["id"])
+            elif payload:
+                self.ui._move_apps_to_category([payload], cat["id"])
+
+        target = ft.DragTarget(group="apps", content=tapper, on_accept=_accept,
+                               on_will_accept=lambda e: self.highlight_drop(row, True),
+                               on_leave=lambda e: self.highlight_drop(row, False))
+        return ft.Draggable(group="apps", content=target, data={"category_id": cat["id"]})
+
+    def _set_row(self, rec):
         active = self.ui.view.active_set == rec["id"]
-        lines = [T(rec["name"], size=12.5, weight=ft.FontWeight.W_500,
-                   color=C.TEXT if active else C.TEXT_2, max_lines=1,
-                   overflow=ft.TextOverflow.ELLIPSIS)]
-        row = ft.Container(
-            ft.Row([ft.Container(ft.Icon(ft.Icons.LAYERS, size=16,
-                                         color=C.TEXT_2 if active else C.MUTED),
-                                 width=16, height=16, alignment=ft.alignment.center),
-                    ft.Column(lines, spacing=1, expand=True, tight=True)], spacing=10),
-            padding=ft.padding.symmetric(8, 10), border_radius=9,
-            bgcolor=C.SET_SLOT_BG if active else None,
-            border=ft.border.all(1, C.CONTROL) if active else None,
-            on_click=lambda e, sid=rec["id"]: self.ui._open_set(sid))
-        if not active:
-            Wg.hoverable(row, None, C.SET_SLOT_BG)
-        rest = C.CONTROL if active else None
+        expanded = self.ui._sidebar_expanded()
+        icon = self.ui.set_mosaic(rec, 20 if expanded else 24, 5)
+        tapper = self._row(icon, rec["name"], active,
+                           lambda sid=rec["id"]: self.ui._open_set(sid),
+                           on_context=lambda e, r=rec: self.ui.context_menus.set_menu(r, e))
+        row = tapper.content
         return ft.DragTarget(
-            group="apps", content=ft.GestureDetector(
-                row, on_secondary_tap_down=lambda e, r=rec: self.ui.context_menus.set_menu(r, e)),
-            on_accept=lambda e, sid=rec["id"]: self._drop_on_set(sid, e, row, rest),
-            on_will_accept=lambda e, r=row: self.highlight_drop(r, True, rest),
-            on_leave=lambda e, r=row: self.highlight_drop(r, False, rest))
+            group="apps", content=tapper,
+            on_accept=lambda e, sid=rec["id"]: self._drop_on_set(sid, e, row),
+            on_will_accept=lambda e: self.highlight_drop(row, True),
+            on_leave=lambda e: self.highlight_drop(row, False))
 
     def _set_drop_hint(self):
-        row = ft.Container(
-            ft.Row([ft.Container(ft.Icon(ft.Icons.LAYERS, size=16, color=C.MUTED),
-                                 width=16, height=16, alignment=ft.alignment.center),
-                    T("Перетащите сюда", size=12, color=C.MUTED, expand=True,
-                      max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)],
-                   spacing=10),
-            padding=ft.padding.symmetric(8, 10), border_radius=9,
-            border=ft.border.all(1, C.BAR_BORDER),
-            on_click=lambda e: self.ui.set_ops.new_set())
+        expanded = self.ui._sidebar_expanded()
+        content = (ft.Row([self._icon(ft.Icons.LAYERS_ROUNDED, C.MUTED),
+                           T("Перетащите сюда", size=C.FS_BODY, color=C.MUTED, expand=True,
+                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)], spacing=8)
+                   if expanded else self._icon(ft.Icons.LAYERS_ROUNDED, C.MUTED))
+        row = ft.Container(content, height=C.SIDEBAR_ROW_H, border_radius=C.R_SMALL,
+                           padding=ft.Padding.symmetric(horizontal=8),
+                           border=ft.Border.all(1, C.BORDER),
+                           tooltip="Перетащите выбранное — получится набор",
+                           on_click=lambda e: self.ui.set_ops.new_set())
         return ft.DragTarget(
             group="apps", content=row,
             on_accept=lambda e, r=row: self._drop_new_set(e, r),
-            on_will_accept=lambda e, r=row: self.highlight_drop(r, True, C.BAR_BORDER),
-            on_leave=lambda e, r=row: self.highlight_drop(r, False, C.BAR_BORDER))
+            on_will_accept=lambda e, r=row: self.highlight_drop(r, True, C.BORDER),
+            on_leave=lambda e, r=row: self.highlight_drop(r, False, C.BORDER))
 
     def highlight_drop(self, row, on: bool, rest=None):
-        row.border = (ft.border.all(1, self.ui._accent()) if on
-                      else (ft.border.all(1, rest) if rest else None))
+        row.border = (ft.Border.all(1, self.ui._accent()) if on
+                      else (ft.Border.all(1, rest) if rest else None))
         try:
             row.update()
         except Exception:
             log.exception("сбой при обновлении интерфейса после перетаскивания")
 
-    def drop_set_item(self, set_id, target_id, e, row, rest=C.LINE):
+    def drop_set_item(self, set_id, target_id, e, row, rest=None):
         self.highlight_drop(row, False, rest)
-        src = self.ui.page.get_control(e.src_id)
-        moved = getattr(src, "data", None) if src is not None else None
+        moved = Wg.dragged_data(e)
         rec = self.ui.store.get_set(set_id)
         if not rec or not isinstance(moved, str) or moved == target_id:
             return
-        order = [i["app_id"] for i in rec["items"] if i["app_id"] != moved]
-        if target_id not in order:
+        current = [i["app_id"] for i in rec["items"]]
+        if moved not in current or target_id not in current:
             return
-        order.insert(order.index(target_id), moved)
+        moving_down = current.index(target_id) > current.index(moved)
+        order = [i for i in current if i != moved]
+        order.insert(order.index(target_id) + (1 if moving_down else 0), moved)
         self.ui.store.reorder_set_items(set_id, order)
         self.ui.refresh()
 
     def _dropped_ids(self, e) -> list[str]:
-        src = self.ui.page.get_control(e.src_id)
-        payload = getattr(src, "data", None) if src is not None else None
+        payload = Wg.dragged_data(e)
         if isinstance(payload, dict) and payload.get("ids"):
             return list(payload["ids"])
         return [payload] if payload else []
@@ -357,60 +425,7 @@ class Chrome:
             self.ui.set_ops.add_to_set(set_id, ids)
 
     def _drop_new_set(self, e, row):
-        self.highlight_drop(row, False, C.BAR_BORDER)
+        self.highlight_drop(row, False, C.BORDER)
         ids = self._dropped_ids(e)
         if ids:
             self.ui.set_ops.make_set(ids)
-
-    def _sidebar_footer(self):
-        return ft.Container(
-            ft.Row([ft.Container(),
-                    T(f"v{__version__}", size=11, color=C.MUTED_3, font_family="monospace")],
-                   alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            border=ft.border.only(top=ft.BorderSide(1, C.LINE_2)),
-            padding=ft.padding.only(10, 10, 10, 0),
-        )
-
-    def build_toolbar(self):
-        select = Wg.outline_btn(
-            "Выбрать",
-            self.ui.toggle_select_mode,
-            ft.Icons.CHECK_BOX if self.ui.view.select_mode
-            else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
-            active=self.ui.view.select_mode)
-        left = [select]
-        if self.ui.view.select_mode:
-            label = ("Выбрать всё" if self.ui.is_all_view()
-                     else f"Выбрать всё в «{self.ui._current_title()}»")
-            left.append(Wg.outline_btn(label, self.ui._select_all_visible))
-        sort_btn = ft.Container(
-            ft.Row([T(queries.SORT_LABELS[self.ui.view.sort], size=12.5, color=C.MUTED),
-                    ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14, color=C.MUTED_2)],
-                   spacing=7),
-            height=34, padding=ft.padding.symmetric(0, 12),
-            border=ft.border.all(1, C.CONTROL), border_radius=9,
-            on_click=lambda e: self.ui.context_menus.sort_menu(e), alignment=ft.alignment.center,
-            tooltip="Порядок плиток",
-        )
-        Wg.hoverable(sort_btn, None, C.SELECTED_BG)
-
-        def view_btn(icon_name, m, tip):
-            active = self.ui.view.mode == m
-            return ft.Container(ft.Icon(icon_name, size=13,
-                                        color=C.TEXT if active else C.MUTED_2),
-                                width=34, height=34, alignment=ft.alignment.center,
-                                bgcolor=C.PANEL_ACTIVE if active else None,
-                                on_click=lambda e: self.ui._set_mode(m), tooltip=tip)
-        view_toggle = ft.Container(
-            ft.Row([view_btn(ft.Icons.GRID_VIEW, "grid", "Сетка"),
-                    view_btn(ft.Icons.VIEW_LIST, "list", "Список")], spacing=0),
-            border=ft.border.all(1, C.CONTROL), border_radius=9,
-            clip_behavior=ft.ClipBehavior.HARD_EDGE,
-        )
-        right = Wg.primary_btn("Добавить", self.ui.open_add, self.ui._accent(),
-                               ft.Icons.ADD, height=34)
-        return ft.Container(
-            ft.Row(left + [sort_btn, view_toggle, ft.Container(expand=True), right],
-                   spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.padding.only(22, 16, 22, 10),
-        )

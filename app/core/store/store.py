@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from ...infra import log, paths
 from ...infra.debounce import Debounce
 from .. import layout as L
+from ..text import KINDS, launch_key
 from . import sanitize
 
 if TYPE_CHECKING:
@@ -19,6 +20,10 @@ if TYPE_CHECKING:
 DATA_FILENAME = "centurio-data.json"
 PERSIST_DEBOUNCE_DELAY = 1.5
 SCHEMA_VERSION = 3
+# Автокопии: не чаще раза в сутки (с запасом на «включил утром, а вчера —
+# чуть позже»), последние семь, в папке `backups` рядом с библиотекой.
+AUTO_BACKUP_EVERY = 20 * 3600
+AUTO_BACKUP_KEEP = 7
 
 
 def default_data_path() -> Path:
@@ -77,6 +82,7 @@ class Store:
             "apps": [],
             "sets": [],
             "inbox": [],
+            "ignored": [],
             "settings": {**sanitize.DEFAULT_SETTINGS,
                         "ui_defaults_version": sanitize.UI_DEFAULTS_VERSION},
         }
@@ -120,9 +126,12 @@ class Store:
         for rec in sets:
             rec["items"] = [i for i in rec["items"] if i["app_id"] in known]
             sanitize.fit_slots(sanitize.mirror_items(rec))
-        have = {(a.get("path") or "").lower() for a in apps}
+        have = {launch_key(a) for a in apps}
         inbox = [i for i in sanitize.clean_records(parsed.get("inbox"), sanitize.clean_inbox)
-                 if i["path"].lower() not in have]
+                 if launch_key(i) not in have]
+        raw_ignored = parsed.get("ignored")
+        ignored = list(dict.fromkeys(k for k in raw_ignored if isinstance(k, str) and k)) \
+            if isinstance(raw_ignored, list) else []
         raw_settings = parsed.get("settings")
         prior_version = raw_settings.get("ui_defaults_version") \
             if isinstance(raw_settings, dict) else None
@@ -136,6 +145,7 @@ class Store:
             "apps": apps,
             "sets": [s for s in sets if s["items"]],
             "inbox": inbox,
+            "ignored": ignored,
             "settings": sanitize.clean_settings(raw_settings),
         }
 
@@ -219,15 +229,18 @@ class Store:
             "hue": app["hue"] if isinstance(app.get("hue"), int) else sanitize.hue_from_string(app.get("name") or app.get("path") or ""),
             "icon": app.get("icon") or None,
             "icon_fit": app.get("icon_fit") or "contain",
+            "custom_icon": bool(app.get("custom_icon")),
             "poster": app.get("poster") or None,
             "favorite": bool(app.get("favorite")),
             "quick": bool(app.get("quick")),
             "hidden": bool(app.get("hidden")),
-            "hotkey": app.get("hotkey") or None,
             "track_exe": app.get("track_exe") or None,
+            "kind": app["kind"] if str(app.get("kind") or "") in KINDS else "",
+            "aliases": sanitize.clean_aliases(app.get("aliases")),
             "order": app["order"] if isinstance(app.get("order"), int) else len(self.data["apps"]),
             "last_launched": 0,
             "launch_count": 0,
+            "launches": [],
             "added_at": int(time.time() * 1000),
         }
 
@@ -235,6 +248,7 @@ class Store:
         with self._lock:
             record = self._new_app_record(app)
             self.data["apps"].append(record)
+            self._forget_ignored([record])
             self._persist()
             return _clone(record)
 
@@ -247,8 +261,40 @@ class Store:
                 records.append(record)
             if not records:
                 return []
+            self._forget_ignored(records)
             self._persist()
             return _clone(records)
+
+    def _forget_ignored(self, records) -> None:
+        keys = {launch_key(r) for r in records}
+        if keys & set(self.data["ignored"]):
+            self.data["ignored"] = [k for k in self.data["ignored"] if k not in keys]
+
+    def _remember_ignored(self, records) -> None:
+        known = set(self.data["ignored"])
+        for key in (launch_key(r) for r in records):
+            if key and key not in known:
+                self.data["ignored"].append(key)
+                known.add(key)
+
+    def ignore(self, records) -> None:
+        """Больше не предлагать эти программы при сканировании."""
+        with self._lock:
+            before = len(self.data["ignored"])
+            self._remember_ignored(records)
+            if len(self.data["ignored"]) != before:
+                self._persist()
+
+    def unignore(self, records) -> None:
+        with self._lock:
+            before = len(self.data["ignored"])
+            self._forget_ignored(records)
+            if len(self.data["ignored"]) != before:
+                self._persist()
+
+    def is_ignored(self, record) -> bool:
+        with self._lock:
+            return launch_key(record) in self.data["ignored"]
 
     def _app_ref(self, app_id: str) -> dict | None:
         return next((a for a in self.data["apps"] if a["id"] == app_id), None)
@@ -265,7 +311,7 @@ class Store:
         Каждое сохранение переписывает файл целиком — на библиотеке в 500
         программ это ~8.5 мс синхронно в потоке интерфейса. Массовые операции
         уже батчатся через `update_apps`, а одиночные переключатели
-        («избранное», «от администратора», горячая клавиша, аргументы) били по
+        («избранное», «от администратора», аргументы) били по
         диску на каждый щелчок. Отсрочка та же, что у `mark_launched`;
         `flush()` на выходе досохраняет отложенное.
 
@@ -277,10 +323,12 @@ class Store:
             if not app:
                 return None
             for key in ("name", "path", "args", "working_dir", "run_as_admin", "sub", "category_id",
-                        "hue", "icon", "icon_fit", "poster", "favorite", "quick", "hidden",
-                        "hotkey", "track_exe", "order"):
+                        "hue", "icon", "icon_fit", "custom_icon", "poster", "favorite",
+                        "quick", "hidden", "track_exe", "order"):
                 if key in patch:
                     app[key] = patch[key]
+            if "aliases" in patch:
+                app["aliases"] = sanitize.clean_aliases(patch["aliases"])
             if persist == "debounce":
                 self._persist_debounce.schedule()
             elif persist:
@@ -344,6 +392,7 @@ class Store:
             if not fresh:
                 return 0
             self.data["apps"] += fresh
+            self._forget_ignored(fresh)
             self._persist()
             return len(fresh)
 
@@ -394,8 +443,10 @@ class Store:
             app = self._app_ref(app_id)
             if not app:
                 return None
-            app["last_launched"] = int(time.time() * 1000)
+            now = int(time.time() * 1000)
+            app["last_launched"] = now
             app["launch_count"] = app.get("launch_count", 0) + 1
+            app["launches"] = (list(app.get("launches") or []) + [now])[-sanitize.MAX_LAUNCHES:]
             self._persist_debounce.schedule()
             return _clone(app)
 
@@ -484,9 +535,19 @@ class Store:
                               "items": [{"app_id": aid} for aid in members],
                               "quick": bool(quick), "order": len(self.data["sets"])},
                              len(self.data["sets"]))
+            unplaced = self._unplaced()
+            if unplaced & set(members):
+                for entry in rec["items"]:
+                    entry["slot"] = None
+                sanitize.refill_slots(rec, unplaced)
             self.data["sets"].append(rec)
             self._persist()
             return _clone(rec)
+
+    def _unplaced(self) -> set[str]:
+        # Окно сайта — окно браузера, а папки — Проводника: по ним не понять,
+        # какое из открытых ставить на место, поэтому место им не раздаётся.
+        return {a["id"] for a in self.data["apps"] if a.get("kind")}
 
     def get_set(self, set_id: str) -> AppSet | None:
         with self._lock:
@@ -499,13 +560,11 @@ class Store:
             if not rec:
                 return None
             known = {a["id"] for a in self.data["apps"]}
+            unplaced = self._unplaced()
             if "name" in patch:
                 rec["name"] = (patch["name"] or "").strip() or rec["name"]
             if "quick" in patch:
                 rec["quick"] = bool(patch["quick"])
-            if "hotkey" in patch:
-                hk = (patch["hotkey"] or "").strip() if isinstance(patch["hotkey"], str) else ""
-                rec["hotkey"] = hk or None
             if "monitor" in patch:
                 rec["monitor"] = max(0, sanitize.as_int(patch["monitor"]))
             if "close_together" in patch:
@@ -538,11 +597,13 @@ class Store:
                 for aid in wanted:
                     if aid in by_id:
                         continue
-                    rec["items"].append({"app_id": aid, "slot": sanitize.free_slot(rec),
+                    rec["items"].append({"app_id": aid,
+                                         "slot": None if aid in unplaced
+                                         else sanitize.free_slot(rec),
                                          "minimized": False, "rect": None})
             sanitize.fit_slots(sanitize.mirror_items(rec))
             if preset_changed:
-                sanitize.refill_slots(rec)
+                sanitize.refill_slots(rec, unplaced)
             self._persist()
             return _clone(rec)
 
@@ -604,14 +665,6 @@ class Store:
             self._persist()
             return _clone(rec)
 
-    def reorder_sets(self, ordered_ids: list[str]) -> None:
-        with self._lock:
-            pos = {sid: i for i, sid in enumerate(ordered_ids)}
-            for rec in self.data["sets"]:
-                if rec["id"] in pos:
-                    rec["order"] = pos[rec["id"]]
-            self._persist()
-
     def remove_set(self, set_id: str) -> dict | None:
         with self._lock:
             rec = next((s for s in self.data["sets"] if s["id"] == set_id), None)
@@ -641,18 +694,22 @@ class Store:
 
     def queue_inbox(self, items) -> int:
         with self._lock:
-            have = {(a.get("path") or "").lower() for a in self.data["apps"]}
-            have |= {i["path"].lower() for i in self.data["inbox"]}
+            have = {launch_key(a) for a in self.data["apps"]}
+            have |= {launch_key(i) for i in self.data["inbox"]}
+            have |= set(self.data["ignored"])
             added = 0
             for item in items:
                 path = (item.get("path") or "").strip()
-                if not path or path.lower() in have:
+                key = launch_key(item)
+                if not path or key in have:
                     continue
-                have.add(path.lower())
+                have.add(key)
                 self.data["inbox"].append({
                     "id": str(uuid.uuid4()),
                     "name": item.get("name") or "Без названия",
                     "path": path,
+                    "args": list(item.get("args") or []),
+                    "working_dir": item.get("working_dir") or "",
                     "icon": item.get("icon"),
                     "icon_fit": item.get("icon_fit") or "contain",
                     "poster": item.get("poster"),
@@ -721,15 +778,102 @@ class Store:
 
     def backup(self) -> Path:
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        return self.export_data(self.path.with_name(f"centurio-backup-{stamp}.json"))
+        dest = self.path.with_name(f"centurio-backup-{stamp}.json")
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = self.path.with_name(f"centurio-backup-{stamp}-{n}.json")
+        return self.export_data(dest)
+
+    def backups_dir(self) -> Path:
+        return self.path.parent / "backups"
+
+    def auto_backups(self) -> list[Path]:
+        """Автокопии, новые первыми."""
+        try:
+            found = [p for p in self.backups_dir().glob("auto-*.json") if p.is_file()]
+        except OSError:
+            return []
+        return sorted(found, key=lambda p: p.name, reverse=True)
+
+    @staticmethod
+    def _library_part(data: dict) -> dict:
+        # Настройки (вплоть до положения окна) меняются постоянно и копию
+        # «новой» не делают.
+        return {k: v for k, v in data.items() if k != "settings"}
+
+    def auto_backup(self, now: float | None = None) -> Path | None:
+        """Сохранить автокопию, если прошли сутки и библиотека изменилась."""
+        if self.read_only:
+            return None
+        with self._lock:
+            if not self.data["apps"] and not self.data["sets"]:
+                return None
+            snapshot = _clone(self.data)
+        now = time.time() if now is None else now
+        existing = self.auto_backups()
+        if existing:
+            newest = existing[0]
+            try:
+                if now - newest.stat().st_mtime < AUTO_BACKUP_EVERY:
+                    return None
+                with open(newest, encoding="utf-8") as fh:
+                    previous = json.load(fh)
+                if self._library_part(previous) == self._library_part(snapshot):
+                    return None
+            except (OSError, ValueError):
+                pass
+        folder = self.backups_dir()
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now))
+        # Номер фиксированной ширины и всегда больше прежних: по имени копии
+        # сортируются по времени, даже если две пришлись на одну секунду.
+        taken = [p.stem.rsplit("-", 1)[-1] for p in self.auto_backups()
+                 if p.name.startswith(f"auto-{stamp}-")]
+        n = max((int(t) for t in taken if t.isdigit()), default=0) + 1
+        dest = folder / f"auto-{stamp}-{n:02d}.json"
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(snapshot, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, dest)
+        except (OSError, ValueError, TypeError):
+            log.exception("не удалось сохранить автокопию: %s", dest)
+            self._discard_temp(tmp)
+            return None
+        for old in self.auto_backups()[AUTO_BACKUP_KEEP:]:
+            try:
+                old.unlink()
+            except OSError:
+                log.exception("не удалось удалить старую автокопию: %s", old)
+        return dest
+
+    @staticmethod
+    def backup_summary(path: str | Path) -> dict | None:
+        """Сколько в копии программ и наборов — чтобы выбрать нужную из списка."""
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        apps, sets = data.get("apps"), data.get("sets")
+        return {"apps": len(apps) if isinstance(apps, list) else 0,
+                "sets": len(sets) if isinstance(sets, list) else 0}
 
     def import_data(self, src: str | Path, merge: bool = False) -> bool:
+        if self.read_only:
+            return False
         try:
             with open(src, encoding="utf-8") as fh:
                 incoming = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             return False
         if not isinstance(incoming, dict) or "apps" not in incoming:
+            return False
+        version = incoming.get("version")
+        if isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION:
             return False
         clean = self._sanitize(incoming)
         with self._lock:
@@ -753,16 +897,19 @@ class Store:
                     self.data["sets"].append(rec)
                     hs.add(rec["id"])
 
-                seen_paths = {(a.get("path") or "").lower() for a in self.data["apps"]}
-                seen_paths |= {i["path"].lower() for i in self.data["inbox"]}
+                seen = {launch_key(a) for a in self.data["apps"]}
+                seen |= {launch_key(i) for i in self.data["inbox"]}
                 for item in clean["inbox"]:
-                    path = item["path"].lower()
-                    if path in seen_paths:
+                    key = launch_key(item)
+                    if key in seen:
                         continue
                     item = _clone(item)
                     item["order"] = len(self.data["inbox"])
                     self.data["inbox"].append(item)
-                    seen_paths.add(path)
+                    seen.add(key)
+                known = set(self.data["ignored"])
+                self.data["ignored"] += [k for k in clean["ignored"] if k not in known]
+                self._forget_ignored(self.data["apps"])
             else:
                 self.data = clean
             self._persist()

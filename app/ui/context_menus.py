@@ -15,12 +15,20 @@ class ContextMenus:
     def menu_at(self, e):
         if e is None:
             return self.ui._window_width() / 2, 180.0
-        return float(getattr(e, "global_x", 0) or 0), float(getattr(e, "global_y", 0) or 0)
+        pos = getattr(e, "global_position", None)
+        return (float(pos.x), float(pos.y)) if pos is not None else (self.ui._window_width() / 2,
+                                                                      180.0)
 
     def on_menu_dismissed(self):
         self.ui.safe_refresh()
 
     def app_menu(self, app, e):
+        """Правый щелчок по плитке — меню, как везде в Windows.
+
+        Раньше он сразу открывал панель свойств, и «Показать в папке»,
+        «От имени администратора», «Переименовать» на сетке были спрятаны.
+        Панель теперь — последний пункт, «Свойства…».
+        """
         app = self.ui.store.get_app(app["id"]) or app
         if self.ui.view.select_mode:
             self._select_mode_menu(app, e)
@@ -28,7 +36,60 @@ class ContextMenus:
         if app["id"] in self.ui.view.sel and len(self.ui.view.sel) > 1:
             self._selection_menu(e)
             return
-        self.ui._select_tile(app["id"])
+        self._app_actions_menu(app, e)
+
+    def _app_actions_menu(self, app, e):
+        x, y = self.menu_at(e)
+        app_id = app["id"]
+        running = app_id in self.ui.running
+        missing = app_id in self.ui.missing
+        kind = app.get("kind")
+        rows = []
+        if missing:
+            rows.append(menus.item(ft.Icons.SEARCH_ROUNDED, "Найти файл…",
+                                   lambda: self.ui._relocate(app_id)))
+        else:
+            rows.append(menus.item(
+                ft.Icons.SYNC_ALT_ROUNDED if running
+                else (ft.Icons.OPEN_IN_NEW_ROUNDED if kind else ft.Icons.PLAY_ARROW_ROUNDED),
+                "Переключиться" if running else ("Открыть" if kind else "Запустить"),
+                lambda: self.ui._launch(app_id), hint="Enter"))
+            if not kind:
+                rows.append(menus.item(ft.Icons.ADD_ROUNDED, "Открыть ещё окно",
+                                       lambda: self.ui._launch(app_id, again=True)))
+                rows.append(menus.item(ft.Icons.SHIELD_ROUNDED, "От имени администратора",
+                                       lambda: self.ui._launch(app_id, as_admin=True)))
+        if kind != "web":
+            rows.append(menus.item(ft.Icons.FOLDER_OPEN_ROUNDED, "Показать в папке",
+                                   lambda: self.ui._show_in_folder(app_id),
+                                   disabled=missing))
+        fav = bool(app.get("favorite"))
+        quick = bool(app.get("quick"))
+        rows += [
+            menus.separator(),
+            menus.item(ft.Icons.STAR_ROUNDED if fav else ft.Icons.STAR_BORDER_ROUNDED,
+                       "Убрать из избранного" if fav else "В избранное",
+                       lambda: self.ui._toggle_fav(app_id)),
+            menus.item(ft.Icons.BOLT_ROUNDED,
+                       "Убрать из быстрого запуска" if quick else "В быстрый запуск",
+                       lambda: self.ui._toggle_quick(app_id, not quick)),
+            menus.item(ft.Icons.FOLDER_ROUNDED, "Переложить в…",
+                       lambda: self.ui.menu.toggle_submenu(
+                           "cat", self._category_submenu([app_id]), y), submenu=True),
+            menus.item(ft.Icons.LAYERS_ROUNDED, "В набор…",
+                       lambda: self.ui.menu.toggle_submenu(
+                           "set", self.set_submenu([app_id]), y), submenu=True),
+            menus.item(ft.Icons.EDIT_ROUNDED, "Переименовать", lambda: self._rename(app_id)),
+            menus.separator(),
+            menus.item(ft.Icons.TUNE_ROUNDED, "Свойства…", lambda: self.ui._select_tile(app_id)),
+            menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, "Убрать из библиотеки",
+                       lambda: self.ui._remove_apps([app_id]), danger=True),
+        ]
+        self.ui.menu.show(x, y, rows, header=menus.app_header(self.ui, app, running, missing))
+
+    def _rename(self, app_id):
+        self.ui._select_tile(app_id)
+        self.ui.inspector_panel.focus_name()
 
     def _select_mode_menu(self, app, e):
         x, y = self.menu_at(e)
@@ -36,36 +97,37 @@ class ContextMenus:
         picked = app["id"] in ids
         anchor = self.ui.view.selection_anchor
         rows = [
-            menus.item(ft.Icons.CHECK_BOX if picked else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+            menus.item(ft.Icons.CHECK_BOX_ROUNDED if picked else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED,
                        "Снять отметку" if picked else "Отметить",
                        lambda: self.ui._toggle_pick(app["id"])),
-            menus.item(ft.Icons.SELECT_ALL, "Выбрать до этой",
+            menus.item(ft.Icons.SELECT_ALL_ROUNDED, "Выбрать до этой",
                        lambda: self.ui._range_to(app["id"]),
                        disabled=not anchor or anchor == app["id"]),
-            menus.item(ft.Icons.DONE_ALL, "Выбрать всё", self.ui._select_all_visible),
+            menus.item(ft.Icons.DONE_ALL_ROUNDED, "Выбрать всё", self.ui._select_all_visible),
         ]
         if ids:
             rows += [
                 menus.separator(),
-                menus.item(ft.Icons.FOLDER, "Переложить в…",
+                menus.item(ft.Icons.FOLDER_ROUNDED, "Переложить в…",
                            lambda: self.ui.menu.toggle_submenu(
                                "cat", self._category_submenu(ids), y), submenu=True),
-                menus.item(ft.Icons.LAYERS, "В набор…",
+                menus.item(ft.Icons.LAYERS_ROUNDED, "В набор…",
                            lambda: self.ui.menu.toggle_submenu(
                                "set", self.set_submenu(ids), y), submenu=True),
-                menus.item(ft.Icons.STAR_BORDER, "В избранное",
+                menus.item(ft.Icons.STAR_BORDER_ROUNDED, "В избранное",
                            lambda: self.ui._bulk_favorite(ids)),
-                menus.item(ft.Icons.VISIBILITY if self.ui.view.filter == "hidden"
-                           else ft.Icons.VISIBILITY_OFF,
+                menus.item(ft.Icons.VISIBILITY_ROUNDED if self.ui.view.filter == "hidden"
+                           else ft.Icons.VISIBILITY_OFF_ROUNDED,
                            "Показать" if self.ui.view.filter == "hidden" else "Скрыть из сетки",
                            lambda: self.ui._hide_apps(ids, self.ui.view.filter != "hidden")),
-                menus.item(ft.Icons.DELETE_OUTLINE, f"Убрать · {len(ids)}",
+                menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, f"Убрать · {len(ids)}",
                            lambda: self.ui._remove_apps(ids), danger=True),
             ]
         rows += [menus.separator(),
-                 menus.item(ft.Icons.CLOSE, "Выйти из режима", self.ui.toggle_select_mode)]
+                 menus.item(ft.Icons.CLOSE_ROUNDED, "Выйти из режима", self.ui.toggle_select_mode)]
         header = (menus.text_header(f"Выбрано {len(ids)}") if ids
-                  else menus.app_header(self.ui, app, app["id"] in self.ui.running))
+                  else menus.app_header(self.ui, app, app["id"] in self.ui.running,
+                                        app["id"] in self.ui.missing))
         self.ui.menu.show(x, y, rows, header=header)
 
     def _selection_menu(self, e):
@@ -73,19 +135,19 @@ class ContextMenus:
         ids = list(self.ui.view.sel)
         count = len(ids)
         rows = [
-            menus.item(ft.Icons.FOLDER, "Переложить в…",
+            menus.item(ft.Icons.FOLDER_ROUNDED, "Переложить в…",
                        lambda: self.ui.menu.toggle_submenu("cat", self._category_submenu(ids), y),
                        submenu=True),
-            menus.item(ft.Icons.LAYERS, "В набор…",
+            menus.item(ft.Icons.LAYERS_ROUNDED, "В набор…",
                        lambda: self.ui.menu.toggle_submenu("set", self.set_submenu(ids), y),
                        submenu=True),
-            menus.item(ft.Icons.STAR_BORDER, "В избранное", lambda: self.ui._bulk_favorite(ids)),
-            menus.item(ft.Icons.VISIBILITY if self.ui.view.filter == "hidden"
-                       else ft.Icons.VISIBILITY_OFF,
+            menus.item(ft.Icons.STAR_BORDER_ROUNDED, "В избранное", lambda: self.ui._bulk_favorite(ids)),
+            menus.item(ft.Icons.VISIBILITY_ROUNDED if self.ui.view.filter == "hidden"
+                       else ft.Icons.VISIBILITY_OFF_ROUNDED,
                        "Показать" if self.ui.view.filter == "hidden" else "Скрыть из сетки",
                        lambda: self.ui._hide_apps(ids, self.ui.view.filter != "hidden")),
             menus.separator(),
-            menus.item(ft.Icons.DELETE_OUTLINE, f"Убрать · {count}",
+            menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, f"Убрать · {count}",
                        lambda: self.ui._remove_apps(ids), danger=True),
         ]
         self.ui.menu.show(x, y, rows, header=menus.text_header(f"Выбрано {count}"))
@@ -96,14 +158,14 @@ class ContextMenus:
         index = [c["id"] for c in cats].index(cat["id"]) if cat["id"] in [c["id"] for c in cats] else 0
         count = sum(1 for a in self.ui.apps() if a.get("category_id") == cat["id"])
         rows = [
-            menus.item(ft.Icons.EDIT, "Изменить", lambda: self.ui._open_popover(cat["id"])),
-            menus.item(ft.Icons.ARROW_UPWARD, "Переместить выше",
+            menus.item(ft.Icons.EDIT_ROUNDED, "Изменить", lambda: self.ui._open_popover(cat["id"])),
+            menus.item(ft.Icons.ARROW_UPWARD_ROUNDED, "Переместить выше",
                        lambda: self.ui._move_category(cat["id"], -1), disabled=index == 0),
-            menus.item(ft.Icons.ARROW_DOWNWARD, "Переместить ниже",
+            menus.item(ft.Icons.ARROW_DOWNWARD_ROUNDED, "Переместить ниже",
                        lambda: self.ui._move_category(cat["id"], 1),
                        disabled=index >= len(cats) - 1),
             menus.separator(),
-            menus.item(ft.Icons.DELETE_OUTLINE, "Удалить категорию",
+            menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, "Удалить категорию",
                        lambda: self.ui._remove_category(cat["id"]), danger=True),
         ]
         self.ui.menu.show(x, y, rows, header=menus.category_header(self.ui, cat, count))
@@ -111,23 +173,22 @@ class ContextMenus:
     def set_menu(self, rec, e):
         x, y = self.menu_at(e)
         rows = [
-            menus.item(ft.Icons.PLAY_ARROW, "Запустить набор",
+            menus.item(ft.Icons.PLAY_ARROW_ROUNDED, "Запустить набор",
                        lambda: self.ui.set_ops.launch_set(rec["id"])),
+            menus.item(ft.Icons.CLOSE_ROUNDED, "Закрыть окна набора",
+                       lambda: self.ui.set_ops.close_set_windows(rec["id"])),
         ]
-        if rec.get("close_together"):
-            rows.append(menus.item(ft.Icons.CLOSE, "Закрыть набор",
-                                   lambda: self.ui.set_ops.close_set_windows(rec["id"])))
         rows += [
-            menus.item(ft.Icons.CROP_FREE, "Расставить окна",
+            menus.item(ft.Icons.CROP_FREE_ROUNDED, "Расставить окна",
                        lambda: self.ui.set_ops.arrange_set(rec["id"]),
                        disabled=not queries.has_layout(rec)),
-            menus.item(ft.Icons.TUNE, "Раскладка и порядок",
+            menus.item(ft.Icons.TUNE_ROUNDED, "Раскладка и порядок",
                        lambda: self.ui._open_set(rec["id"])),
-            menus.item(ft.Icons.BOLT,
+            menus.item(ft.Icons.BOLT_ROUNDED,
                        "Убрать из быстрого запуска" if rec.get("quick") else "В быстрый запуск",
                        lambda: self.ui._toggle_set_quick(rec["id"], not rec.get("quick"))),
             menus.separator(),
-            menus.item(ft.Icons.DELETE_OUTLINE, "Удалить набор",
+            menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, "Удалить набор",
                        lambda: self.ui.set_ops.remove_set(rec["id"]), danger=True),
         ]
         self.ui.menu.show(x, y, rows, header=menus.text_header(rec["name"]))
@@ -136,32 +197,36 @@ class ContextMenus:
         x, y = self.menu_at(e)
         app = next((a for a in self.ui.apps() if a["id"] == entry["app_id"]), None)
         preset = rec["layout"]["preset"]
-        places = [menus.item(ft.Icons.CHECK if entry.get("slot") == i else None,
+        places = [menus.item(ft.Icons.CHECK_ROUNDED if entry.get("slot") == i else None,
                              L.slot_label(preset, i, rec["layout"]["split"]).capitalize(),
                              lambda idx=i: self.ui.set_ops.set_item_slot(rec["id"], entry["app_id"], idx))
                   for i in range(L.slot_count(preset))]
-        places.append(menus.item(ft.Icons.CHECK if entry.get("slot") is None
+        places.append(menus.item(ft.Icons.CHECK_ROUNDED if entry.get("slot") is None
                                  and not entry.get("minimized") else None,
                                  "Без места", lambda: self.ui.set_ops.set_item_slot(
                                      rec["id"], entry["app_id"], None)))
         rows = [
-            menus.item(ft.Icons.ARROW_UPWARD, "Запускать раньше",
+            menus.item(ft.Icons.ARROW_UPWARD_ROUNDED, "Запускать раньше",
                        lambda: self.ui.set_ops.move_set_item(rec["id"], entry["app_id"], -1)),
-            menus.item(ft.Icons.ARROW_DOWNWARD, "Запускать позже",
+            menus.item(ft.Icons.ARROW_DOWNWARD_ROUNDED, "Запускать позже",
                        lambda: self.ui.set_ops.move_set_item(rec["id"], entry["app_id"], 1)),
             menus.separator(),
-            menus.item(ft.Icons.CROP_FREE, "Место в раскладке",
-                       lambda: self.ui.menu.toggle_submenu("slot", places, y), submenu=True),
-            menus.item(ft.Icons.LAYERS_CLEAR if entry.get("minimized")
-                       else ft.Icons.MINIMIZE,
-                       "Открывать обычно" if entry.get("minimized") else "Запускать свёрнутым",
-                       lambda: self.ui.set_ops.set_item_minimized(rec["id"], entry["app_id"],
-                                                        not entry.get("minimized"))),
-            menus.separator(),
-            menus.item(ft.Icons.DELETE_OUTLINE, "Убрать из набора",
-                       lambda: self.ui.set_ops.remove_from_set(rec["id"], entry["app_id"]),
-                       danger=True),
         ]
+        if not (app or {}).get("kind"):
+            rows += [
+                menus.item(ft.Icons.CROP_FREE_ROUNDED, "Место в раскладке",
+                           lambda: self.ui.menu.toggle_submenu("slot", places, y), submenu=True),
+                menus.item(ft.Icons.LAYERS_CLEAR_ROUNDED if entry.get("minimized")
+                           else ft.Icons.MINIMIZE_ROUNDED,
+                           "Открывать обычно" if entry.get("minimized")
+                           else "Запускать свёрнутым",
+                           lambda: self.ui.set_ops.set_item_minimized(
+                               rec["id"], entry["app_id"], not entry.get("minimized"))),
+                menus.separator(),
+            ]
+        rows.append(menus.item(ft.Icons.DELETE_OUTLINE_ROUNDED, "Убрать из набора",
+                               lambda: self.ui.set_ops.remove_from_set(rec["id"], entry["app_id"]),
+                               danger=True))
         self.ui.menu.show(x, y, rows,
                        header=menus.text_header(app["name"] if app else "Программа"))
 
@@ -173,17 +238,17 @@ class ContextMenus:
         return rows or [menus.item(None, "Категорий нет", None, disabled=True)]
 
     def set_submenu(self, app_ids):
-        rows = [menus.item(ft.Icons.ADD, "Новый набор…", lambda: self.ui.set_ops.make_set(app_ids))]
+        rows = [menus.item(ft.Icons.ADD_ROUNDED, "Новый набор…", lambda: self.ui.set_ops.make_set(app_ids))]
         records = self.ui.sets()
         if records:
             rows.append(menus.separator())
         for rec in records:
-            rows.append(menus.item(ft.Icons.LAYERS, rec["name"],
+            rows.append(menus.item(ft.Icons.LAYERS_ROUNDED, rec["name"],
                                    lambda sid=rec["id"]: self.ui.set_ops.add_to_set(sid, app_ids)))
         return rows
 
     def _sort_submenu(self):
-        return [menus.item(ft.Icons.CHECK if self.ui.view.sort == key else None,
+        return [menus.item(ft.Icons.CHECK_ROUNDED if self.ui.view.sort == key else None,
                            queries.SORT_LABELS[key], lambda k=key: self.ui._set_sort(k))
                 for key in queries.SORT_KEYS]
 
@@ -201,12 +266,21 @@ class ContextMenus:
         self.ui.menu.show(x, y, self.set_submenu([app["id"]]),
                        header=menus.text_header("Добавить в набор"))
 
+    def app_icon_menu(self, app, e):
+        x, y = self.menu_at(e)
+        rows = [menus.item(ft.Icons.IMAGE_ROUNDED, "Выбрать картинку…",
+                           lambda: self.ui.pick_app_icon(app["id"]))]
+        if app.get("custom_icon"):
+            rows.append(menus.item(ft.Icons.RESTORE_ROUNDED, "Значок из программы",
+                                   lambda: self.ui.reset_app_icon(app["id"])))
+        self.ui.menu.show(x, y, rows, header=None)
+
     def launch_more_menu(self, app, e):
         x, y = self.menu_at(e)
         rows = [
-            menus.item(ft.Icons.ADD, "Открыть ещё окно",
+            menus.item(ft.Icons.ADD_ROUNDED, "Открыть ещё окно",
                        lambda: self.ui._launch(app["id"], again=True)),
-            menus.item(ft.Icons.SHIELD, "От имени администратора",
+            menus.item(ft.Icons.SHIELD_ROUNDED, "От имени администратора",
                        lambda: self.ui._launch(app["id"], as_admin=True)),
         ]
         self.ui.menu.show(x, y, rows, header=None)
@@ -223,7 +297,7 @@ class ContextMenus:
     def monitor_menu(self, rec, e):
         x, y = self.menu_at(e)
         count = max(1, len(W.monitors()))
-        rows = [menus.item(ft.Icons.CHECK if rec["monitor"] == i else None,
+        rows = [menus.item(ft.Icons.CHECK_ROUNDED if rec["monitor"] == i else None,
                            f"Монитор {i + 1}",
                            lambda idx=i: self.ui.set_ops.set_set_monitor(rec["id"], idx))
                 for i in range(count)]
@@ -231,7 +305,7 @@ class ContextMenus:
 
     def delay_menu(self, rec, e):
         x, y = self.menu_at(e)
-        rows = [menus.item(ft.Icons.CHECK if abs(rec["delay_seconds"] - value) < 0.01 else None,
+        rows = [menus.item(ft.Icons.CHECK_ROUNDED if abs(rec["delay_seconds"] - value) < 0.01 else None,
                            "без паузы" if not value else f"{value:g} с",
                            lambda v=value: self.ui.set_ops.set_set_delay(rec["id"], v))
                 for value in (0, 1, 2, 4, 8)]
@@ -250,4 +324,4 @@ class ContextMenus:
                                 tone="muted")
             return
         x, y = self.menu_at(e)
-        self.ui.menu.show(x, y, rows[:14], header=menus.text_header("Добавить в набор"))
+        self.ui.menu.show(x, y, rows, header=menus.text_header("Добавить в набор"))

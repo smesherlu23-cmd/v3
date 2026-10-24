@@ -14,6 +14,8 @@
 #define MyAppPublisher "Centurio"
 #define MyAppExeName "Centurio.exe"
 #define MyAppDescription "Панель запуска приложений, всегда доступная из трея"
+; Тот же репозиторий, что REPO в app/infra/updates.py (сверяет test_packaging).
+#define MyAppURL "https://github.com/smesherlu23-cmd/v3"
 ; flet build windows output directory (relative to this script's parent):
 #define BuildDir "..\build\windows"
 
@@ -26,6 +28,15 @@ AppId={{5DB06D53-80BB-4A28-8A1C-869D1F09FD9F}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
+; Мьютекс единственного экземпляра (MUTEX_NAME в single_instance.py).
+; Centurio живёт в трее, и новую версию обычно ставят, пока он работает:
+; без этой проверки установщик перезаписывал бы файлы запущенной программы,
+; а с ней просит её закрыть (тихая установка — отказывается). Так же и
+; при удалении.
+AppMutex=Local\CenturioSingleInstanceMutex
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -47,8 +58,9 @@ VersionInfoProductName={#MyAppName}
 VersionInfoCopyright=© {#MyAppPublisher}
 
 [Languages]
+; Программа только на русском — и установщик тоже: со вторым языком он
+; первым делом спрашивал, на каком языке продолжать.
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -65,7 +77,21 @@ Source: "vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifs
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--hidden"; Tasks: startup
+; Без аргументов: собранный exe принимает любой аргумент за адрес сервера
+; «режима разработчика» Flet и Python не запускает вовсе. «Запуск в трей»
+; передаётся полем «Окно: свёрнутое» (runminimized) — его читает
+; autostart.started_minimized().
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Flags: runminimized; Tasks: startup
+
+[Registry]
+; Запасной путь автозапуска (HKCU\Run) Centurio пишет сам, когда ярлык создать
+; не удалось. Ключ не создаётся, а значение уходит вместе с программой.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#MyAppName}"; Flags: uninsdeletevalue dontcreatekey
+
+[UninstallDelete]
+; Ярлык «Автозагрузки», включённый в настройках Centurio, а не инсталлятором:
+; про него деинсталлятор сам не знает и оставил бы ярлык на удалённый exe.
+Type: files; Name: "{userstartup}\{#MyAppName}.lnk"
 
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Устанавливаем компоненты Microsoft Visual C++..."; Check: ShouldRunVCRedist; Flags: waituntilterminated

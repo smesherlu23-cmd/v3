@@ -71,6 +71,16 @@ class TrayController:
                 log.exception("не удалось выполнить действие в меню на панели задач")
         return run
 
+    def notify(self, message: str, title: str = "Centurio") -> bool:
+        if not self._icon or not self.available:
+            return False
+        try:
+            self._icon.notify(message, title)
+            return True
+        except Exception:
+            log.exception("не удалось показать уведомление в трее")
+            return False
+
     def refresh(self):
         if not self._icon:
             return

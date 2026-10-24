@@ -11,7 +11,10 @@ from ..core.text import split_args
 from ..infra import log, procs
 
 _EXE_EXTS = {".exe", ".bat", ".cmd", ".com"}
-_DETACHED_PROCESS = 0x00000008
+# Консольной программе (PowerShell, Python, .bat) — своё окно консоли.
+# С DETACHED_PROCESS консоли не было вовсе: программа работала невидимо или
+# сразу завершалась. Оконные программы этот флаг не замечают.
+_CREATE_NEW_CONSOLE = 0x00000010
 
 
 def explorer_exe() -> str:
@@ -19,6 +22,24 @@ def explorer_exe() -> str:
         return "explorer"
     candidate = os.path.join(os.environ.get("windir") or r"C:\Windows", "explorer.exe")
     return candidate if os.path.isfile(candidate) else "explorer"
+
+
+_URI = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
+
+
+def file_missing(app: dict) -> bool:
+    """Файла программы нет на диске — только для обычных путей.
+
+    Адреса (steam://, https://), `shell:` и сетевые пути не проверяются:
+    первые не файлы, а сетевой диск может минуту просыпаться.
+    """
+    if app.get("kind") == "web":
+        return False
+    path = (app.get("path") or "").strip().strip('"')
+    if not path or _URI.match(path) or path.lower().startswith("shell:") \
+            or path.startswith(("\\\\", "//")):
+        return False
+    return not os.path.exists(path)
 
 
 class Launcher:
@@ -59,9 +80,12 @@ class Launcher:
             names: set[str] = set()
             track = (a.get("track_exe") or "").strip().lower()
             if track:
+                # Заданный процесс точнее пути: у приложений на Squirrel путь —
+                # общий для всех Update.exe, и по нему «запущенными» считались
+                # бы все сразу, стоило одному обновиться.
                 names.add(track)
             path = a.get("path") or ""
-            if path and "://" not in path:
+            if not track and path and "://" not in path:
                 base = ntpath.basename(path).lower()
                 if ntpath.splitext(base)[1] in _EXE_EXTS:
                     names.add(base)
@@ -192,7 +216,7 @@ class Launcher:
 
         if self._is_executable(path):
             try:
-                proc = subprocess.Popen([path, *args], cwd=cwd, creationflags=_DETACHED_PROCESS)
+                proc = subprocess.Popen([path, *args], cwd=cwd, creationflags=_CREATE_NEW_CONSOLE)
             except OSError:
                 log.exception("Popen failed for %s; falling back to shell open", path)
                 try:

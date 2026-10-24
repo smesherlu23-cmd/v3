@@ -11,6 +11,8 @@ _SW_MINIMIZE = 6
 _SW_SHOWNORMAL = 1
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
+_MAX_FRAME = 32
 
 _lock = threading.Lock()
 
@@ -35,6 +37,27 @@ def _pid_names(pids) -> dict[int, str]:
     return {pid: name for pid, name in procs.snapshot().items() if pid in wanted}
 
 
+_FRAME_CLASS = "ApplicationFrameWindow"
+_CORE_CLASS = "Windows.UI.Core.CoreWindow"
+
+
+def hosted_pid(hwnd, pid, class_of, children_of, pid_of) -> int:
+    """Чей на самом деле процесс у окна.
+
+    Окно приложения из Store (UWP) — рамка процесса ApplicationFrameHost.exe,
+    а само приложение живёт в дочернем CoreWindow своего процесса. По рамке
+    Centurio видел бы у всех таких приложений один и тот же «exe».
+    """
+    if class_of(hwnd) != _FRAME_CLASS:
+        return pid
+    for child in children_of(hwnd):
+        if class_of(child) == _CORE_CLASS:
+            inner = pid_of(child)
+            if inner and inner != pid:
+                return inner
+    return pid
+
+
 def list_windows() -> list[dict]:
     if not available():
         return []
@@ -50,6 +73,21 @@ def list_windows() -> list[dict]:
 
     proto = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
+    def class_of(hwnd) -> str:
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+
+    def pid_of(hwnd) -> int:
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return int(pid.value)
+
+    def children_of(hwnd) -> list:
+        kids = []
+        user32.EnumChildWindows(hwnd, proto(lambda child, _p: kids.append(child) or True), 0)
+        return kids
+
     def visit(hwnd, _param):
         try:
             if not user32.IsWindowVisible(hwnd):
@@ -61,12 +99,11 @@ def list_windows() -> list[dict]:
                 return True
             buf = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buf, length + 1)
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            pid = hosted_pid(hwnd, pid_of(hwnd), class_of, children_of, pid_of)
             rect = RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             found.append({
-                "hwnd": int(hwnd), "pid": int(pid.value), "exe": "",
+                "hwnd": int(hwnd), "pid": pid, "exe": "",
                 "title": buf.value,
                 "rect": (rect.left, rect.top, rect.right - rect.left,
                          rect.bottom - rect.top),
@@ -115,14 +152,47 @@ def activate(hwnd) -> bool:
         return False
 
 
+def _frame_margins(hwnd) -> tuple[int, int, int, int]:
+    """Невидимая рамка окна: насколько GetWindowRect больше того, что видно.
+
+    В Windows 10/11 у окна есть прозрачная рамка для захвата мышью, около
+    7 пикселей слева, справа и снизу. Без поправки на неё окна набора стоят
+    с зазорами между собой и отступают от краёв экрана.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    outer, inner = wintypes.RECT(), wintypes.RECT()
+    try:
+        if not _user32().GetWindowRect(hwnd, ctypes.byref(outer)):
+            return 0, 0, 0, 0
+        dwm = ctypes.windll.dwmapi.DwmGetWindowAttribute
+        dwm.argtypes = (wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD)
+        dwm.restype = ctypes.c_long
+        if dwm(hwnd, _DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(inner),
+               ctypes.sizeof(inner)) != 0:
+            return 0, 0, 0, 0
+    except Exception:
+        return 0, 0, 0, 0
+    margins = (inner.left - outer.left, inner.top - outer.top,
+               outer.right - inner.right, outer.bottom - inner.bottom)
+    return tuple(m if 0 <= m <= _MAX_FRAME else 0 for m in margins)
+
+
+def frame_adjusted(rect, margins) -> tuple[int, int, int, int]:
+    x, y, w, h = rect
+    left, top, right, bottom = margins
+    return x - left, y - top, w + left + right, h + top + bottom
+
+
 def place(hwnd, rect) -> bool:
     if not available() or not hwnd:
         return False
-    x, y, w, h = (int(v) for v in rect)
     try:
         user32 = _user32()
         if user32.IsIconic(hwnd) or user32.IsZoomed(hwnd):
             user32.ShowWindow(hwnd, _SW_SHOWNORMAL)
+        x, y, w, h = frame_adjusted([int(v) for v in rect], _frame_margins(hwnd))
         return bool(user32.SetWindowPos(hwnd, 0, x, y, w, h,
                                         _SWP_NOZORDER | _SWP_NOACTIVATE))
     except Exception:
@@ -218,7 +288,7 @@ def exe_names_for(app: dict) -> set[str]:
     if track:
         names.add(track)
     path = app.get("path") or ""
-    if path and "://" not in path:
+    if not track and path and "://" not in path:
         base = ntpath.basename(path).lower()
         if base.endswith((".exe", ".bat", ".cmd", ".com")):
             names.add(base)

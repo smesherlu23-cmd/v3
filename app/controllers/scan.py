@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core import queries
-from ..core.text import plu_apps
+from ..core.text import KINDS, launch_key, looks_like_target, plu_apps
 from ..infra import log
 from ..platform import discovery
+from . import targets
 
 if TYPE_CHECKING:
     from .host import UIHost
@@ -29,6 +30,8 @@ class ScanController:
         self._scan_errors: list[dict] = []
         self._scan_lock = threading.Lock()
         self._manual_found: list[dict] = []
+        self._suggestions: list[dict] = []
+        self._suggest_off: set[str] = set()
 
     def _posters(self) -> bool:
         return bool(self.ui.setting("game_posters", True))
@@ -54,6 +57,113 @@ class ScanController:
     def _remember_discovery(self, found):
         self._discovered = found
         self._discovered_at = time.monotonic()
+        self._repair_bare_shortcuts(found)
+        if self.wants_suggestions():
+            # Хранится отдельно от найденного: тот устаревает через пару минут,
+            # а предложения должны дождаться, пока человек вернётся к окну.
+            self._suggestions = discovery.suggest_first_run(found)
+
+    def wants_suggestions(self) -> bool:
+        state = self.store.state()
+        return (not state["apps"] and not state["sets"]
+                and not state["settings"].get("first_run_done"))
+
+    def offer_first_run(self):
+        """На пустой библиотеке сразу посмотреть, что установлено."""
+        if self.wants_suggestions():
+            self.start_scan()
+
+    def suggestions(self) -> list[dict]:
+        if not self.wants_suggestions():
+            return []
+        return [{"key": launch_key(s["app"]), "item": s["app"], "hint": s["hint"],
+                 "on": launch_key(s["app"]) not in self._suggest_off}
+                for s in self._suggestions]
+
+    def toggle_suggestion(self, key: str):
+        self._suggest_off ^= {key}
+        self.ui.refresh()
+
+    def _payload(self, item, category_id):
+        return {"name": item.get("name"), "path": item.get("path"),
+                "args": item.get("args") or [], "working_dir": item.get("working_dir") or "",
+                "icon": item.get("icon"),
+                "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
+                "track_exe": item.get("track_exe"), "poster": item.get("poster"),
+                "kind": item.get("kind") or "", "category_id": category_id}
+
+    def add_suggestions(self):
+        chosen = [s["item"] for s in self.suggestions() if s["on"]]
+        if not chosen:
+            self.notify.show("Отметьте хотя бы одну программу", icon="check_circle", tone="muted")
+            return
+        cats = self.ui.categories()
+        added = self.store.add_apps([self._payload(item, queries.suggest_category(item, cats))
+                                     for item in chosen])
+        self.store.set_setting("first_run_done", True)
+        self.ui.view.filter = "all"
+        self.notify.show(f"Добавлено {len(added)} {plu_apps(len(added))}",
+                         action=lambda: self._undo_suggestions(added), action_label="Вернуть")
+        self.ui.on_library_changed()
+        self.backfill_icons_async()
+
+    def _undo_suggestions(self, added):
+        self.store.set_setting("first_run_done", False)
+        self._restore_added(added)
+
+    def dismiss_suggestions(self):
+        self.store.set_setting("first_run_done", True)
+        self.ui.refresh()
+
+    def review_suggestions(self):
+        """Открыть весь список найденного с уже отмеченными предложениями."""
+        picked = {s["key"] for s in self.suggestions() if s["on"]}
+        self.ui.open_add()
+        view = self.ui.view
+        # Здесь отмечено то, что выбрал человек на карточках, — без
+        # предвыбора всего нового: остальное найденное им не пользуется.
+        view.add_sel = set(picked)
+        view.add_seen |= {launch_key(f) for f in self.cached_discovery() or []}
+        self.ui.refresh()
+
+    def _repair_bare_shortcuts(self, found) -> int:
+        """Дописать аргументы ярлыка программам, добавленным до того, как их читали.
+
+        Раньше из ярлыка брался только exe: у Discord это `Update.exe` без
+        `--processStart Discord.exe`, и запуск ничего не открывал.
+        """
+        by_path: dict[str, list[dict]] = {}
+        for item in found:
+            if item.get("args"):
+                by_path.setdefault((item.get("path") or "").lower(), []).append(item)
+        store_exe = {(i.get("path") or "").lower(): i["track_exe"] for i in found
+                     if i.get("source") == "store" and i.get("track_exe")}
+        repaired = 0
+        for app in self.store.state()["apps"]:
+            exe = store_exe.get((app.get("path") or "").lower())
+            if exe and not app.get("track_exe"):
+                # Приложения из Store, добавленные раньше, чем Centurio научился
+                # узнавать их процесс.
+                self.store.update_app(app["id"], {"track_exe": exe}, persist=False)
+                repaired += 1
+                continue
+            if app.get("args"):
+                continue
+            candidates = by_path.get((app.get("path") or "").lower()) or []
+            named = [c for c in candidates if c.get("name", "").lower() == app["name"].lower()]
+            match = named[0] if named else (candidates[0] if len(candidates) == 1 else None)
+            if match is None:
+                continue
+            patch = {"args": list(match["args"]),
+                     "working_dir": app.get("working_dir") or match.get("working_dir") or ""}
+            if match.get("track_exe") and not app.get("track_exe"):
+                patch["track_exe"] = match["track_exe"]
+            self.store.update_app(app["id"], patch, persist=False)
+            repaired += 1
+        if repaired:
+            self.store.flush()
+            log.info("записям дописали аргументы или процесс: %s", repaired)
+        return repaired
 
     def scanning(self) -> bool:
         with self._scan_lock:
@@ -100,10 +210,26 @@ class ScanController:
     def found_groups(self):
         found = self.cached_discovery() or []
         found = list(found) + list(self._manual_found)
-        existing = {(a.get("path") or "").lower() for a in self.ui.apps()}
+        existing = {launch_key(a) for a in self.ui.apps()}
         return queries.group_found(found, existing, self.ui.categories(),
                                    only_new=self.ui.view.only_new,
                                    query=self.ui.view.add_query)
+
+    def preselect_new(self, groups=None):
+        """Новое отмечено сразу: обычно добавляют почти всё, и снять одну
+        галочку проще, чем поставить семь. Снятая отметка не возвращается.
+
+        Зовётся при показе экрана: отмечается то, что человек видит.
+        """
+        view = self.ui.view
+        seen = getattr(view, "add_seen", None)
+        if seen is None:
+            return
+        for group in self.found_groups() if groups is None else groups:
+            for row in group["rows"]:
+                if row["is_new"] and row["key"] not in seen:
+                    seen.add(row["key"])
+                    view.add_sel.add(row["key"])
 
     def toggle_only_new(self):
         self.ui.view.only_new = not self.ui.view.only_new
@@ -113,35 +239,49 @@ class ScanController:
         self.ui.view.add_query = text or ""
         self.ui.refresh()
 
+    def set_add_input(self, text):
+        """Одно поле на экране: имя ищет среди найденного, путь или адрес
+        предлагается добавить как есть."""
+        text = text or ""
+        if looks_like_target(text):
+            self.ui.view.manual_path = text
+            self.ui.view.add_query = ""
+        else:
+            self.ui.view.manual_path = ""
+            self.ui.view.add_query = text
+        self.ui.refresh()
+
+    def submit_add_input(self, text):
+        if looks_like_target(text or ""):
+            self.add_manual_path(text)
+
     def set_manual_path(self, text):
         self.ui.view.manual_path = text or ""
 
     def add_manual_path(self, text=None):
-        raw = (text if text is not None else self.ui.view.manual_path or "").strip().strip('"')
-        if not raw:
-            self.notify.error("Вставьте путь к программе")
+        raw = text if text is not None else self.ui.view.manual_path or ""
+        item, error = targets.describe(raw, self.ui.icon_cache_dir())
+        if item is None:
+            self.notify.error(error, detail=raw.strip() or None)
             return
-        if not os.path.isfile(raw):
-            self.notify.error("Файл не найден", detail=raw)
-            return
-        name = Path(raw).stem.replace("-", " ").replace("_", " ").strip()
-        item = {"name": (name[:1].upper() + name[1:]) if name else "Программа",
-                "path": raw, "source": "manual",
-                "icon": discovery.extract_icon(raw, self.ui.icon_cache_dir())}
-        steam = self._steam_redirect(raw)
+        steam = None if item.get("kind") else self._steam_redirect(item["path"])
         if steam:
             item.update(steam)
         found = list(self._manual_found)
-        if any((f.get("path") or "").lower() == item["path"].lower() for f in found):
-            self.notify.show("Этот путь уже в списке", icon="check_circle", tone="muted")
+        if any(launch_key(f) == launch_key(item) for f in found):
+            self.notify.show("Это уже в списке", icon="check_circle", tone="muted")
             return
         found.append(item)
         self._manual_found = found
         self.ui.view.manual_path = ""
-        self.ui.view.add_sel.add(item["path"].lower())
+        self.ui.view.add_sel.add(launch_key(item))
+        kind = KINDS.get(item.get("kind"))
         if steam:
             self.notify.show(f"{item['name']} — игра Steam, запустится через клиент",
                                icon="link", tone="muted")
+        elif kind:
+            self.notify.show(f"{kind.capitalize()} «{item['name']}» в списке",
+                             icon="link", tone="muted")
         else:
             self.notify.show(f"{item['name']} добавлен в список", icon="link", tone="muted")
         self.ui.refresh()
@@ -181,16 +321,8 @@ class ScanController:
         if not chosen:
             self.notify.show("Отметьте хотя бы одну программу", icon="check_circle", tone="muted")
             return
-        payload = []
-        for row in chosen:
-            item = row["item"]
-            payload.append({
-                "name": item.get("name"), "path": item.get("path"), "icon": item.get("icon"),
-                "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
-                "track_exe": item.get("track_exe"), "poster": item.get("poster"),
-                "category_id": self.add_category_for(row),
-            })
-        added = self.store.add_apps(payload)
+        added = self.store.add_apps([self._payload(row["item"], self.add_category_for(row))
+                                     for row in chosen])
         self.ui.view.reset_add()
         self._manual_found = []
         self.ui.view.set_screen("grid")
@@ -208,8 +340,8 @@ class ScanController:
         queued = self.store.queue_inbox([r["item"] for r in chosen])
         self.ui.view.reset_add()
         self.ui.view.set_screen("grid")
-        self.notify.show(f"В разборе: {queued}", icon="inbox", tone="muted",
-                           action=self.ui.open_triage, action_label="Разобрать")
+        self.notify.show(f"Отложено: {queued} — ждут в «Новых программах»", icon="inbox",
+                         tone="muted", action=self.ui.open_triage, action_label="Посмотреть")
         self.ui.on_library_changed()
 
     def _restore_added(self, records):
@@ -217,7 +349,11 @@ class ScanController:
         self.ui.on_library_changed()
 
     def pick_file(self):
-        self.ui.ask_for_file("Выберите программу", self.file_picked)
+        self.ui.ask_for_file("Выберите программу или документ", self.file_picked)
+
+    def pick_folder(self):
+        self.ui.ask_for_folder("Выберите папку",
+                               lambda path: path and self.add_manual_path(path))
 
     def file_picked(self, path):
         if not path:
@@ -228,6 +364,11 @@ class ScanController:
             steam = self._steam_redirect(path)
             patch = steam or {"path": path, "icon": None, "poster": None}
             self.store.update_app(target, patch)
+            # Файл нашёлся — метка «не найден» уходит сразу, не дожидаясь
+            # следующей проверки диска.
+            mark = getattr(self.ui, "set_missing", None)
+            if mark:
+                mark(target, False)
             self.notify.show("Путь обновлён — это игра Steam, запустится через клиент"
                               if steam else "Путь обновлён", icon="check")
             self.ui.on_library_changed()
@@ -295,20 +436,21 @@ class ScanController:
                     discovery.prune_icon_cache(self.store, cache)
                 except Exception:
                     log.exception("не удалось прибрать кэш иконок")
-                existing = {(a.get("path") or "").lower() for a in self.store.state()["apps"]}
-                new = [a for a in found if (a.get("path") or "").lower() not in existing]
+                existing = {launch_key(a) for a in self.store.state()["apps"]}
+                new = [a for a in found if launch_key(a) not in existing]
                 if new and self.store.state()["settings"].get("triage", True):
                     queued = self.store.queue_inbox(new)
                     self.ui.on_library_changed()
-                    if queued:
-                        word = "новая программа ждёт" if queued == 1 else "новые программы ждут"
-                        self.notify.show(f"{queued} {word} в разборе", icon="inbox", tone="good", action=self.ui.open_triage,
-                                          action_label="Разобрать")
+                    if queued and self.ui.view.screen != "triage":
+                        self.notify.show(f"Нашлись новые программы: {queued}", icon="inbox",
+                                         tone="good", action=self.ui.open_triage,
+                                         action_label="Посмотреть", wait_for_undo=True)
                     return
                 self.ui.on_library_changed()
                 if new:
-                    self.notify.show(f"Нашлось нового: {len(new)}", icon="search", tone="muted", action=self.ui.open_add,
-                                       action_label="Показать")
+                    self.notify.show(f"Нашлось нового: {len(new)}", icon="search", tone="muted",
+                                     action=self.ui.open_add, action_label="Показать",
+                                     wait_for_undo=True)
                 elif not silent:
                     self.notify.show("Иконки обновлены" if changed else "Всё актуально")
             except Exception:

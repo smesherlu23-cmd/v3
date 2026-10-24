@@ -8,15 +8,7 @@ from pathlib import Path
 
 import flet as ft
 
-from app.core.hotkeys import (
-    SET_PREFIX,
-    TOGGLE_LAUNCH,
-    HotkeyManager,
-    normalize_accel,
-    resolve_accels,
-    split_binding,
-)
-from app.core.store import DEFAULT_LAUNCH_HOTKEY, Store
+from app.core.store import Store
 from app.infra import log, paths
 from app.infra.debounce import Debounce
 from app.platform import autostart, single_instance
@@ -34,14 +26,13 @@ GEOMETRY_FLUSH_DELAY = 0.5
 AUTO_RESCAN_INTERVAL = 900
 
 
-def shutdown(store=None, tray=None, launcher=None, hotkeys=None, geometry_flush=None,
+def shutdown(store=None, tray=None, launcher=None, geometry_flush=None,
              toast=None, stop_event=None):
     for label, step in (("flushing the store", getattr(store, "flush", None)),
                         ("stopping background jobs", getattr(stop_event, "set", None)),
                         ("cancelling the geometry flush",
                          getattr(geometry_flush, "cancel", None)),
                         ("stopping the toast timer", getattr(toast, "stop", None)),
-                        ("stopping the hotkey listener", getattr(hotkeys, "stop", None)),
                         ("stopping the process monitor",
                          getattr(launcher, "stop_monitor", None)),
                         ("stopping the tray icon", getattr(tray, "stop", None)),
@@ -65,6 +56,11 @@ def _report_startup_failure() -> None:
     text = ("Centurio не смог запуститься.\n\n"
             f"{detail}\n\n"
             f"Подробности: {paths.data_dir() / 'centurio.log'}")
+    # Модальное окно ждёт «ОК». Там, где нажимать некому (тесты, CI), оно
+    # вешает процесс — см. тот же переключатель в корневом main.py.
+    if os.environ.get("CENTURIO_NO_DIALOG") == "1":
+        print(text, file=sys.stderr)
+        return
     try:
         import ctypes
 
@@ -76,8 +72,8 @@ def _report_startup_failure() -> None:
 def _optional(label: str, step) -> bool:
     """Необязательный шаг запуска: сбой записываем, но окно всё равно открываем.
 
-    Centurio — панель запуска. Ни трей, ни глобальные клавиши, ни монитор
-    процессов не стоят того, чтобы из-за них программа не открылась вовсе:
+    Centurio — панель запуска. Ни трей, ни монитор процессов, ни автокопия
+    не стоят того, чтобы из-за них программа не открылась вовсе:
     окно без трея нужнее, чем «exe вылетает сразу». Обязательные шаги (Store,
     сборка интерфейса, mount) намеренно не заворачиваются — без них показывать
     нечего, и о таком сбое сообщает `main()`.
@@ -120,10 +116,13 @@ def _start(page: ft.Page):
     _optional("подготовка значков", lambda: ensure_icons(ASSETS_DIR))
     is_web = page.web or os.environ.get("CENTURIO_WEB") == "1"
     images.embed_images(is_web)
-    start_hidden = "--hidden" in sys.argv
+    # Собранный exe аргументов не получает (см. autostart._embedded), поэтому
+    # «Автозагрузка» просит трей полем «Окно: свёрнутое» у ярлыка;
+    # `--hidden` остаётся для запуска из исходников.
+    start_hidden = "--hidden" in sys.argv or (not is_web and autostart.started_minimized())
 
     page.title = "Centurio"
-    page.bgcolor = C.BG_1
+    page.bgcolor = C.BG
     page.padding = 0
     page.spacing = 0
     page.theme_mode = ft.ThemeMode.DARK
@@ -142,14 +141,13 @@ def _start(page: ft.Page):
         page.window.prevent_close = True
 
     launcher = Launcher()
-    hotkeys = None
     geometry_flush = None
     ui_holder = {}
     bg_stop = threading.Event()
 
     def quit_app():
         ui = ui_holder.get("ui")
-        shutdown(store=store, tray=tray, launcher=launcher, hotkeys=hotkeys,
+        shutdown(store=store, tray=tray, launcher=launcher,
                  geometry_flush=geometry_flush, toast=getattr(ui, "toast", None),
                  stop_event=bg_stop)
         _quit(page)
@@ -173,11 +171,11 @@ def _start(page: ft.Page):
             if fits:
                 page.window.left = x
                 page.window.top = y
-            else:
-                page.window.center()
             if s.get("win_max"):
                 page.window.maximized = True
             page.update()
+            if not fits:
+                page.run_task(page.window.center)
         except Exception:
             log.exception("восстановление геометрии окна ошибка")
 
@@ -196,6 +194,9 @@ def _start(page: ft.Page):
     def show_window():
         _show_window(page)
         set_visible(True)
+        ui = ui_holder.get("ui")
+        if ui is not None:
+            ui.check_missing()
 
     def hide_window():
         _hide_window(page)
@@ -206,16 +207,6 @@ def _start(page: ft.Page):
         show_window()
         if ui is not None:
             ui.open_library()
-
-    def toggle_launch():
-        ui = ui_holder.get("ui")
-        if ui is None:
-            return
-        visible = True if is_web else bool(page.window.visible)
-        if visible:
-            hide_to_tray()
-        else:
-            open_library()
 
     def minimize():
         if store.state()["settings"].get("minimize_to_tray") and tray.available:
@@ -240,63 +231,43 @@ def _start(page: ft.Page):
             return
         if tray.available:
             hide_window()
+            tray_hint_once()
         else:
             page.window.minimized = True
             set_visible(False)
             page.update()
 
+    def tray_hint_once():
+        # Окно исчезло, а значок в Windows 11 часто спрятан за стрелкой —
+        # без подсказки кажется, что программа закрылась.
+        if store.state()["settings"].get("tray_hint_shown"):
+            return
+        if tray.notify("Centurio работает в трее. Щёлкните значок, чтобы открыть окно, "
+                       "или запустите Centurio ещё раз. Выйти — «Выход» в меню значка."):
+            store.set_setting("tray_hint_shown", True)
+
     def on_setting(key, value):
         if key == "autostart":
             autostart.set_autostart(bool(value))
-        elif key == "launch_hotkey":
-            refresh_runtime()
-
-    def on_hotkey(binding_id):
-        if binding_id == TOGGLE_LAUNCH:
-            toggle_launch()
-            return
-        ui = ui_holder.get("ui")
-        if ui is None:
-            return
-        kind, target = split_binding(binding_id)
-        if kind == "set":
-            ui.set_ops.launch_set(target)
-        else:
-            ui._launch(target)
-
-    hotkeys = HotkeyManager(on_trigger=on_hotkey)
-    last_rejected = set()
 
     def refresh_runtime():
-        nonlocal last_rejected
-        state = store.state()
-        launcher.set_apps(state["apps"])
+        launcher.set_apps(store.state()["apps"])
         tray.refresh()
-        if not is_web:
-            launch = state["settings"].get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY
-            app_accels, set_slots = resolve_accels(state["apps"],
-                                                   _ordered_sets(state), launch)
-            bindings = ([(launch, TOGGLE_LAUNCH)]
-                        + [(accel, aid) for aid, accel in app_accels.items()]
-                        + [(accel, SET_PREFIX + sid) for sid, accel in set_slots.items()])
-            hotkeys.register(bindings)
-            rejected = set(hotkeys.rejected)
-            if rejected and rejected != last_rejected:
-                ui = ui_holder.get("ui")
-                if ui is not None:
-                    ui.notify_hotkey_rejects(sorted(rejected))
-            last_rejected = rejected
 
     controllers = {
         "minimize": minimize, "toggle_maximize": toggle_maximize, "close": close,
         "hide_to_tray": hide_to_tray, "on_setting": on_setting,
         "on_library_changed": refresh_runtime,
-        "suspend_hotkeys": hotkeys.stop, "resume_hotkeys": refresh_runtime,
     }
+
+    def launch_from_tray(app_id):
+        ui = ui_holder.get("ui")
+        if ui is not None:
+            ui._launch(app_id)
 
     def tray_menu():
         from app.ui import screens
-        items = [(item["label"], (lambda aid=item["id"]: on_hotkey(aid)))
+        items = [(item["label"], (lambda aid=item["id"]: launch_from_tray(aid)))
                  for item in screens.tray_items(store)]
         return items, screens.library_summary(store)
 
@@ -312,25 +283,6 @@ def _start(page: ft.Page):
             ui.keymap.handle_key(e)
         except Exception:
             log.exception("управление нажатием клавиши ошибка")
-        if e.ctrl and (e.key or "").isdigit():
-            accel = f"Ctrl+Alt+{e.key}" if e.alt else f"Ctrl+{e.key}"
-            if hotkeys.handles(accel):
-                return
-            state = store.state()
-            app_accels, set_slots = resolve_accels(
-                state["apps"], _ordered_sets(state),
-                state["settings"].get("launch_hotkey") or DEFAULT_LAUNCH_HOTKEY)
-            want = normalize_accel(accel)
-            if e.alt:
-                set_id = next((sid for sid, ac in set_slots.items()
-                               if normalize_accel(ac) == want), None)
-                if set_id:
-                    ui.set_ops.launch_set(set_id)
-                return
-            app_id = next((aid for aid, ac in app_accels.items()
-                           if normalize_accel(ac) == want), None)
-            if app_id:
-                ui._launch(app_id)
     page.on_keyboard_event = on_key
 
     def _flush_geometry():
@@ -363,13 +315,15 @@ def _start(page: ft.Page):
         geometry_flush.schedule(immediate=flush)
 
     def on_win_event(e):
-        if e.data in ("resized", "moved", "maximize", "unmaximize"):
+        kind = e.type.value if e.type else ""
+        if kind in ("resized", "moved", "maximize", "unmaximize"):
             save_window()
-        elif e.data == "minimize":
+        elif kind == "minimize":
+            log.info("событие окна: свёрнуто")
             set_visible(False)
-        elif e.data in ("restore", "focus"):
+        elif kind in ("restore", "focus"):
             set_visible(True)
-        elif e.data == "close":
+        elif kind == "close":
             save_window(flush=True)
             close()
     page.window.on_event = on_win_event if not is_web else None
@@ -394,20 +348,35 @@ def _start(page: ft.Page):
         except Exception:
             log.exception("сбой при заполнении значков")
     threading.Thread(target=_backfill, daemon=True).start()
-    # Регистрация глобальных клавиш идёт через Win32 (RegisterHotKey) и трогает
-    # трей — оба места платформенные и на чужой машине могут повести себя как
-    # угодно. Без них панель остаётся рабочей мышью и внутренними клавишами.
-    _optional("горячие клавиши и трей", refresh_runtime)
+    _optional("меню трея", refresh_runtime)
     _optional("монитор запущенных программ", launcher.start_monitor)
+    _optional("проверка файлов на диске", ui.check_missing)
 
-    def _auto_rescan_loop():
+    def on_brightness(e):
+        # «Как в Windows»: светлая или тёмная тема приложений сменилась на ходу.
+        if ui.setting("appearance") == "system":
+            ui.background_refresh()
+    page.on_platform_brightness_change = on_brightness
+    _optional("предложения на пустой библиотеке", ui.scan.offer_first_run)
+    if os.environ.get("CENTURIO_UI_CHECK"):
+        from app.ui import ui_check
+        ui_check.start(ui, launcher, os.environ["CENTURIO_UI_CHECK"], bg_stop)
+
+    def _background_loop():
+        # Автокопия и обновления проверяются при запуске и потом каждые 15
+        # минут: сами они срабатывают не чаще раза в сутки, а компьютер с
+        # Centurio в трее могут не выключать неделями.
+        _optional("автокопия библиотеки", store.auto_backup)
+        _optional("проверка обновлений", ui.updates.check_if_due)
         while not bg_stop.wait(AUTO_RESCAN_INTERVAL):
+            _optional("автокопия библиотеки", store.auto_backup)
+            _optional("проверка обновлений", ui.updates.check_if_due)
             try:
                 if store.state()["settings"].get("auto_rescan"):
                     ui.scan.rescan(silent=True)
             except Exception:
                 log.exception("ошибка автоматической повторной проверки галочки")
-    threading.Thread(target=_auto_rescan_loop, daemon=True).start()
+    threading.Thread(target=_background_loop, daemon=True).start()
 
     if not is_web:
         def _adopt_autostart():
@@ -422,6 +391,8 @@ def _start(page: ft.Page):
 
         _optional("автозапуск", _adopt_autostart)
         _optional("значок в трее", tray.start)
+        _optional("показ окна по второму запуску",
+                  lambda: single_instance.listen(open_library))
         if start_hidden:
             # Прятаться в трей можно только если трей действительно поднялся:
             # иначе окно исчезнет, а вернуть его будет нечем.
@@ -429,10 +400,6 @@ def _start(page: ft.Page):
                 hide_window()
             else:
                 log.warning("трея нет — открываю окно, несмотря на --hidden")
-
-
-def _ordered_sets(state) -> list[dict]:
-    return sorted(state["sets"], key=lambda s: s.get("order", 0))
 
 
 def app_paths_dir(store):
@@ -446,10 +413,12 @@ def _show_window(page):
         page.update()
     except Exception:
         log.exception("не удалось восстановить окно")
-    try:
-        page.window.to_front()
+    async def to_front():
+        await page.window.to_front()
         page.window.focused = True
         page.update()
+    try:
+        page.run_task(to_front)
     except Exception:
         log.exception("не удалось переместить окно на передний план")
 
@@ -463,9 +432,15 @@ def _hide_window(page):
 
 
 def _quit(page):
-    try:
+    async def destroy():
         page.window.prevent_close = False
-        page.window.destroy()
+        page.update()
+        await page.window.destroy()
+    # Закрытие окна идёт через цикл событий Flet; если он уже не отвечает,
+    # процесс всё равно должен завершиться, а не висеть в трее без значка.
+    threading.Timer(5.0, os._exit, args=(0,)).start()
+    try:
+        page.run_task(destroy)
     except Exception:
         log.exception("не удалось закрыть окно, выход вручную")
         os._exit(0)

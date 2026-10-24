@@ -26,17 +26,17 @@ class ViewState:
         self.query = ""
         self.sort = s.get("view_sort") if s.get("view_sort") in queries.SORT_KEYS else "alpha"
         self.mode = s.get("view_mode") if s.get("view_mode") in MODE_KEYS else "grid"
-        self.sidebar_open = True
+        self.sidebar_open = s.get("sidebar_open", True) is not False
         self.selected = -1
         self.screen = "grid"
         self.palette_open = False
         self.palette_index = 0
         self.palette_focus = "results"
+        # Строка выдачи, к которой относятся «Действия» после Tab.
+        self.palette_result = 0
         self.inspector: str | None = None
         self.sel: list[str] = []
         self.adv = False
-        self.capture = False
-        self.capture_target = "app"
 
         # Ключ поля, в котором сейчас стоит курсор, или None.
         # `page.on_keyboard_event` в Flet — глобальный обработчик: он
@@ -45,6 +45,10 @@ class ViewState:
         # двигали выделение в сетке, а `Escape` в переименовании набора
         # закрывал редактор. `Keymap` читает этот признак и молчит.
         self.typing: str | None = None
+        # Зовётся, когда курсор покинул поле, — отложенная перерисовка.
+        self.on_typing_done = None
+        # Вызывается, когда фокус увели из открытой палитры в другое поле.
+        self.on_stray_focus = None
 
         self.select_mode = False
         self.selection_anchor: str | None = None
@@ -55,6 +59,8 @@ class ViewState:
             if isinstance(collapsed, list) else set()
 
         self.settings_tab = "view"
+        # «Свои цвета» в настройках раскрыты: HEX, ползунки, тон фона, контраст.
+        self.custom_colors = False
 
         self.popover: str | None = None
 
@@ -62,6 +68,8 @@ class ViewState:
         self.add_query = ""
         self.manual_path = ""
         self.add_sel: set[str] = set()
+        # Что уже было предложено отметить: снятую отметку не ставим заново.
+        self.add_seen: set[str] = set()
         self.add_cat: dict[str, str] = {}
 
     def is_all_view(self):
@@ -83,6 +91,7 @@ class ViewState:
     def set_query(self, q):
         self.query = q
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def set_mode(self, m):
@@ -94,12 +103,13 @@ class ViewState:
             self.sort = s
             self.persist()
 
-    def cycle_sort(self):
-        cur = self.sort if self.sort in queries.SORT_KEYS else "alpha"
-        self.set_sort(queries.SORT_KEYS[(queries.SORT_KEYS.index(cur) + 1) % len(queries.SORT_KEYS)])
-
     def toggle_sidebar(self):
-        self.sidebar_open = not self.sidebar_open
+        self.set_sidebar(not self.sidebar_open)
+
+    def set_sidebar(self, open_: bool):
+        """Развёрнутая панель или полоса значков — запоминается между запусками."""
+        self.sidebar_open = bool(open_)
+        self.store.set_setting("sidebar_open", self.sidebar_open, persist="debounce")
 
     def revalidate(self, categories):
         new = queries.valid_filter(self.filter, categories)
@@ -117,6 +127,8 @@ class ViewState:
         # успел отработать раньше, чем `on_blur` покинутого.
         if self.typing == field:
             self.typing = None
+            if self.on_typing_done:
+                self.on_typing_done()
 
     def stop_typing_in_rebuilt_fields(self) -> None:
         if self.typing not in PERSISTENT_FIELDS:
@@ -133,7 +145,11 @@ class ViewState:
         if screen in SCREENS:
             self.screen = screen
             self.active_set = None
-            self.typing = None
+            # Поля прежнего экрана исчезают вместе с ним, но строка поиска в
+            # шапке остаётся — и курсор в ней тоже: без этого Delete и
+            # стрелки в поиске на новом экране уходили бы в библиотеку.
+            if self.typing != SEARCH_FIELD:
+                self.typing = None
             self.close_palette()
             self.close_inspector()
 
@@ -149,12 +165,14 @@ class ViewState:
     def open_palette(self):
         self.palette_open = True
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def close_palette(self):
         self.palette_open = False
         self.query = ""
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def move_palette(self, delta: int, count: int):
@@ -164,12 +182,15 @@ class ViewState:
         self.palette_index = max(0, min(count - 1, self.palette_index + delta))
 
     def focus_palette_actions(self, count: int):
-        if self.palette_focus == "results" and count:
-            self.palette_focus = "actions"
-            self.palette_index = 0
+        """Tab: к действиям над выбранной строкой и обратно — к ней же."""
+        if self.palette_focus == "results":
+            if count:
+                self.palette_result = min(self.palette_index, count - 1)
+                self.palette_focus = "actions"
+                self.palette_index = 0
         else:
             self.palette_focus = "results"
-            self.palette_index = 0
+            self.palette_index = self.palette_result
 
     def clear_selection(self):
         self.sel = []
@@ -207,7 +228,6 @@ class ViewState:
     def enter_select_mode(self):
         self.select_mode = True
         self.inspector = None
-        self.capture = False
         self.close_palette()
 
     def leave_select_mode(self):
@@ -221,12 +241,9 @@ class ViewState:
             self.selection_anchor = None
         if self.inspector not in live:
             self.inspector = None
-            if self.capture_target == "app":
-                self.capture = False
 
     def close_inspector(self):
         self.inspector = None
-        self.capture = False
         self.clear_selection()
 
     def toggle_section(self, cid: str):
@@ -244,6 +261,7 @@ class ViewState:
 
     def reset_add(self):
         self.add_sel = set()
+        self.add_seen = set()
         self.add_cat = {}
         self.add_query = ""
         self.manual_path = ""
@@ -264,9 +282,6 @@ class ViewState:
     def escape(self) -> bool:
         if self.popover:
             self.close_popover()
-            return True
-        if self.capture:
-            self.capture = False
             return True
         if self.palette_open:
             self.close_palette()

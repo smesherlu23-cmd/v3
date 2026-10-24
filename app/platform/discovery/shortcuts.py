@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 
-from ...infra import log
+from ...infra import log, procs
 
 _SHORTCUT_EXT = (".lnk", ".url")
 
@@ -57,29 +58,50 @@ def autostart_names() -> set[str]:
         log.exception("не удалось прочитать ключ запуска для получения предложений по первому запуску")
     return names
 
-def suggest_first_run(found: list[dict], limit: int = 8) -> list[dict]:
+def taskbar_names() -> set[str]:
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return set()
+    return _shortcut_names(os.path.join(appdata, "Microsoft", "Internet Explorer",
+                                        "Quick Launch", "User Pinned", "TaskBar"))
+
+def _exe_name(item: dict) -> str:
+    exe = item.get("track_exe") or ntpath.basename(item.get("path") or "")
+    exe = exe.lower()
+    return exe if exe.endswith(".exe") else ""
+
+def suggest_first_run(found: list[dict], limit: int = 12,
+                      running: set[str] | None = None) -> list[dict]:
+    """Что из найденного человек, судя по всему, уже использует.
+
+    Только с уликами: значок на панели задач, работающий процесс, автозагрузка,
+    ярлык на рабочем столе. Пункт меню «Пуск» уликой не считается — он есть
+    почти у всего установленного.
+    """
     try:
-        startup, desktop = autostart_names(), desktop_names()
+        pinned, startup, desktop = taskbar_names(), autostart_names(), desktop_names()
     except Exception:
         log.exception("не удалось собрать подсказки при первом запуске")
-        startup, desktop = set(), set()
+        pinned, startup, desktop = set(), set(), set()
+    if running is None:
+        running = set(procs.snapshot().values())
 
-    tiers: list[list[dict]] = [[], [], []]
+    tiers: list[list[dict]] = [[], [], [], []]
+    seen: set[str] = set()
     for item in found:
         norm = _norm(item.get("name"))
-        if not norm:
+        if not norm or norm in seen:
             continue
-        if norm in startup:
-            tiers[0].append({"app": item, "hint": "в автозагрузке"})
+        if norm in pinned:
+            tier, hint = 0, "на панели задач"
+        elif _exe_name(item) in running:
+            tier, hint = 1, "сейчас запущена"
+        elif norm in startup:
+            tier, hint = 2, "в автозагрузке"
         elif norm in desktop:
-            tiers[1].append({"app": item, "hint": "на рабочем столе"})
-        elif item.get("source") == "startmenu":
-            tiers[2].append({"app": item, "hint": "в меню «Пуск»"})
-
-    out: list[dict] = []
-    for tier in tiers:
-        for suggestion in tier:
-            if len(out) >= limit:
-                return out
-            out.append(suggestion)
-    return out
+            tier, hint = 3, "на рабочем столе"
+        else:
+            continue
+        seen.add(norm)
+        tiers[tier].append({"app": item, "hint": hint})
+    return [s for tier in tiers for s in tier][:limit]

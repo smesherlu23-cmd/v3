@@ -3,16 +3,19 @@ from __future__ import annotations
 import hashlib
 
 from .. import layout as L
+from ..text import KINDS
 
 DEFAULT_CATEGORIES = [
     {"id": "work", "name": "Новая", "icon": "folder", "color": "#ffffff", "order": 0},
 ]
 
-DEFAULT_LAUNCH_HOTKEY = "Ctrl+Space"
 DEFAULT_SET_DELAY = 2.0
 MAX_SET_DELAY = 30.0
 
-UI_DEFAULTS_VERSION = 1
+UI_DEFAULTS_VERSION = 2
+# Акцент по умолчанию до второй версии — белый; кто его не менял, получает
+# новый синий вместе с остальным видом окна.
+OLD_DEFAULT_ACCENT = "#f5f5f7"
 
 DEFAULT_SETTINGS = {
     "autostart": False,
@@ -23,11 +26,27 @@ DEFAULT_SETTINGS = {
     "autostart_adopted": False,
     "minimize_to_tray": True,
     "close_to_tray": True,
-    "accent": "#f5f5f7",
+    "tray_hint_shown": False,
+    # Предложения «похоже, вы этим пользуетесь» на пустой библиотеке: после
+    # «Добавить» или «Не сейчас» они больше не появляются.
+    "first_run_done": False,
+    # Раз в сутки — вопрос GitHub, нет ли новой версии (см. infra/updates.py).
+    "check_updates": True,
+    "update_checked_at": 0,
+    "update_version": "",
+    "update_url": "",
+    "update_seen": "",
+    "accent": "#0a84ff",
     "bg_tint": None,
     "contrast": "normal",
     "tile_size": "large",
     "rail_size": "normal",
+    # Подписи под значками категорий в полосе слева.
+    "rail_labels": False,
+    # Боковая панель развёрнута с подписями; иначе — полоса значков.
+    "sidebar_open": True,
+    # Оформление: «dark», «light» или «system» — как приложения в Windows.
+    "appearance": "dark",
     "show_quick_row": True,
     "game_posters": True,
     "auto_rescan": False,
@@ -40,7 +59,6 @@ DEFAULT_SETTINGS = {
     "win_y": None,
     "win_max": False,
     "icon_schema": 0,
-    "launch_hotkey": DEFAULT_LAUNCH_HOTKEY,
     "hide_after": True,
     "triage": True,
     "debug_log": False,
@@ -58,6 +76,29 @@ def as_int(value, fallback: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else fallback
 
 
+MAX_ALIASES = 8
+# Столько последних запусков помнится для «частоты»: больше не нужно, чтобы
+# отличить «каждый день» от «раз в месяц».
+MAX_LAUNCHES = 10
+
+
+def clean_aliases(raw) -> list[str]:
+    """Другие имена записи: строка через запятую или список, без пустых и повторов."""
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    if not isinstance(raw, list):
+        return []
+    out, seen = [], set()
+    for alias in raw:
+        if not isinstance(alias, str):
+            continue
+        alias = " ".join(alias.split())[:40]
+        if alias and alias.lower() not in seen:
+            seen.add(alias.lower())
+            out.append(alias)
+    return out[:MAX_ALIASES]
+
+
 def clean_app(item, index: int) -> dict | None:
     if not isinstance(item, dict):
         return None
@@ -71,8 +112,14 @@ def clean_app(item, index: int) -> dict | None:
     rec["path"] = rec["path"] if isinstance(rec.get("path"), str) else ""
     rec["order"] = as_int(rec.get("order"), index)
     rec["hidden"] = bool(rec.get("hidden"))
+    rec["kind"] = rec["kind"] if str(rec.get("kind") or "") in KINDS else ""
+    rec["aliases"] = clean_aliases(rec.get("aliases"))
+    rec.pop("hotkey", None)
     for key in ("added_at", "last_launched", "launch_count"):
         rec[key] = as_int(rec.get(key))
+    launches = rec.get("launches")
+    rec["launches"] = [t for t in launches if as_int(t) > 0][-MAX_LAUNCHES:] \
+        if isinstance(launches, list) else []
     hue = as_int(rec.get("hue"), -1)
     rec["hue"] = hue if 0 <= hue < 360 else hue_from_string(rec["name"] or rec["path"])
     return rec
@@ -132,8 +179,7 @@ def clean_set(item, index: int) -> dict | None:
     rec["order"] = as_int(rec.get("order"), index)
     rec["quick"] = bool(rec.get("quick"))
     rec["layout"] = clean_layout(rec.get("layout"))
-    hotkey = rec.get("hotkey")
-    rec["hotkey"] = hotkey.strip() if isinstance(hotkey, str) and hotkey.strip() else None
+    rec.pop("hotkey", None)
     rec["monitor"] = max(0, as_int(rec.get("monitor")))
     rec["close_together"] = bool(rec.get("close_together"))
     delay = rec.get("delay_seconds", DEFAULT_SET_DELAY)
@@ -181,9 +227,11 @@ def free_slot(rec: dict):
     return next((i for i in range(count) if i not in taken), None)
 
 
-def refill_slots(rec: dict) -> dict:
+def refill_slots(rec: dict, unplaced=frozenset()) -> dict:
+    """Раздать свободные места; `unplaced` — записи без своего окна (сайты, папки)."""
     for entry in rec["items"]:
-        if entry.get("minimized") or entry.get("rect") or entry.get("slot") is not None:
+        if entry.get("minimized") or entry.get("rect") or entry.get("slot") is not None \
+                or entry["app_id"] in unplaced:
             continue
         entry["slot"] = free_slot(rec)
         if entry["slot"] is None:
@@ -203,6 +251,9 @@ def clean_inbox(item, index: int) -> dict | None:
     name = rec.get("name")
     rec["name"] = name.strip() if isinstance(name, str) and name.strip() else "Без названия"
     rec["source"] = rec["source"] if isinstance(rec.get("source"), str) else ""
+    args = rec.get("args")
+    rec["args"] = [a for a in args if isinstance(a, str)] if isinstance(args, list) else []
+    rec["working_dir"] = rec["working_dir"] if isinstance(rec.get("working_dir"), str) else ""
     rec["order"] = as_int(rec.get("order"), index)
     rec["found_at"] = as_int(rec.get("found_at"))
     return rec
@@ -221,13 +272,16 @@ def clean_records(raw, clean) -> list[dict]:
 
 
 _BOOL_SETTINGS = {
-    "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray",
-    "show_quick_row", "game_posters", "auto_rescan", "win_max", "hide_after",
-    "triage", "debug_log",
+    "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
+    "first_run_done", "show_quick_row", "check_updates", "game_posters", "auto_rescan", "win_max", "hide_after",
+    "triage", "debug_log", "rail_labels", "sidebar_open",
 }
 
 _STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
-                 "view_mode", "launch_hotkey"}
+                 "view_mode", "appearance"}
+
+# Здесь пустая строка — законное значение («новой версии нет»).
+_TEXT_SETTINGS = {"update_version", "update_url", "update_seen"}
 
 _INT_OR_NONE_SETTINGS = {"win_w", "win_h", "win_x", "win_y", "bg_tint"}
 # `bg_tint` — тон фона в градусах (0-359); значение вне диапазона не портит
@@ -252,7 +306,9 @@ def clean_setting_value(key: str, value, default):
         if value is None:
             return None
         return value if isinstance(value, int) and not isinstance(value, bool) else default
-    if key in ("icon_schema", "ui_defaults_version"):
+    if key in _TEXT_SETTINGS:
+        return value if isinstance(value, str) else default
+    if key in ("icon_schema", "ui_defaults_version", "update_checked_at"):
         return value if isinstance(value, int) and not isinstance(value, bool) else default
     if key == "collapsed":
         return [c for c in value if isinstance(c, str)] if isinstance(value, list) else default
@@ -266,5 +322,8 @@ def clean_settings(raw) -> dict:
             if key in raw:
                 settings[key] = clean_setting_value(key, raw[key], default)
     if settings["ui_defaults_version"] < UI_DEFAULTS_VERSION:
+        if settings["ui_defaults_version"] < 2 \
+                and str(settings.get("accent", "")).lower() == OLD_DEFAULT_ACCENT:
+            settings["accent"] = DEFAULT_SETTINGS["accent"]
         settings["ui_defaults_version"] = UI_DEFAULTS_VERSION
     return settings

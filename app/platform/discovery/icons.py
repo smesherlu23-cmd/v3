@@ -111,7 +111,7 @@ def backfill_icons(store, icon_cache: str | None = None, refresh: bool = False) 
     for app in list(store.state().get("apps", [])):
         patch = {}
         path = app.get("path") or ""
-        if refresh or not app.get("icon"):
+        if not app.get("custom_icon") and (refresh or not app.get("icon")):
             icon, fit = resolve_icon_for(path, icon_cache)
             if icon != app.get("icon") or (icon and fit != app.get("icon_fit")):
                 patch["icon"] = icon

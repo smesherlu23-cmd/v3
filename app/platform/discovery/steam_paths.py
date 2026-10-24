@@ -199,6 +199,8 @@ def _steam_roots() -> list[str]:
                 p, _ = winreg.QueryValueEx(k, "SteamPath")
                 if p:
                     roots.append(p)
+        except OSError:
+            pass  # Steam не установлен — ключа нет, это не ошибка
         except Exception:
             log.exception("не удалось прочитать путь к Steam из реестра")
         roots += [r"C:\Program Files (x86)\Steam", r"C:\Program Files\Steam"]

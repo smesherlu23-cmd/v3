@@ -19,7 +19,9 @@ class TriageController:
         if not item:
             return
         record = self.store.add_app({
-            "name": item.get("name"), "path": item.get("path"), "icon": item.get("icon"),
+            "name": item.get("name"), "path": item.get("path"),
+            "args": item.get("args") or [], "working_dir": item.get("working_dir") or "",
+            "icon": item.get("icon"),
             "icon_fit": item.get("icon_fit"), "sub": item.get("sub", ""),
             "track_exe": item.get("track_exe"), "poster": item.get("poster"),
             "category_id": cat_id})
@@ -49,11 +51,13 @@ class TriageController:
         item = self.store.take_inbox(item_id)
         if not item:
             return
-        self.notify.show(f"{item['name']} не нужен", icon="delete", tone="muted",
+        self.store.ignore([item])
+        self.notify.show(f"{item['name']} больше не предлагать", icon="delete", tone="muted",
                            action=lambda: self._restore_inbox(item), action_label="Вернуть")
         self.ui.refresh()
 
     def _restore_inbox(self, item):
+        self.store.unignore([item])
         self.store.restore_inbox(item)
         self.ui.refresh()
 

@@ -8,11 +8,21 @@ class Settings(TypedDict, total=False):
     autostart_adopted: bool
     minimize_to_tray: bool
     close_to_tray: bool
+    tray_hint_shown: bool
+    first_run_done: bool
+    check_updates: bool
+    update_checked_at: int
+    update_version: str
+    update_url: str
+    update_seen: str
     accent: str
     bg_tint: int | None
     contrast: str
     tile_size: str
     rail_size: str
+    rail_labels: bool
+    sidebar_open: bool
+    appearance: str
     show_quick_row: bool
     game_posters: bool
     auto_rescan: bool
@@ -25,7 +35,6 @@ class Settings(TypedDict, total=False):
     win_y: int | None
     win_max: bool
     icon_schema: int
-    launch_hotkey: str
     hide_after: bool
     triage: bool
     debug_log: bool
@@ -45,15 +54,18 @@ class App(TypedDict, total=False):
     hue: int
     icon: str | None
     icon_fit: str
+    custom_icon: bool
     poster: str | None
     favorite: bool
     quick: bool
     hidden: bool
-    hotkey: str | None
     track_exe: str | None
+    kind: str
+    aliases: list[str]
     order: int
     last_launched: int
     launch_count: int
+    launches: list[int]
     added_at: int
 
 
@@ -85,7 +97,6 @@ class AppSet(TypedDict, total=False):
     order: int
     quick: bool
     layout: SetLayout
-    hotkey: str | None
     monitor: int
     close_together: bool
     delay_seconds: float
@@ -96,6 +107,8 @@ class AppSet(TypedDict, total=False):
 class InboxItem(TypedDict, total=False):
     id: str
     path: str
+    args: list[str]
+    working_dir: str
     name: str
     source: str
     order: int
@@ -108,4 +121,5 @@ class StoreState(TypedDict, total=False):
     categories: list[Category]
     sets: list[AppSet]
     inbox: list[InboxItem]
+    ignored: list[str]
     settings: Settings

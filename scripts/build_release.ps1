@@ -5,6 +5,7 @@
 .DESCRIPTION
 Тот же порядок, что и у .github/workflows/release.yml, только на своей
 машине: сверить версии, прогнать линтер и тесты, собрать приложение,
+перевести его на кодовую страницу UTF-8, проверить, что оно запускается,
 подписать его (если подпись настроена), собрать установщик, подписать и
 его, посчитать SHA-256.
 
@@ -32,6 +33,12 @@ exe набор библиотек, без которых он не запуст�
 Не удалять каталог прошлой сборки. Быстрее, но остатки прошлой сборки
 могут доехать до установщика.
 
+.PARAMETER SkipSmoke
+Не запускать собранный exe на проверку (scripts\smoke.ps1). Проверка
+держит Centurio открытым полминуты; если он уже запущен на этой машине,
+второй экземпляр сразу выйдет и проверка провалится — закройте его или
+пропустите её этим ключом.
+
 .EXAMPLE
 .\scripts\build_release.ps1
 
@@ -42,7 +49,8 @@ exe набор библиотек, без которых он не запуст�
 param(
     [switch]$SkipTests,
     [switch]$SkipInstaller,
-    [switch]$NoClean
+    [switch]$NoClean,
+    [switch]$SkipSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,6 +95,19 @@ try {
 
     Step "сборка приложения"
     Run "flet build windows" { flet build windows }
+
+    # До подписи: правка ресурса подпись ломает. Без неё exe у пользователя
+    # с кириллицей в имени профиля закрывается, не начав работу.
+    Step "кодовая страница UTF-8"
+    & "$PSScriptRoot\utf8_manifest.ps1" -Path "build\windows\Centurio.exe"
+
+    if (-not $SkipSmoke) {
+        Step "проверка запуска"
+        & "$PSScriptRoot\smoke.ps1" -BuildDir "build\windows"
+        if ($LASTEXITCODE -ne 0) {
+            throw "собранный Centurio.exe не запускается — подробности выше"
+        }
+    }
 
     Step "подпись приложения"
     & "$PSScriptRoot\sign.ps1" -Path "build\windows\Centurio.exe"
