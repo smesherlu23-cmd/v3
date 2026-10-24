@@ -132,7 +132,9 @@ def build_category_popover(ui, cat):
         ft.Column([
             header,
             _caps("Цвет"),
-            ft.Row(swatches, spacing=8, wrap=True, run_spacing=8),
+            # Десять образцов — в один ряд: при промежутке 8 последний
+            # переносился на вторую строку один.
+            ft.Row(swatches, spacing=5, wrap=True, run_spacing=6),
             ft.Row([hex_box, sliders], spacing=12,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             Wg.divider(8),
@@ -142,6 +144,6 @@ def build_category_popover(ui, cat):
             image_row,
             footer,
         ], spacing=12, tight=True),
-        width=C.POPOVER_W, bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE),
-        border_radius=C.R_LARGE, padding=ft.Padding.all(16),
+        width=C.POPOVER_W, bgcolor=C.GLASS, border=ft.Border.all(1, C.EDGE),
+        border_radius=C.R_LARGE, padding=ft.Padding.all(16), blur=ft.Blur(30, 30),
         shadow=ft.BoxShadow(blur_radius=48, offset=ft.Offset(0, 16), color=C.SHADOW))

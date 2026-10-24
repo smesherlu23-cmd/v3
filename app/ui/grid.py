@@ -18,6 +18,8 @@ STATUS_H = 14
 DOCK_PAD = 8
 DOCK_SPACING = 4
 TIP_WAIT_MS = 700
+# Ячейка полки: отступ, значок, подпись, точка «открыто».
+DOCK_CELL_H = 4 + C.DOCK_ICON + 6 + 16 + 3 + 5 + 2
 
 
 class GridView:
@@ -185,6 +187,9 @@ class GridView:
         """Ячейка полки: значок, подпись, точка «открыто». Под курсором значок
         увеличивается и приподнимается, как в Dock."""
         holder = ft.Container(art, animate_scale=Wg.anim(C.ANIM_HOVER, spring=True))
+        # Подсказка — под ячейкой: на ней она закрывала подпись и точку.
+        tip = ft.Tooltip(message=tooltip, wait_duration=TIP_WAIT_MS, prefer_below=True,
+                         vertical_offset=DOCK_CELL_H / 2 + 4)
         cell = ft.Container(
             ft.Column([holder, ft.Container(height=6),
                        T(label, size=C.FS_CAPTION, weight=ft.FontWeight.W_500,
@@ -193,8 +198,8 @@ class GridView:
                          width=C.DOCK_CELL - 8),
                        ft.Container(height=3), Wg.dock_dot(running)],
                       spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            width=C.DOCK_CELL, padding=ft.Padding.only(top=4, bottom=2),
-            tooltip=tooltip, on_click=lambda e: self._quick_launch(on_click))
+            width=C.DOCK_CELL, height=DOCK_CELL_H, padding=ft.Padding.only(top=4, bottom=2),
+            tooltip=tip, on_click=lambda e: self._quick_launch(on_click))
 
         def on_hover(e):
             # Растёт от нижнего края, как значки Dock под курсором.
@@ -517,10 +522,11 @@ class GridView:
                          horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         border = ft.Border.all(2, C.TRANSPARENT)
         cell_h = height + 4 + 6 + 18 + STATUS_H + 6
+        # Ширина ячейки — как у значков: колонки игр и программ совпадают.
         tile = ft.Container(
             ft.Stack([ft.Container(body, left=0, right=0, top=4)]
                      + self._corner_marks(a, more)),
-            width=width + 8, height=cell_h, border=border, border_radius=C.R_LARGE,
+            width=width, height=cell_h, border=border, border_radius=C.R_LARGE,
             tooltip=self._tile_tip(a, running, cell_h), animate=Wg.anim(C.ANIM_TILE))
         if box is not None:
             box["tile"] = tile

@@ -76,6 +76,8 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self._visible = True
         self._dirty = False
         self._header_key = None
+        # Панель, развёрнутая кнопкой в узком окне, — только до конца сеанса.
+        self._narrow_sidebar = False
         self._palette_keyed_at = 0.0
         self._deferred = None
         self.view.on_typing_done = self._run_deferred_refresh
@@ -226,9 +228,20 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
     def _show_sidebar(self) -> bool:
         return not self._full_width_screen()
 
+    def _narrow_window(self) -> bool:
+        return self._window_width() < C.NARROW_SIDEBAR
+
     def _sidebar_expanded(self) -> bool:
-        """Панель с подписями; иначе — полоса значков. В узком окне — сама."""
-        return self.view.sidebar_open and self._window_width() >= C.NARROW_SIDEBAR
+        """Панель с подписями; иначе — полоса значков.
+
+        В узком окне она сама сворачивается, а кнопка разворачивает её до
+        конца сеанса — сохранённый выбор для широкого окна при этом не
+        меняется. Раньше кнопка в узком окне молча переключала его, ничего
+        не показав.
+        """
+        if self._narrow_window():
+            return self._narrow_sidebar
+        return self.view.sidebar_open
 
     def _sidebar_width(self) -> int:
         if not self._show_sidebar():
@@ -465,7 +478,10 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
                                       self.view.sort, self.running)
 
     def _toggle_sidebar(self):
-        self.view.toggle_sidebar()
+        if self._narrow_window():
+            self._narrow_sidebar = not self._narrow_sidebar
+        else:
+            self.view.toggle_sidebar()
         self.refresh()
 
     def set_sidebar_open(self, value: bool):

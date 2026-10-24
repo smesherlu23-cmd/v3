@@ -164,12 +164,16 @@ class ToastHost:
                             if self.detail.visible else []),
                          spacing=2, expand=True, tight=True)]
         if self._action:
+            # Та же кнопка, что у нового: у ошибки — серая, иначе цвета акцента.
+            fill = None if self._error else self.accent()
             btn = ft.Container(T(self.action_label.value, size=C.FS_BODY,
-                                 weight=ft.FontWeight.W_600, color=C.TEXT),
+                                 weight=ft.FontWeight.W_600,
+                                 color=C.on_color(fill) if fill else C.TEXT),
                                border_radius=C.R_SMALL,
                                padding=ft.Padding.symmetric(vertical=4, horizontal=8),
                                on_click=lambda e, en=entry: self._fire_older(en))
-            row += [Wg.hoverable(btn, None, C.RAISED), countdown]
+            row += [Wg.hoverable(btn, fill, C.mix(fill, C.WHITE, 0.12) if fill else C.RAISED),
+                    countdown]
         entry.card = ft.Container(
             ft.Row(row, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             width=C.TOAST_W, border_radius=C.R_XL, opacity=0.92, blur=ft.Blur(30, 30),

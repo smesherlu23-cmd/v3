@@ -11,6 +11,8 @@ HEADER_H = 48
 SEPARATOR_H = 11
 SUBMENU_W = 240
 PAD = 6
+# Заголовок меню с линией под ним.
+HEADER_BLOCK = HEADER_H + 6
 # Меню вырастает из точки щелчка: с левого верхнего угла.
 _POP_FROM = ft.Scale(0.94, alignment=ft.Alignment.TOP_LEFT)
 _POP_TO = ft.Scale(1.0, alignment=ft.Alignment.TOP_LEFT)
@@ -42,6 +44,8 @@ class MenuHost:
         self._x = 0.0
         self._y = 0.0
         self._submenu: dict | None = None
+        # Где на экране строка, открывшая подменю: оно встаёт рядом с ней.
+        self._row_y: float | None = None
         self.shade = ft.Container(left=0, top=0, right=0, bottom=0, bgcolor=C.TRANSPARENT,
                                   on_click=lambda e: self.close())
         self.card = ft.Container(visible=False, animate_opacity=Wg.anim(C.ANIM_POP),
@@ -55,6 +59,7 @@ class MenuHost:
         self._header = header
         self._x, self._y = x, y
         self._submenu = None
+        self._row_y = None
         appearing = not self.open
         self.open = True
         if appearing:
@@ -78,7 +83,10 @@ class MenuHost:
         if self._submenu and self._submenu["key"] == key:
             self._submenu = None
         else:
-            self._submenu = {"key": key, "rows": rows, "y": anchor_y}
+            # Первая строка подменю — вровень со строкой, которая его открыла,
+            # как в macOS; раньше оно вставало у верхнего края меню.
+            y = anchor_y if self._row_y is None else self._row_y - PAD - 1
+            self._submenu = {"key": key, "rows": rows, "y": y}
         self._render()
 
     def _window(self) -> tuple[float, float]:
@@ -94,7 +102,7 @@ class MenuHost:
 
     def _render(self):
         width = C.MENU_W if self._header else SUBMENU_W + 22
-        height = height_of(self._rows) + (HEADER_H if self._header else 0) + 2 * PAD + 2
+        height = height_of(self._rows) + (HEADER_BLOCK if self._header else 0) + 2 * PAD + 2
         height = min(height, self._window()[1] - 16)
         left, top = self._place(self._x, self._y, width, height)
 
@@ -108,7 +116,7 @@ class MenuHost:
             sub_h = min(height_of(rows) + 2 * PAD + 2, self._window()[1] - 16)
             sub_left, sub_top = self._place(left + width + 6, self._submenu["y"],
                                             SUBMENU_W, sub_h)
-            self.sub_card.content = self._card(rows, None, SUBMENU_W, sub_h)
+            self.sub_card.content = self._card(rows, None, SUBMENU_W, sub_h, main=False)
             self.sub_card.left, self.sub_card.top = sub_left, sub_top
             self.sub_card.width = SUBMENU_W
             self.sub_card.visible = True
@@ -118,17 +126,24 @@ class MenuHost:
         self.control.visible = True
         self._safe_update()
 
-    def _card(self, rows, header, width, height=None):
+    def _card(self, rows, header, width, height=None, main=True):
         children = []
+        top = 1 + PAD
         if header is not None:
             children += [header, ft.Container(height=1, bgcolor=C.LINE,
                                               margin=ft.Margin.only(left=8, right=8, bottom=5))]
+            top += HEADER_BLOCK
         indent = any_icons(rows)
         for row in rows:
-            children.append(self._row(row, indent) if row["kind"] == "item" else
-                            ft.Container(height=1, bgcolor=C.LINE,
-                                         margin=ft.Margin.symmetric(vertical=5, horizontal=8)))
-        full = height_of(rows) + (HEADER_H if header is not None else 0) + 2 * PAD + 2
+            if row["kind"] == "item":
+                children.append(self._row(row, indent, top if main else None))
+                top += ROW_H
+            else:
+                children.append(ft.Container(height=1, bgcolor=C.LINE,
+                                             margin=ft.Margin.symmetric(vertical=5,
+                                                                        horizontal=8)))
+                top += SEPARATOR_H
+        full = height_of(rows) + (HEADER_BLOCK if header is not None else 0) + 2 * PAD + 2
         # Длинный список (много программ или категорий) не уходит за край окна,
         # а прокручивается внутри меню.
         scroll = height is not None and full > height
@@ -139,7 +154,7 @@ class MenuHost:
             radius=C.R_LARGE, height=height if scroll else None,
             width=width, padding=ft.Padding.all(PAD))
 
-    def _row(self, row, indent: bool = False):
+    def _row(self, row, indent: bool = False, top: float | None = None):
         color = C.ERR_TEXT if row["danger"] else C.TEXT
         icon_color = C.ERR_TEXT if row["danger"] else C.MUTED
         if row["disabled"]:
@@ -170,7 +185,7 @@ class MenuHost:
             ft.Row(controls, spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding.symmetric(vertical=0, horizontal=10), border_radius=C.R_SMALL,
             height=ROW_H,
-            on_click=None if row["disabled"] else (lambda e, r=row: self._fire(r)))
+            on_click=None if row["disabled"] else (lambda e, r=row: self._fire(r, top)))
         if not row["disabled"]:
             def on_hover(e, c=container, danger=row["danger"]):
                 hot = Wg.entered(e)
@@ -183,7 +198,8 @@ class MenuHost:
             container.on_hover = on_hover
         return container
 
-    def _fire(self, row):
+    def _fire(self, row, top: float | None = None):
+        self._row_y = None if top is None else (self.card.top or 0) + top
         if not row["submenu"]:
             self.close()
         handler = row["on_click"]

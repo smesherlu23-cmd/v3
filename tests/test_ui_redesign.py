@@ -406,3 +406,157 @@ def test_one_add_field_tells_a_name_from_a_path():
         ok(looks_like_target(text), f"«{text}» is a path or an address")
     for text in ("telegram", "vs code", "obs.exe", ""):
         ok(not looks_like_target(text), f"«{text}» is a name to look for")
+
+
+def test_header_fits_a_narrow_window():
+    """Заголовок окна не наезжает сам на себя: название, поиск и инструменты.
+
+    В окне 960 px строка поиска закрывала число программ и уходила под
+    переключатель вида, а в режиме выбора «Выбрать всё в «…»» с длинным
+    именем категории ложилось поверх поиска.
+    """
+    problem = _ui_ready()
+    if problem:
+        skip("narrow header test", problem)
+        return
+    from app.ui import chrome
+
+    with tempfile.TemporaryDirectory() as d:
+        store, chat, _ids = _library(d)
+        store.update_category(chat, {"name": "Музыка, видео, подкасты и всё такое"})
+        ui, page = _ui_for(store)
+
+        def parts():
+            zone = ui.chrome.sidebar_zone.width
+            title = ui.chrome.title_holder.width or chrome.TITLE_PAD
+            toolbar = ui.toolbar_holder.width if ui.toolbar_holder.visible else 0
+            return zone + title + ui.search_box.width + toolbar + chrome.WINDOW_BTNS_W
+
+        for width in (1400, 1100, 960, 940):
+            page.window.width = width
+            for flt in ("all", f"category:{chat}"):
+                ui._set_filter(flt)
+                for select in (False, True):
+                    if select != ui.view.select_mode:
+                        ui.toggle_select_mode()
+                    ok(parts() <= width,
+                       f"{width} px, {flt}, select={select}: the title bar parts "
+                       f"fit ({parts():.0f})")
+                    ok(ui.search_box.width >= C.SEARCH_MIN_W,
+                       "and the search field keeps a usable width")
+                if ui.view.select_mode:
+                    ui.toggle_select_mode()
+        page.window.width = 1400
+        ui._set_filter("all")
+        ok(ui.search_box.width == C.SEARCH_W, "a wide window gets the full search field")
+        ui.toggle_select_mode()
+        ok("Выбрать всё" in _texts(ui.toolbar_holder)
+           and not any("«" in t for t in _texts(ui.toolbar_holder)),
+           "select mode says «Выбрать всё»; which section is in the title already")
+
+
+def test_title_counts_folded_sections_too():
+    """Число в заголовке — все программы раздела, как в боковой панели.
+
+    Свёрнутая группа вычиталась: «Все программы 14» рядом с «21» слева.
+    """
+    problem = _ui_ready()
+    if problem:
+        skip("title count test", problem)
+        return
+    with tempfile.TemporaryDirectory() as d:
+        store, chat, _ids = _library(d)
+        ui, _ = _ui_for(store)
+        ok("3" in _texts(ui.chrome.title_holder), "three programs in the library")
+        ui._toggle_section(chat)
+        ok(chat in ui.view.collapsed, "a section is folded")
+        ok("3" in _texts(ui.chrome.title_holder), "and the title still counts all three")
+
+
+def test_sidebar_button_in_a_narrow_window():
+    """В узком окне кнопка панели разворачивает её, не меняя выбор для широкого.
+
+    Раньше кнопка там ничего не показывала, но молча сохраняла «свёрнуто», и в
+    широком окне панель оказывалась свёрнутой.
+    """
+    problem = _ui_ready()
+    if problem:
+        skip("narrow sidebar test", problem)
+        return
+    with tempfile.TemporaryDirectory() as d:
+        store, _chat, _ids = _library(d)
+        ui, page = _ui_for(store)
+        page.window.width = 960
+        ui.refresh()
+        ok(ui.sidebar_container.width == C.SIDEBAR_RAIL_W, "a narrow window folds the panel")
+        ui._toggle_sidebar()
+        ok(ui.sidebar_container.width == C.SIDEBAR_W, "the button opens it there")
+        ok(store.settings()["sidebar_open"] is True,
+           "without touching the choice remembered for a wide window")
+        ui._toggle_sidebar()
+        ok(ui.sidebar_container.width == C.SIDEBAR_RAIL_W, "and folds it back")
+        page.window.width = 1400
+        ui.refresh()
+        ok(ui.sidebar_container.width == C.SIDEBAR_W, "a wide window shows it as chosen")
+
+
+def test_submenu_opens_next_to_its_row():
+    """Подменю «В набор…» встаёт рядом со своей строкой, а не у верха меню."""
+    problem = _ui_ready()
+    if problem:
+        skip("submenu test", problem)
+        return
+    import flet as ft
+
+    from app.ui import menus
+
+    with tempfile.TemporaryDirectory() as d:
+        store, _chat, ids = _library(d)
+        ui, _ = _ui_for(store)
+        ui.context_menus.app_menu(store.get_app(ids["Excel"]), _tap(400, 120))
+        row = next(c for c in _walk(ui.menu.card) if isinstance(c, ft.Container)
+                   and c.on_click is not None and "В набор…" in _texts(c))
+        row.on_click(types_ns(control=row))
+        sub = ui.menu.sub_card
+        ok(sub.visible, "the submenu opens")
+        row_y = ui.menu._row_y
+        ok(row_y - ui.menu.card.top > menus.HEADER_BLOCK + 6 * menus.ROW_H,
+           "the row is well below the menu's top")
+        ok(sub.top == row_y - menus.PAD - 1,
+           "and the submenu's first row lines up with it")
+
+
+def test_small_layout_fixes():
+    """Мелочи сетки: колонки игр, образцы цвета, подсказки полки."""
+    problem = _ui_ready()
+    if problem:
+        skip("layout details test", problem)
+        return
+    import flet as ft
+
+    from app.ui import grid, iconify
+
+    with tempfile.TemporaryDirectory() as d:
+        store, chat, ids = _library(d)
+        poster = os.path.join(d, "poster.png")
+        iconify.generate_icon(poster, 64)
+        store.add_app({"name": "CS2", "path": "steam://rungameid/730",
+                       "category_id": "games", "poster": poster})
+        ui, _ = _ui_for(store)
+        content = ft.Column(ui.content_col.controls)
+        cells = [c for c in _walk(content) if isinstance(c, ft.Container)
+                 and c.width in (C.TILE_W, C.POSTER_W, C.POSTER_W + 8)
+                 and c.height and c.height >= C.POSTER_H]
+        ok(cells and all(c.width == C.POSTER_W == C.TILE_W for c in cells),
+           "a game poster cell is as wide as a program's, so the columns line up")
+
+        shelf = [c for c in _walk(content) if isinstance(c, ft.Container)
+                 and c.width == C.DOCK_CELL]
+        ok(shelf and all(isinstance(c.tooltip, ft.Tooltip)
+                         and c.tooltip.vertical_offset >= grid.DOCK_CELL_H / 2
+                         for c in shelf if c.tooltip),
+           "the shelf's tooltips sit under the cell, not on its label")
+
+        inner = C.POPOVER_W - 2 * 16 - 2
+        need = len(C.CAT_PALETTE) * 24 + (len(C.CAT_PALETTE) - 1) * 5
+        ok(need <= inner, f"the category colours fit one row ({need} of {inner} px)")

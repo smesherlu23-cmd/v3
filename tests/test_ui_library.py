@@ -874,7 +874,7 @@ def test_ui_quick_numbers_match_the_hotkeys():
         strip = ui.content_col.controls[1]
         numbers = [t for t in _texts(strip) if t.isdigit()]
         ok(not numbers, "the pure slot-number badge is a hint — it never prints on the card")
-        tips = [c.tooltip for c in _walk(strip) if getattr(c, "tooltip", None)]
+        tips = _tips(strip)
         ok(any("Ctrl+1" in t for t in tips) and any("Ctrl+2" in t for t in tips),
            "but a program's own tooltip still spells out its combination")
         ok(not any("Ctrl+Alt+1" in t for t in tips),

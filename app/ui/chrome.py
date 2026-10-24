@@ -8,10 +8,24 @@ from . import colors as C
 from . import widgets as Wg
 from .format import T, as_icon
 
-HEADER_SIDES_W = 520
 SIDEBAR_PAD = 10
 SECTION_H = 30
 ROW_GAP = 2
+# Заголовок окна — ряд из частей заданной ширины: кнопки окна (три по 40 и
+# промежутки) с отступами, панель инструментов сетки, название раздела. Что
+# остаётся — строке поиска. Название получает место по оценке с запасом и
+# обрезается, если оценка мала, — так ничего не наезжает: раньше в узком окне
+# поиск ложился на название и уходил под переключатель вида.
+WINDOW_BTNS_W = 3 * 40 + 2 * 2 + 8 + 8
+TOOLBAR_W = 204
+TITLE_PAD = 8
+TITLE_MIN_W = 96
+SEARCH_GAP = 24
+
+
+def text_width(text: str, size: float, bold: bool = False) -> float:
+    """Ширина строки с запасом: средняя буква Inter — около 0,6 кегля."""
+    return len(text) * size * (0.66 if bold else 0.6)
 
 
 class Chrome:
@@ -30,15 +44,16 @@ class Chrome:
         self.sidebar_scroll = 0.0
         self.sidebar_zone = ft.Container(animate=Wg.anim(C.ANIM_BAR),
                                          clip_behavior=ft.ClipBehavior.HARD_EDGE)
-        self.title_holder = ft.Container(padding=ft.Padding.only(left=8))
+        self.title_holder = ft.Container(padding=ft.Padding.only(left=TITLE_PAD))
+        # Сколько места в заголовке осталось строке поиска — считает sync_header.
+        self.search_room = float(C.SEARCH_W + SEARCH_GAP)
 
     # --- заголовок окна -------------------------------------------------
 
     def sync_search_box(self):
         active = self.ui.view.palette_open
-        room = self.ui._window_width() - HEADER_SIDES_W
         box, field = self.ui.search_box, self.ui.search_field
-        box.width = max(C.SEARCH_MIN_W, min(C.SEARCH_W, room))
+        box.width = max(C.SEARCH_MIN_W, min(C.SEARCH_W, self.search_room - SEARCH_GAP))
         box.bgcolor = C.CARD
         # Фокус — кольцо цвета акцента, как у полей macOS.
         box.border = ft.Border.all(2 if active else 1,
@@ -106,15 +121,32 @@ class Chrome:
             padding=ft.Padding.only(left=14 if width > C.SIDEBAR_RAIL_W else 0),
             height=C.HEADER_H, alignment=ft.Alignment.CENTER_LEFT))
         on_grid = self.ui.view.screen == "grid" and not self.ui.view.active_set
+        # Всё, что в заголовке не поиск: колонка над панелью, кнопки окна,
+        # инструменты сетки.
+        room = (self.ui._window_width() - self.sidebar_zone.width - WINDOW_BTNS_W
+                - (TOOLBAR_W if on_grid else 0) - TITLE_PAD)
         if on_grid:
-            count = len(self.ui._flat_apps())
+            title = self.ui._current_title()
+            # Число — все программы раздела, и в свёрнутых группах тоже: как
+            # рядом с ним в боковой панели.
+            count = str(sum(len(sec["apps"]) for sec in self.ui.sections()))
+            want = text_width(title, C.FS_TITLE, bold=True) + 8 + text_width(count, C.FS_BODY)
+            # Длинное имя категории уступает место поиску и обрезается.
+            width = max(TITLE_MIN_W, min(want + 4, room - C.SEARCH_MIN_W - SEARCH_GAP))
+            self.title_holder.width = width + TITLE_PAD
             self.title_holder.content = ft.Row(
-                [T(self.ui._current_title(), size=C.FS_TITLE, weight=ft.FontWeight.BOLD,
-                   color=C.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                 T(str(count), size=C.FS_BODY, color=C.MUTED_2)],
-                spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                [T(title, size=C.FS_TITLE, weight=ft.FontWeight.BOLD, color=C.TEXT,
+                   max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, expand=True,
+                   expand_loose=True),
+                 T(count, size=C.FS_BODY, color=C.MUTED_2)],
+                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            room -= width
         else:
+            self.title_holder.width = None
             self.title_holder.content = None
+        self.search_room = room
+        self.ui.toolbar_holder.width = TOOLBAR_W if on_grid else None
+        self.ui.toolbar_holder.alignment = ft.Alignment.CENTER_RIGHT
         self.ui.toolbar_holder.content = self.build_toolbar() if on_grid else None
         self.ui.toolbar_holder.visible = on_grid
 
@@ -133,9 +165,9 @@ class Chrome:
     def build_toolbar(self):
         view = self.ui.view
         if view.select_mode:
-            label = ("Выбрать всё" if self.ui.is_all_view()
-                     else f"Выбрать всё в «{self.ui._current_title()}»")
-            items = [Wg.quiet_btn(label, self.ui._select_all_visible),
+            # Какой раздел — видно в названии слева; «Выбрать всё в «…»» с длинным
+            # именем категории не помещалось в заголовок.
+            items = [Wg.quiet_btn("Выбрать всё", self.ui._select_all_visible),
                      Wg.primary_btn("Готово", self.ui.toggle_select_mode, self.ui._accent(),
                                     height=28)]
         else:
