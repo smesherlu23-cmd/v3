@@ -359,8 +359,8 @@ def test_ui_search_palette():
         ok(ui.view.palette_open and ui.palette_layer.visible,
            "the search hotkey opens the palette over the library")
         shown = _texts(ui.palette_layer)
-        ok("ПРОГРАММЫ" in shown and "НАБОРЫ" in shown
-           and any(t.startswith("ДЕЙСТВИЯ · ") for t in shown),
+        ok("Программы" in shown and "Наборы" in shown
+           and any(t.startswith("Действия · ") for t in shown),
            "which comes in three groups, the actions naming whose they are")
         ok("Notion" in shown, "an empty query offers what was launched recently")
         ok("Утро" in shown, "and the sets")
@@ -389,7 +389,7 @@ def test_ui_search_palette():
 
         ui.keymap.handle_key(_key("Tab"))
         ok(ui.view.palette_focus == "actions", "Tab moves into the actions")
-        ok("ДЕЙСТВИЯ · VS CODE" in _texts(ui.palette_layer),
+        ok("Действия · VS Code" in _texts(ui.palette_layer),
            "the actions say which program they are for — the row lost its highlight")
         ui.keymap.handle_key(_key("Tab"))
         ok(ui.view.palette_focus == "results", "and back out")

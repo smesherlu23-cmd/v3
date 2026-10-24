@@ -56,7 +56,7 @@ class InspectorPanel:
         missing = app["id"] in self.ui.missing
 
         if missing:
-            status = ft.Row([ft.Icon(ft.Icons.PRIORITY_HIGH, size=14, color=C.WARN),
+            status = ft.Row([ft.Icon(ft.Icons.PRIORITY_HIGH_ROUNDED, size=14, color=C.WARN),
                              T("файл не найден", size=C.FS_SMALL, color=C.WARN_TEXT)],
                             spacing=4, tight=True)
         elif running:
@@ -75,44 +75,46 @@ class InspectorPanel:
             on_submit=lambda e: self.ui.rename_app(app["id"], e.control.value)),
             self.ui.view, "app_name")
         self.name_field = name
-        icon = ft.Container(self.ui.icon_slot(app, 48, 12, glyph=24), tooltip="Сменить значок",
+        icon = ft.Container(self.ui.icon_slot(app, 48, Wg.squircle(48), glyph=24),
+                            tooltip="Сменить значок",
                             on_click=lambda e: self.ui.context_menus.app_icon_menu(app, e))
         fav = bool(app.get("favorite"))
         header = ft.Container(
             ft.Row([icon,
                     ft.Column([name, status], spacing=4, expand=True, tight=True),
-                    Wg.icon_btn(ft.Icons.STAR if fav else ft.Icons.STAR_BORDER,
+                    Wg.icon_btn(ft.Icons.STAR_ROUNDED if fav else ft.Icons.STAR_OUTLINE_ROUNDED,
                                 "Убрать из избранного" if fav else "В избранное",
                                 lambda: self.ui._toggle_fav(app["id"]),
                                 color=C.STAR if fav else C.MUTED),
-                    Wg.icon_btn(ft.Icons.CLOSE, "Закрыть панель", self.ui._close_inspector)],
+                    Wg.icon_btn(ft.Icons.CLOSE_ROUNDED, "Закрыть панель",
+                                self.ui._close_inspector)],
                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
             padding=ft.Padding.only(left=PAD, top=PAD, right=12, bottom=16))
 
         def square(icon_name, tooltip, handler):
-            btn = ft.Container(ft.Icon(as_icon(icon_name), size=16, color=C.MUTED),
-                               width=36, height=36, border=ft.Border.all(1, C.BORDER),
-                               border_radius=C.R, alignment=ft.Alignment.CENTER,
+            btn = ft.Container(ft.Icon(as_icon(icon_name), size=16, color=C.TEXT_2),
+                               width=32, height=32, border_radius=C.R,
+                               alignment=ft.Alignment.CENTER,
                                tooltip=tooltip, on_click=lambda e: handler())
-            return Wg.hoverable(btn, None, C.RAISED)
+            return Wg.hoverable(btn, C.CARD, C.RAISED)
 
         kind = app.get("kind")
         if missing:
             primary = Wg.primary_btn("Найти файл…", lambda: self.ui._relocate(app["id"]),
-                                     self.ui._accent(), ft.Icons.SEARCH, expand=True)
+                                     self.ui._accent(), ft.Icons.SEARCH_ROUNDED, expand=True)
         else:
             primary = Wg.primary_btn(
                 "Переключиться" if running else ("Открыть" if kind else "Запустить"),
                 lambda: self.ui._launch(app["id"]), self.ui._accent(),
-                ft.Icons.SYNC_ALT if running
-                else (ft.Icons.OPEN_IN_NEW if kind else ft.Icons.PLAY_ARROW),
+                ft.Icons.SYNC_ALT_ROUNDED if running
+                else (ft.Icons.OPEN_IN_NEW_ROUNDED if kind else ft.Icons.PLAY_ARROW_ROUNDED),
                 expand=True)
         buttons = [primary]
         if kind != "web":
-            buttons.append(square(ft.Icons.FOLDER_OPEN, "Показать в папке",
+            buttons.append(square(ft.Icons.FOLDER_OPEN_ROUNDED, "Показать в папке",
                                   lambda: self.ui._show_in_folder(app["id"])))
         if not kind:
-            buttons.append(square(ft.Icons.MORE_HORIZ, "Ещё способы запуска",
+            buttons.append(square(ft.Icons.MORE_HORIZ_ROUNDED, "Ещё способы запуска",
                                   lambda: self.ui.context_menus.launch_more_menu(app, None)))
         actions = ft.Container(ft.Row(buttons, spacing=8), padding=ft.Padding.symmetric(horizontal=PAD))
 
@@ -137,7 +139,7 @@ class InspectorPanel:
             ft.Row([ft.Container(expand=True),
                     Wg.secondary_btn("Убрать из библиотеки",
                                      lambda: self.ui._remove_apps([app["id"]]),
-                                     ft.Icons.DELETE_OUTLINE, danger=True, height=32)],
+                                     ft.Icons.DELETE_OUTLINE_ROUNDED, danger=True, height=30)],
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding.symmetric(vertical=12, horizontal=PAD),
             border=ft.Border.only(top=ft.BorderSide(1, C.LINE)))
@@ -149,8 +151,10 @@ class InspectorPanel:
                                   ft.Container(height=16)],
                                  spacing=0, expand=True, scroll=ft.ScrollMode.AUTO),
                        footer], spacing=0, expand=True),
-            bgcolor=C.PANEL, border=ft.Border.only(left=ft.BorderSide(1, C.LINE)),
-            shadow=ft.BoxShadow(blur_radius=40, offset=ft.Offset(-12, 0), color=C.SHADOW),
+            # Плавающая стеклянная панель, как инспектор в приложениях macOS.
+            bgcolor=C.GLASS, border=ft.Border.all(1, C.EDGE), border_radius=C.R_XL,
+            blur=ft.Blur(30, 30), clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            shadow=ft.BoxShadow(blur_radius=40, offset=ft.Offset(0, 16), color=C.SHADOW),
             expand=True)
 
     def _insp_row(self, label, control, sub=None):
@@ -202,7 +206,7 @@ class InspectorPanel:
                 on_click=lambda e, sid=rec["id"]: self.ui._open_set(sid))
             chips.append(Wg.hoverable(chip, C.CARD, C.RAISED))
         add = ft.Container(
-            ft.Row([ft.Icon(ft.Icons.ADD, size=14, color=C.MUTED),
+            ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, size=14, color=C.MUTED),
                     T("Ещё" if members else "В набор", size=C.FS_SMALL, color=C.MUTED)],
                    spacing=4, tight=True),
             height=28, border_radius=14, border=ft.Border.all(1, C.BORDER),
@@ -215,11 +219,11 @@ class InspectorPanel:
         box = ft.Container(
             ft.Row([
                 ft.Row([Wg.cat_glyph(cat, size=16) if cat
-                        else ft.Icon(ft.Icons.FOLDER, size=16, color=C.MUTED),
+                        else ft.Icon(ft.Icons.FOLDER_ROUNDED, size=16, color=C.MUTED),
                         T(cat["name"] if cat else "Без категории", size=C.FS_BODY,
                           color=C.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)],
                        spacing=8, tight=True, expand=True),
-                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=16, color=C.FAINT),
+                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, size=16, color=C.FAINT),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             width=168, height=34, bgcolor=C.CARD, border=ft.Border.all(1, C.LINE),
             border_radius=C.R, padding=ft.Padding.symmetric(horizontal=12),
@@ -241,9 +245,9 @@ class InspectorPanel:
         open_now = self.ui.view.adv or bool(args_value) or bool(app.get("run_as_admin")) \
             or bool(app.get("working_dir"))
         head = ft.Container(
-            ft.Row([ft.Icon(ft.Icons.EXPAND_MORE if open_now else ft.Icons.CHEVRON_RIGHT,
+            ft.Row([ft.Icon(ft.Icons.EXPAND_MORE_ROUNDED if open_now else ft.Icons.CHEVRON_RIGHT_ROUNDED,
                             size=18, color=C.FAINT),
-                    Wg.caps("ПАРАМЕТРЫ ЗАПУСКА"),
+                    Wg.caps("Параметры запуска"),
                     ft.Container(height=1, bgcolor=C.LINE, expand=True)],
                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             on_click=lambda e: self.ui._toggle_adv())
@@ -258,7 +262,7 @@ class InspectorPanel:
             ft.Row([T(_short_path(workdir) if workdir else "как у файла", size=C.FS_SMALL,
                       color=C.TEXT_2 if workdir else C.MUTED_2, font_family="monospace",
                       expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                    Wg.icon_btn(ft.Icons.FOLDER_OPEN, "Выбрать папку",
+                    Wg.icon_btn(ft.Icons.FOLDER_OPEN_ROUNDED, "Выбрать папку",
                                 lambda: self.ui._pick_working_dir(app["id"]), size=26)],
                    spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=34, bgcolor=C.CARD, border=ft.Border.all(1, C.LINE), border_radius=C.R,

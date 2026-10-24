@@ -66,13 +66,19 @@ class PaletteMixin:
             self.palette_layer.visible = False
             self.palette_card.content = None
             self.palette_card.opacity = 0
-            self.palette_card.offset = ft.Offset(0, -0.02)
+            self.palette_card.scale = 0.97
             return
         rows = self._palette_rows()
         self.palette_card.content = screens.build_palette(self, rows)
-        self.palette_card.opacity = 1
-        self.palette_card.offset = ft.Offset(0, 0)
-        self.palette_layer.visible = True
+        if not self.palette_layer.visible:
+            # Палитра раскрывается из-под строки поиска: чуть меньше и
+            # прозрачная, кадр спустя — на месте, с лёгкой пружиной.
+            self.palette_layer.visible = True
+            Wg.enter(self.palette_card, {"opacity": 0, "scale": 0.97},
+                     {"opacity": 1, "scale": 1.0})
+        else:
+            self.palette_card.opacity = 1
+            self.palette_card.scale = 1.0
 
     def _focus(self, field):
         if Wg.attached(field):

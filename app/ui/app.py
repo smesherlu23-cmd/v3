@@ -75,21 +75,21 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self._mode = None
         self._visible = True
         self._dirty = False
-        self._rail_scroll = 0.0
         self._header_key = None
         self._palette_keyed_at = 0.0
         self._deferred = None
         self.view.on_typing_done = self._run_deferred_refresh
         self.view.on_stray_focus = lambda: self.refocus_search()
 
-        self.toast = ToastHost(page)
+        self.toast = ToastHost(page, accent=self._accent)
         self.notify = Notifier(self.toast)
         self.context_menus = ContextMenus(self)
         self.keymap = Keymap(self)
         self.chrome = Chrome(self)
         self.grid = GridView(self)
         self.inspector_panel = InspectorPanel(self)
-        self.menu = MenuHost(page, on_dismiss=self.context_menus.on_menu_dismissed)
+        self.menu = MenuHost(page, on_dismiss=self.context_menus.on_menu_dismissed,
+                             accent=self._accent)
         self.set_ops = SetsController(self)
         self.scan = ScanController(self)
         self.triage = TriageController(self)
@@ -103,31 +103,44 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
             cursor_color=C.TEXT, on_change=self._on_search,
             on_click=lambda e: self._open_palette(), always_call_on_tap=True, expand=True,
         ), self.view, SEARCH_FIELD)
-        self.search_icon = ft.Icon(ft.Icons.SEARCH, size=16, color=C.MUTED_2)
+        self.search_icon = ft.Icon(ft.Icons.SEARCH_ROUNDED, size=17, color=C.MUTED_2)
         self.search_tail = ft.Container()
         self.search_box = ft.Container(
             ft.Row([self.search_icon, self.search_field, self.search_tail],
-                   spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=36, border_radius=C.R, padding=ft.Padding.only(left=12, top=0, right=8, bottom=0))
+                   spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            height=34, border_radius=C.R, animate=Wg.anim(C.ANIM_FAST),
+            padding=ft.Padding.only(left=10, top=0, right=8, bottom=0))
 
         self.header_holder = ft.Container()
-        self.rail_container = ft.Container(width=C.RAIL_W)
-        self.sidebar_container = ft.Container(width=C.SIDEBAR_W)
+        # Одна боковая панель, как в Finder: развёрнута или полосой значков.
+        # Ширина меняется плавно.
+        self.sidebar_container = ft.Container(width=C.SIDEBAR_W, animate=Wg.anim(C.ANIM_BAR),
+                                              clip_behavior=ft.ClipBehavior.HARD_EDGE)
         self.content_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
-        self.content_holder = ft.Container(self.content_col, expand=True,
-                                           padding=ft.Padding.only(left=24, top=4, right=24, bottom=0))
+        # Смена экрана — мягким переходом: новая колонка проявляется поверх
+        # старой. Внутри одного экрана колонка та же, и перерисовки не мигают.
+        self.content_switcher = ft.AnimatedSwitcher(
+            self.content_col, transition=ft.AnimatedSwitcherTransition.FADE,
+            duration=C.ANIM_BAR, reverse_duration=C.ANIM_FAST,
+            switch_in_curve=ft.AnimationCurve(C.EASE),
+            switch_out_curve=ft.AnimationCurve(C.EASE), expand=True)
+        self._screen_key = None
+        self.content_holder = ft.Container(self.content_switcher, expand=True,
+                                           padding=ft.Padding.only(left=24, top=16, right=24))
+        # Инструменты сетки живут в заголовке окна, как в macOS.
         self.toolbar_holder = ft.Container()
-        # Панель свойств всегда лежит поверх сетки: сбоку она отнимала у сетки
-        # две колонки, и плитка, по которой щёлкнули, уезжала в другой ряд.
+        # Панель свойств лежит поверх сетки отдельной стеклянной карточкой: сбоку
+        # она отнимала у сетки две колонки, и плитка уезжала в другой ряд.
         self.inspector_overlay = ft.Container(
-            width=C.INSPECTOR_W, right=0, top=C.HEADER_H, bottom=0, visible=False)
+            width=C.INSPECTOR_W, right=12, top=C.HEADER_H + 12, bottom=12, visible=False,
+            animate_offset=Wg.anim(C.ANIM_BAR), animate_opacity=Wg.anim(C.ANIM_FAST))
         self.library_body = ft.Container(expand=True)
         self.body = ft.Container(left=0, top=0, right=0, bottom=0)
 
         self.palette_card = ft.Container(
-            opacity=0, offset=ft.Offset(0, -0.02),
-            animate_opacity=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
-            animate_offset=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT))
+            opacity=0, scale=0.97,
+            animate_opacity=Wg.anim(C.ANIM_FAST),
+            animate_scale=Wg.anim(C.ANIM_POP, spring=True))
         self.palette_scrim = ft.Container(
             left=0, top=0, right=0, bottom=0, bgcolor=C.SCRIM,
             on_click=lambda e: self._close_palette())
@@ -140,9 +153,9 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
                                    left=0, right=0, top=PALETTE_GAP)]),
             left=0, top=C.HEADER_H, right=0, bottom=0, visible=False)
         self.bulk_card = ft.Container(
-            opacity=0, offset=ft.Offset(0, 0.3),
-            animate_opacity=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT),
-            animate_offset=ft.Animation(C.ANIM_BAR, ft.AnimationCurve.EASE_OUT))
+            opacity=0, offset=ft.Offset(0, 0.4),
+            animate_opacity=Wg.anim(C.ANIM_BAR),
+            animate_offset=Wg.anim(C.ANIM_BAR, spring=True))
         self.bulk_layer = ft.Container(
             ft.Row([self.bulk_card], alignment=ft.MainAxisAlignment.CENTER),
             left=0, right=0, bottom=26, visible=False)
@@ -180,10 +193,6 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
     def _on_accent(self):
         return C.on_color(self._accent())
 
-    def rail(self) -> dict:
-        return C.rail_metrics(self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE),
-                              labels=bool(self._settings.get("rail_labels")))
-
     def _system_brightness(self) -> str | None:
         value = getattr(self.page, "platform_brightness", None)
         value = getattr(value, "value", value)
@@ -214,20 +223,20 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         # переключателя.
         return self.view.screen == "settings"
 
-    def _show_rail(self) -> bool:
+    def _show_sidebar(self) -> bool:
         return not self._full_width_screen()
 
-    def _show_sidebar(self) -> bool:
-        return (self.view.sidebar_open and self._window_width() >= C.NARROW_SIDEBAR
-                and not self._full_width_screen())
+    def _sidebar_expanded(self) -> bool:
+        """Панель с подписями; иначе — полоса значков. В узком окне — сама."""
+        return self.view.sidebar_open and self._window_width() >= C.NARROW_SIDEBAR
+
+    def _sidebar_width(self) -> int:
+        if not self._show_sidebar():
+            return 0
+        return C.SIDEBAR_W if self._sidebar_expanded() else C.SIDEBAR_RAIL_W
 
     def _content_width(self) -> float:
-        width = self._window_width()
-        if self._show_rail():
-            width -= self.rail()["rail"]
-        if self._show_sidebar():
-            width -= C.SIDEBAR_W
-        return max(240.0, width)
+        return max(240.0, self._window_width() - self._sidebar_width())
 
     def _inspector_visible(self) -> bool:
         return bool(self.view.inspector and self.view.screen == "grid"
@@ -238,9 +247,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         # здесь, пока известна текущая страница, а не в обработчике щелчка.
         self.file_picker = ft.FilePicker()
         self.store.on_error = self._on_store_error
-        main = ft.Column([self.toolbar_holder, self.content_holder], spacing=0, expand=True)
-        body = ft.Row([self.rail_container, self.sidebar_container, main],
-                      spacing=0, expand=True)
+        body = ft.Row([self.sidebar_container, self.content_holder], spacing=0, expand=True)
         self.library_body.content = ft.Column([self.header_holder, body],
                                               spacing=0, expand=True)
         root = ft.Stack([self.body, self.inspector_overlay, self.palette_layer,
@@ -321,7 +328,6 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
                 self._settings.get("bg_tint"),
                 self._settings.get("contrast", theme.DEFAULT_CONTRAST),
                 bool(self._settings.get("game_posters", True)),
-                self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE),
                 self.view.select_mode,
                 self.view.mode,
             )
@@ -367,24 +373,33 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
             if self.header_holder.content is None or header_key != self._header_key:
                 self._header_key = header_key
                 self.header_holder.content = self.chrome.build_header()
-            self.rail_container.width = self.rail()["rail"]
-            self.rail_container.content = self.chrome.build_rail()
-        self.rail_container.visible = self._show_rail()
         show_sidebar = self._show_sidebar()
         self.sidebar_container.visible = show_sidebar
+        self.sidebar_container.width = self._sidebar_width()
         self.sidebar_container.content = self.chrome.build_sidebar() if show_sidebar else None
         screen = self.view.screen
         on_grid = screen == "grid" and not self.view.active_set
-        self.toolbar_holder.visible = on_grid
-        if on_grid:
-            self.toolbar_holder.content = self.chrome.build_toolbar()
+        self.chrome.sync_header()
+        key = (screen, self.view.active_set)
+        if key != self._screen_key:
+            # Новый экран — новая колонка: переключатель проявит её поверх старой.
+            if self._screen_key is not None:
+                self.content_col = ft.Column(spacing=0, expand=True)
+                self.content_switcher.content = self.content_col
+            self._screen_key = key
         self.content_col.controls = self.grid.build_content()
         self.content_col.scroll = ft.ScrollMode.AUTO if on_grid else None
-        self.content_holder.padding = (ft.Padding.only(left=22, top=4, right=22, bottom=0) if on_grid
+        self.content_holder.padding = (ft.Padding.only(left=24, top=16, right=24) if on_grid
                                        else ft.Padding.all(0))
         inspector = self.inspector_panel.build_inspector() if self._inspector_visible() else None
+        appearing = inspector is not None and not self.inspector_overlay.visible
         self.inspector_overlay.visible = inspector is not None
         self.inspector_overlay.content = inspector
+        if appearing:
+            # Панель выезжает справа, а не возникает.
+            Wg.enter(self.inspector_overlay,
+                     {"offset": ft.Offset(0.08, 0), "opacity": 0},
+                     {"offset": ft.Offset(0, 0), "opacity": 1})
 
     def set_visible(self, visible: bool):
         visible = bool(visible)
@@ -451,6 +466,10 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
 
     def _toggle_sidebar(self):
         self.view.toggle_sidebar()
+        self.refresh()
+
+    def set_sidebar_open(self, value: bool):
+        self.view.set_sidebar(bool(value))
         self.refresh()
 
     def _set_filter(self, f):

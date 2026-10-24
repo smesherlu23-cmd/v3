@@ -8,14 +8,13 @@ from ..format import T
 
 
 def _caps(text):
-    return T(text, size=C.FS_CAPTION, weight=ft.FontWeight.W_600, color=C.MUTED_2,
-             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
-             style=ft.TextStyle(letter_spacing=0.8))
+    """Подпись раздела: мелко и полужирно, без капса — как в macOS."""
+    return Wg.caps(text)
 
 
 def _screen_header(title, subtitle, on_close, extra=None):
     right = list(extra or [])
-    right.append(Wg.icon_btn(ft.Icons.CLOSE, "Закрыть", on_close, size=36, glyph=20))
+    right.append(Wg.icon_btn(ft.Icons.CLOSE_ROUNDED, "Закрыть", on_close, size=32, glyph=18))
     lines = [T(title, size=C.FS_HEADING, weight=ft.FontWeight.BOLD, color=C.TEXT)]
     if subtitle:
         lines.append(T(subtitle, size=C.FS_SMALL, color=C.MUTED_2))

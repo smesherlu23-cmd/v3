@@ -39,8 +39,10 @@ class ToastHost:
     ним, пока не истечёт. Поля `text`, `icon`, `card`… — это новое.
     """
 
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, accent=None):
         self.page = page
+        # «Вернуть» — кнопка цвета акцента: главное, что можно тут сделать.
+        self.accent = accent or (lambda: C.ACCENT)
         self._lock = threading.RLock()
         self._timer: threading.Timer | None = None
         self._token = 0
@@ -51,7 +53,7 @@ class ToastHost:
         self._older: list[_Older] = []
         self._current_on = False
 
-        self.icon = ft.Icon(ft.Icons.CHECK, size=18, color=C.GREEN)
+        self.icon = ft.Icon(ft.Icons.CHECK_ROUNDED, size=18, color=C.GREEN)
         self.text = T("", size=C.FS_BODY, color=C.TEXT, max_lines=2,
                       overflow=ft.TextOverflow.ELLIPSIS)
         self.detail = T("", size=C.FS_SMALL, color=C.MUTED, max_lines=2, visible=False,
@@ -65,12 +67,14 @@ class ToastHost:
         self.countdown = T("", size=C.FS_CAPTION, color=C.MUTED_2, font_family="monospace",
                            visible=False)
 
+        # Стекло, как у уведомлений macOS; новое выезжает снизу.
         self.card = ft.Container(
             ft.Row([self.icon, self.body, self.action_btn, self.countdown],
                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            width=C.TOAST_W, border_radius=C.R_LARGE,
+            width=C.TOAST_W, border_radius=C.R_XL, blur=ft.Blur(30, 30),
             padding=ft.Padding.symmetric(vertical=12, horizontal=16),
-            animate_opacity=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+            animate_opacity=Wg.anim(C.ANIM_POP),
+            animate_offset=Wg.anim(C.ANIM_POP, spring=True),
         )
         self.stack = ft.Column([self.card], spacing=8, tight=True,
                                horizontal_alignment=ft.CrossAxisAlignment.END)
@@ -79,15 +83,19 @@ class ToastHost:
 
     def _paint(self, error: bool):
         """Цвета темы — при каждом показе: тема могла смениться с прошлого раза."""
-        self.card.bgcolor = C.ERR_BG if error else C.PANEL
-        self.card.border = ft.Border.all(1, C.ERR_BORDER if error else C.BORDER)
-        self.card.shadow = ft.BoxShadow(blur_radius=32, offset=ft.Offset(0, 12),
+        self.card.bgcolor = C.with_alpha(C.ERR_BG, 0.92) if error else C.GLASS
+        self.card.border = ft.Border.all(1, C.ERR_BORDER if error else C.EDGE)
+        self.card.shadow = ft.BoxShadow(blur_radius=40, offset=ft.Offset(0, 14),
                                         color=C.SHADOW)
         self.text.color = C.TEXT
         self.detail.color = C.MUTED
         self.action_label.color = C.TEXT
         self.countdown.color = C.MUTED_2
-        Wg.hoverable(self.action_btn, None, C.RAISED)
+        self.action_label.color = C.on_color(self.accent()) if not error else C.TEXT
+        Wg.hoverable(self.action_btn, None if error else self.accent(),
+                     C.RAISED if error else C.mix(self.accent(), C.WHITE, 0.12))
+        if not error:
+            self.action_btn.bgcolor = self.accent()
 
     def lift(self, above: bool):
         self.control.bottom = BOTTOM_LIFTED if above else MARGIN
@@ -95,7 +103,7 @@ class ToastHost:
     def recenter(self):
         """Оставлено для совместимости: место уведомлений больше не считается."""
 
-    def show(self, text: str, icon=ft.Icons.CHECK, icon_color=None,
+    def show(self, text: str, icon=ft.Icons.CHECK_ROUNDED, icon_color=None,
              action=None, action_label: str | None = None, error: bool = False,
              detail: str | None = None, wait_for_undo: bool = False):
         """`wait_for_undo` — для новостей из фона: они не затирают «Вернуть».
@@ -119,7 +127,7 @@ class ToastHost:
             self._error = error
             self._left = UNDO_SECONDS if action else 0
 
-            self.icon.icon = ft.Icons.ERROR_OUTLINE if error else icon
+            self.icon.icon = ft.Icons.ERROR_OUTLINE_ROUNDED if error else icon
             self.icon.color = C.DANGER if error else (icon_color or C.GREEN)
             self.text.value = text
             self.detail.value = detail or ""
@@ -129,6 +137,9 @@ class ToastHost:
             self.action_label.value = action_label or "Вернуть"
             self.countdown.visible = bool(action)
             self.countdown.value = str(self._left) if action else ""
+            if not self._current_on:
+                Wg.enter(self.card, {"offset": ft.Offset(0, 0.5), "opacity": 0},
+                         {"offset": ft.Offset(0, 0), "opacity": 1})
             self.control.visible = True
             self._arm(1.0 if action else PLAIN_SECONDS, token)
             self._restack()
@@ -161,7 +172,7 @@ class ToastHost:
             row += [Wg.hoverable(btn, None, C.RAISED), countdown]
         entry.card = ft.Container(
             ft.Row(row, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            width=C.TOAST_W, border_radius=C.R_LARGE, opacity=0.92,
+            width=C.TOAST_W, border_radius=C.R_XL, opacity=0.92, blur=ft.Blur(30, 30),
             padding=ft.Padding.symmetric(vertical=12, horizontal=16),
             bgcolor=self.card.bgcolor, border=self.card.border, shadow=self.card.shadow)
         self._older.append(entry)
@@ -322,20 +333,20 @@ class ToastHost:
 
 
 NOTE_ICONS = {
-    "check": ft.Icons.CHECK,
-    "check_circle": ft.Icons.CHECK_CIRCLE,
-    "search": ft.Icons.SEARCH,
-    "inbox": ft.Icons.INBOX,
-    "layers": ft.Icons.LAYERS,
-    "folder": ft.Icons.FOLDER,
-    "link": ft.Icons.LINK,
-    "save": ft.Icons.SAVE,
-    "close": ft.Icons.CLOSE,
-    "arrange": ft.Icons.CROP_FREE,
-    "monitor": ft.Icons.DESKTOP_WINDOWS,
-    "delete": ft.Icons.DELETE_OUTLINE,
-    "magic": ft.Icons.AUTO_AWESOME,
-    "download": ft.Icons.DOWNLOAD,
+    "check": ft.Icons.CHECK_ROUNDED,
+    "check_circle": ft.Icons.CHECK_CIRCLE_ROUNDED,
+    "search": ft.Icons.SEARCH_ROUNDED,
+    "inbox": ft.Icons.INBOX_ROUNDED,
+    "layers": ft.Icons.LAYERS_ROUNDED,
+    "folder": ft.Icons.FOLDER_ROUNDED,
+    "link": ft.Icons.LINK_ROUNDED,
+    "save": ft.Icons.SAVE_ROUNDED,
+    "close": ft.Icons.CLOSE_ROUNDED,
+    "arrange": ft.Icons.CROP_FREE_ROUNDED,
+    "monitor": ft.Icons.DESKTOP_WINDOWS_ROUNDED,
+    "delete": ft.Icons.DELETE_OUTLINE_ROUNDED,
+    "magic": ft.Icons.AUTO_AWESOME_ROUNDED,
+    "download": ft.Icons.DOWNLOAD_ROUNDED,
 }
 
 
@@ -349,7 +360,7 @@ class Notifier:
              wait_for_undo: bool = False):
         # Цвет — в момент показа: тема (светлая, тёмная) могла смениться.
         color = C.MUTED if tone == "muted" else C.GREEN
-        self.toast.show(text, icon=NOTE_ICONS.get(icon, ft.Icons.CHECK), icon_color=color,
+        self.toast.show(text, icon=NOTE_ICONS.get(icon, ft.Icons.CHECK_ROUNDED), icon_color=color,
                         action=action, action_label=action_label, detail=detail,
                         wait_for_undo=wait_for_undo)
 

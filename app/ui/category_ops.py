@@ -112,7 +112,7 @@ class CategoryMixin:
         text = f"Категория «{cat['name']}» удалена" if cat else "Категория удалена"
         if moved:
             text += f", {moved} {plu_apps(moved)} перенесено"
-        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE, icon_color=C.MUTED,
+        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=C.MUTED,
                         action=lambda: self._restore_category(undo), action_label="Вернуть")
         self.on_library_changed()
 
@@ -127,12 +127,11 @@ class CategoryMixin:
             self.popover_layer.visible = False
             self.popover_layer.content = None
             return
-        index = [c["id"] for c in self.categories()].index(cat_id)
-        metrics = self.rail()
-        top = (C.HEADER_H + 14 + (2 + index) * (metrics["btn"] + metrics["gap"]) + 9
-               - self._rail_scroll)
+        # Рядом со строкой категории в боковой панели.
+        row_top = self.chrome.row_tops.get(cat_id, 0.0)
+        top = C.HEADER_H + row_top - self.chrome.sidebar_scroll
         height = self._window_height()
-        self.popover_layer.left = metrics["rail"] + 8
+        self.popover_layer.left = self._sidebar_width() + 8
         self.popover_layer.top = max(C.HEADER_H + 6, min(top, height - C.POPOVER_H - 8))
         self.popover_layer.content = screens.build_category_popover(self, cat)
         self.popover_layer.visible = True

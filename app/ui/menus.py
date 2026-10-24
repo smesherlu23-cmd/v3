@@ -6,10 +6,14 @@ from . import colors as C
 from . import widgets as Wg
 from .format import T, as_icon, cat_icon
 
-ROW_H = 36
+ROW_H = 30
 HEADER_H = 48
 SEPARATOR_H = 11
 SUBMENU_W = 240
+PAD = 6
+# Меню вырастает из точки щелчка: с левого верхнего угла.
+_POP_FROM = ft.Scale(0.94, alignment=ft.Alignment.TOP_LEFT)
+_POP_TO = ft.Scale(1.0, alignment=ft.Alignment.TOP_LEFT)
 
 
 def item(icon, label, on_click, *, hint: str = "", danger: bool = False,
@@ -27,9 +31,11 @@ def height_of(rows) -> int:
 
 
 class MenuHost:
-    def __init__(self, page: ft.Page, on_dismiss=None):
+    def __init__(self, page: ft.Page, on_dismiss=None, accent=None):
         self.page = page
         self.on_dismiss = on_dismiss
+        # Строка под курсором залита акцентом, как в меню macOS.
+        self.accent = accent or (lambda: C.ACCENT)
         self.open = False
         self._rows: list[dict] = []
         self._header = None
@@ -38,7 +44,8 @@ class MenuHost:
         self._submenu: dict | None = None
         self.shade = ft.Container(left=0, top=0, right=0, bottom=0, bgcolor=C.TRANSPARENT,
                                   on_click=lambda e: self.close())
-        self.card = ft.Container(visible=False)
+        self.card = ft.Container(visible=False, animate_opacity=Wg.anim(C.ANIM_POP),
+                                 animate_scale=Wg.anim(C.ANIM_POP, spring=True))
         self.sub_card = ft.Container(visible=False)
         self.control = ft.Stack([self.shade, self.card, self.sub_card],
                                 left=0, top=0, right=0, bottom=0, visible=False)
@@ -48,7 +55,11 @@ class MenuHost:
         self._header = header
         self._x, self._y = x, y
         self._submenu = None
+        appearing = not self.open
         self.open = True
+        if appearing:
+            Wg.enter(self.card, {"opacity": 0, "scale": _POP_FROM},
+                     {"opacity": 1, "scale": _POP_TO})
         self._render()
 
     def close(self):
@@ -83,7 +94,7 @@ class MenuHost:
 
     def _render(self):
         width = C.MENU_W if self._header else SUBMENU_W + 22
-        height = height_of(self._rows) + (HEADER_H if self._header else 0) + 16
+        height = height_of(self._rows) + (HEADER_H if self._header else 0) + 2 * PAD + 2
         height = min(height, self._window()[1] - 16)
         left, top = self._place(self._x, self._y, width, height)
 
@@ -94,7 +105,7 @@ class MenuHost:
 
         if self._submenu:
             rows = self._submenu["rows"]
-            sub_h = min(height_of(rows) + 16, self._window()[1] - 16)
+            sub_h = min(height_of(rows) + 2 * PAD + 2, self._window()[1] - 16)
             sub_left, sub_top = self._place(left + width + 6, self._submenu["y"],
                                             SUBMENU_W, sub_h)
             self.sub_card.content = self._card(rows, None, SUBMENU_W, sub_h)
@@ -111,24 +122,22 @@ class MenuHost:
         children = []
         if header is not None:
             children += [header, ft.Container(height=1, bgcolor=C.LINE,
-                                              margin=ft.Margin.only(left=4, right=4, bottom=6))]
+                                              margin=ft.Margin.only(left=8, right=8, bottom=5))]
         indent = any_icons(rows)
         for row in rows:
             children.append(self._row(row, indent) if row["kind"] == "item" else
                             ft.Container(height=1, bgcolor=C.LINE,
-                                         margin=ft.Margin.symmetric(vertical=5, horizontal=4)))
-        full = height_of(rows) + (HEADER_H if header is not None else 0) + 16
+                                         margin=ft.Margin.symmetric(vertical=5, horizontal=8)))
+        full = height_of(rows) + (HEADER_H if header is not None else 0) + 2 * PAD + 2
         # Длинный список (много программ или категорий) не уходит за край окна,
         # а прокручивается внутри меню.
         scroll = height is not None and full > height
-        return ft.Container(
-            ft.Column(children, spacing=1, tight=not scroll,
+        # Матовое стекло, как у меню macOS: под ним размыто окно.
+        return Wg.glass(
+            ft.Column(children, spacing=0, tight=not scroll,
                       scroll=ft.ScrollMode.AUTO if scroll else None),
-            height=height if scroll else None,
-            width=width, bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE),
-            border_radius=C.R_LARGE, padding=ft.Padding.all(8),
-            shadow=ft.BoxShadow(blur_radius=48, offset=ft.Offset(0, 16),
-                                color=C.SHADOW))
+            radius=C.R_LARGE, height=height if scroll else None,
+            width=width, padding=ft.Padding.all(PAD))
 
     def _row(self, row, indent: bool = False):
         color = C.ERR_TEXT if row["danger"] else C.TEXT
@@ -136,26 +145,40 @@ class MenuHost:
         if row["disabled"]:
             color = icon_color = C.FAINT
         controls = []
+        tinted = []
         if row["icon"]:
-            controls.append(ft.Icon(as_icon(row["icon"]), size=16, color=icon_color))
+            glyph = ft.Icon(as_icon(row["icon"]), size=16, color=icon_color)
+            controls.append(glyph)
+            tinted.append((glyph, icon_color))
         elif indent:
             controls.append(ft.Container(width=16))
-        controls.append(T(row["label"], size=C.FS_BODY, color=color, expand=True,
-                          max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
+        label = T(row["label"], size=C.FS_BODY, color=color, expand=True,
+                  max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        controls.append(label)
+        tinted.append((label, color))
         if row["hint"]:
-            controls.append(T(row["hint"], size=C.FS_CAPTION, color=C.MUTED_2,
-                              font_family="monospace" if len(row["hint"]) <= 5 else None))
+            hint = T(row["hint"], size=C.FS_CAPTION, color=C.MUTED_2,
+                     font_family="monospace" if len(row["hint"]) <= 5 else None)
+            controls.append(hint)
+            tinted.append((hint, C.MUTED_2))
         if row["submenu"]:
-            controls.append(ft.Icon(ft.Icons.CHEVRON_RIGHT, size=16, color=C.FAINT))
+            chevron = ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED, size=16, color=C.FAINT)
+            controls.append(chevron)
+            tinted.append((chevron, C.FAINT))
 
         container = ft.Container(
-            ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.Padding.symmetric(vertical=8, horizontal=12), border_radius=C.R,
+            ft.Row(controls, spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=0, horizontal=10), border_radius=C.R_SMALL,
             height=ROW_H,
             on_click=None if row["disabled"] else (lambda e, r=row: self._fire(r)))
         if not row["disabled"]:
-            def on_hover(e, c=container):
-                c.bgcolor = C.RAISED if Wg.entered(e) else None
+            def on_hover(e, c=container, danger=row["danger"]):
+                hot = Wg.entered(e)
+                fill = (C.DANGER if danger else self.accent()) if hot else None
+                ink = C.on_color(fill) if fill else None
+                c.bgcolor = fill
+                for ctl, rest in tinted:
+                    ctl.color = ink or rest
                 Wg.safe_update(c)
             container.on_hover = on_hover
         return container
@@ -188,10 +211,10 @@ def app_header(ui, app, running: bool, missing: bool = False):
         lines.append(T("файл не найден", size=C.FS_SMALL, color=C.WARN_TEXT))
     elif running:
         lines.append(T(ui.running_note(app), size=C.FS_SMALL, color=C.GREEN_TEXT))
-    return ft.Container(ft.Row([ui.icon_slot(app, 32, 8, glyph=16),
+    return ft.Container(ft.Row([ui.icon_slot(app, 32, Wg.squircle(32), glyph=16),
                                 ft.Column(lines, spacing=2, tight=True, expand=True)],
                                spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=ft.Padding.only(left=12, top=8, right=12, bottom=8),
+                        padding=ft.Padding.only(left=10, top=8, right=10, bottom=8),
                         height=HEADER_H)
 
 

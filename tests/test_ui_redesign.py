@@ -7,6 +7,7 @@ from helpers import (
     _menu_labels,
     _tap,
     _texts,
+    _tips,
     _ui_for,
     _walk,
     ok,
@@ -71,7 +72,7 @@ def test_select_mode_keeps_the_quick_row_in_place():
         launched = []
         ui._launch = lambda app_id, **kw: launched.append(app_id)
         card = next(c for c in _walk(holder) if isinstance(c, ft.Container)
-                    and c.on_click is not None and c.width == C.QUICK_W)
+                    and c.on_click is not None and c.width == C.DOCK_CELL)
         card.on_click(types_ns(control=card))
         ok(not launched, "a click on the dimmed row launches nothing")
         ui.toggle_select_mode()
@@ -99,14 +100,14 @@ def test_sections_fold_by_their_title():
         ok(len(heads) == 2, "each of the two sections can be folded")
         label = heads[1]
         row = label.content.controls
-        ok(isinstance(row[0], ft.Icon) and row[0].icon == ft.Icons.EXPAND_MORE,
+        ok(isinstance(row[0], ft.Icon) and row[0].icon == ft.Icons.EXPAND_MORE_ROUNDED,
            "the arrow sits left of the name, not 1000 px away at the edge")
         ok("Общение" in _texts(label), "and the whole title is what is clicked")
         label.on_click(types_ns(control=label))
         ok(chat in ui.view.collapsed, "a click on the title folds the section")
         shown = _texts(ft.Column(ui.content_col.controls))
-        ok("Telegram" not in shown and "1" in shown,
-           "its tiles go, and the folded title says how many are inside")
+        ok("Telegram" not in shown and "1" in _texts(label),
+           "its tiles go, and the title says how many are inside")
 
         ui._set_filter(f"category:{chat}")
         shown = _texts(ft.Column(ui.content_col.controls))
@@ -117,10 +118,10 @@ def test_sections_fold_by_their_title():
 
 
 def test_running_and_missing_marks_sit_on_the_icon():
-    """«Открыто» — кружок на самом значке и надпись; пропавший файл — свой знак.
+    """«Открыто» — точка под значком, как в Dock; пропавший файл — знак и надпись.
 
-    Зелёную точку 6 px в углу крупной плитки было не разглядеть, а «файл не
-    найден» жил только 8 секунд в уведомлении.
+    «Файл не найден» жил только 8 секунд в уведомлении — теперь он держится
+    на самой плитке.
     """
     problem = _ui_ready()
     if problem:
@@ -133,11 +134,10 @@ def test_running_and_missing_marks_sit_on_the_icon():
         ui, _ = _ui_for(store)
         ui.set_running([ids["Excel"]])
         content = ft.Column(ui.content_col.controls)
-        ok("открыто" in _texts(content), "a running program says so under its name")
-        badges = [c for c in _walk(content) if isinstance(c, ft.Container)
-                  and c.bgcolor == C.GREEN and c.width == 14]
-        ok(badges and badges[0].border is not None,
-           "and wears a 14 px green ring-edged mark on its icon")
+        dots = [c for c in _walk(content) if isinstance(c, ft.Container)
+                and c.width == 5 and c.bgcolor == C.TEXT_2]
+        ok(len(dots) == 1, "a running program gets the Dock's dot under its name")
+        ok("Excel · открыто" in _tips(content), "and its tooltip says so in words")
 
         ui.launcher.launch.return_value = {"ok": False,
                                            "error": "Файл не найден: /x/notion.exe"}
@@ -177,11 +177,11 @@ def test_running_and_missing_marks_sit_on_the_icon():
            "addresses, shell: and network paths are never checked")
 
 
-def test_rail_has_one_selection_mark_and_keeps_colours():
-    """В полосе слева «выбрано» одно, и категория своего цвета не теряет."""
+def test_sidebar_has_one_selection_mark_and_keeps_colours():
+    """В боковой панели «выбрано» одно, и категория своего цвета не теряет."""
     problem = _ui_ready()
     if problem:
-        skip("rail test", problem)
+        skip("sidebar test", problem)
         return
     import flet as ft
 
@@ -191,24 +191,26 @@ def test_rail_has_one_selection_mark_and_keeps_colours():
         ui, _ = _ui_for(store)
 
         def marks():
-            return [c for c in _walk(ui.rail_container) if isinstance(c, ft.Container)
-                    and c.width == 3 and c.bgcolor == ui._accent()]
+            return [c for c in _walk(ui.sidebar_container) if isinstance(c, ft.Container)
+                    and c.bgcolor == C.RAISED and c.height in (C.SIDEBAR_ROW_H, 36)]
 
         ok(ui.view.sidebar_open and len(marks()) == 1,
-           "with the sidebar open there is still one mark — on «Все программы»")
+           "one row is marked — «Все программы»")
         ui._set_filter(f"category:{chat}")
-        ok(len(marks()) == 1, "picking a category moves it there")
-        icons = [c for c in _walk(ui.rail_container) if isinstance(c, ft.Icon)
-                 and c.icon == ft.Icons.CHAT]
+        ok(len(marks()) == 1, "picking a category moves the mark there")
+        icons = [c for c in _walk(ui.sidebar_container) if isinstance(c, ft.Icon)
+                 and c.icon == ft.Icons.CHAT_ROUNDED]
         ok(icons and icons[0].color == "#4f7dff",
            "and the picked category keeps its own colour instead of turning grey")
 
         ok(not any(t.startswith("v") and t[1:2].isdigit() for t in _texts(ui.sidebar_container)),
            "the 1.8:1 version number left the sidebar — it lives in the settings")
 
-        ui.set_setting("rail_labels", True)
-        ok(ui.rail_container.width > 72, "with labels on the rail grows wider")
-        ok("Общение" in _texts(ui.rail_container), "and names the categories under their icons")
+        ui.set_sidebar_open(False)
+        ok(len(marks()) == 1, "folded to icons, the panel still marks one row")
+        ok(not _texts(ui.sidebar_container), "and shows no labels")
+        ok("Общение" in _tips(ui.sidebar_container),
+           "the names move into tooltips")
 
 
 def test_toolbar_add_is_calm_and_buttons_are_three_kinds():
@@ -229,7 +231,8 @@ def test_toolbar_add_is_calm_and_buttons_are_three_kinds():
         filled = [c for c in _walk(ui.toolbar_holder) if isinstance(c, ft.Container)
                   and c.bgcolor == ui._accent()]
         ok(not filled, "nothing in the toolbar is filled with the accent")
-        ok("Добавить" in _texts(ui.toolbar_holder), "«Добавить» is still there")
+        ok("Найти и добавить программы" in _tips(ui.toolbar_holder),
+           "«Добавить» is still there, a calm «+» in the title bar")
 
         empty = Store(os.path.join(d, "empty.json"))
         empty_ui, _ = _ui_for(empty)
@@ -331,9 +334,12 @@ def test_light_theme_builds_every_screen():
             ui.set_setting("appearance", "light")
             ok(C.MODE == "light" and page.theme_mode == ft.ThemeMode.LIGHT,
                "the whole window switches")
-            ok(ui._accent() != C.ACCENT and C.contrast(ui._accent(), C.BG) > 4.5,
-               "the default white accent turns dark instead of white-on-white")
+            ok(ui._accent() == C.ACCENT and C.contrast(ui._accent(), C.BG) >= 3,
+               "the default blue accent reads on the light window as it is")
             ok(C.on_color(ui._accent()) == C.WHITE, "with white text on it")
+            ui.set_setting("accent", "#f5f5f7")
+            ok(ui._accent() == C.TEXT, "a white accent turns dark instead of white-on-white")
+            ui.set_setting("accent", C.ACCENT)
             for open_screen in (ui.back_to_grid, ui.open_triage, ui._open_settings,
                                 lambda: ui._open_set(rec["id"]),
                                 lambda: ui._select_tile(ids["Excel"])):

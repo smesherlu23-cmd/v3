@@ -29,17 +29,40 @@ def _family_for(weight):
     return "Inter"
 
 
+def _tracking(size) -> float:
+    """Межбуквенный интервал по кеглю: крупное — плотнее, как у шрифтов macOS.
+
+    Inter, как и San Francisco, рассчитан на это: заголовки без поджатия
+    выглядят разреженными.
+    """
+    if not size:
+        return 0.0
+    if size >= 24:
+        return -0.6
+    if size >= 18:
+        return -0.4
+    if size >= 15:
+        return -0.2
+    return 0.0
+
+
 def T(value="", **kw):
     fam = kw.get("font_family")
     if fam == "monospace":
         kw["font_family"] = "mono"
     elif fam is None:
         kw["font_family"] = _family_for(kw.get("weight"))
+    tracking = _tracking(kw.get("size"))
+    if tracking and "style" not in kw and fam != "monospace":
+        kw["style"] = ft.TextStyle(letter_spacing=tracking)
     return ft.Text(value, **kw)
 
 
 def cat_icon(name: str):
-    return getattr(ft.Icons, (name or "folder").upper(), ft.Icons.FOLDER)
+    """Значок категории — скруглённый вариант Material: мягче, ближе к SF Symbols."""
+    key = (name or "folder").upper()
+    return (getattr(ft.Icons, f"{key}_ROUNDED", None) or getattr(ft.Icons, key, None)
+            or ft.Icons.FOLDER_ROUNDED)
 
 
 def as_icon(value):

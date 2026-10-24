@@ -1336,7 +1336,7 @@ def test_sites_folders_documents():
         site = next(a for a in store.state()["apps"] if a["kind"] == "web")
         ui.view.inspector = site["id"]
         shown = _texts(ui.inspector_panel.build_inspector())
-        ok("Открыть" in shown and "ПАРАМЕТРЫ ЗАПУСКА" not in shown,
+        ok("Открыть" in shown and "Параметры запуска" not in shown,
            "a site is opened, and has no launch parameters to tune")
 
         report = next(a for a in store.state()["apps"] if a["kind"] == "file")

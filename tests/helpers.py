@@ -381,6 +381,17 @@ def _walk(control, depth=0):
     yield from _walk(getattr(control, "content", None), depth + 1)
 
 
+def _tips(control):
+    """Every tooltip in a built subtree: icon-only buttons say what they do there."""
+    out = []
+    for c in _walk(control):
+        tip = getattr(c, "tooltip", None)
+        tip = getattr(tip, "message", tip)
+        if isinstance(tip, str) and tip:
+            out.append(tip)
+    return out
+
+
 def _sized(root, width=None, height=None):
     """True when the subtree has at least one control of exactly this size."""
     for c in _walk(root):

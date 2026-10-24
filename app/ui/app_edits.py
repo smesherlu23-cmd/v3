@@ -17,7 +17,7 @@ APP_ICON_SIZE = 256
 class AppEditsMixin:
     def _toast_hint_quick(self):
         self.toast.show("Закрепить можно правой кнопкой по плитке — «В быстрый запуск»",
-                        icon=ft.Icons.BOLT, icon_color=C.MUTED)
+                        icon=ft.Icons.BOLT_ROUNDED, icon_color=C.MUTED)
 
     def _toggle_fav(self, app_id):
         a = self.store.get_app(app_id)
@@ -31,7 +31,7 @@ class AppEditsMixin:
         accel = self._accels.get(app_id)
         self.toast.show(f"Закреплено · {accel}" if value and accel
                         else "Закреплено" if value else "Откреплено",
-                        icon=ft.Icons.BOLT, icon_color=C.MUTED)
+                        icon=ft.Icons.BOLT_ROUNDED, icon_color=C.MUTED)
 
     def _toggle_set_quick(self, set_id, value):
         self.set_ops.toggle_set_quick(set_id, value)
@@ -43,7 +43,7 @@ class AppEditsMixin:
             return
         self.view.clear_selection()
         text = (f"Скрыто {touched}" if hidden else f"Снова видно: {touched}")
-        self.toast.show(text, icon=ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
+        self.toast.show(text, icon=ft.Icons.VISIBILITY_OFF_ROUNDED if hidden else ft.Icons.VISIBILITY_ROUNDED,
                         icon_color=C.MUTED,
                         action=lambda: self._hide_apps(ids, not hidden),
                         action_label="Отменить")
@@ -157,14 +157,14 @@ class AppEditsMixin:
         first = next((a["name"] for a in self.apps() if a["id"] == ids[0]), "")
         text = (f"{first} переложен в «{cat['name']}»" if moved == 1
                 else f"Переложено {moved} в «{cat['name']}»")
-        self.toast.show(text, icon=ft.Icons.FOLDER, icon_color=C.MUTED,
+        self.toast.show(text, icon=ft.Icons.FOLDER_ROUNDED, icon_color=C.MUTED,
                         action=undo, action_label="Вернуть")
         self.on_library_changed()
 
     def _bulk_favorite(self, ids):
         before = [i for i in ids if not (self.store.get_app(i) or {}).get("favorite")]
         self.store.update_apps(ids, {"favorite": True})
-        self.toast.show(f"В избранном: {len(ids)}", icon=ft.Icons.STAR, icon_color=C.STAR,
+        self.toast.show(f"В избранном: {len(ids)}", icon=ft.Icons.STAR_ROUNDED, icon_color=C.STAR,
                         action=lambda: self._undo_favorite(before),
                         action_label="Отменить")
         self.refresh()
@@ -186,7 +186,7 @@ class AppEditsMixin:
         self.view.close_inspector()
         text = (f"{gone[0]['name']} убран из библиотеки" if len(gone) == 1
                 else f"Убрано {len(gone)} {plu_apps(len(gone))}")
-        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE, icon_color=C.MUTED,
+        self.toast.show(text, icon=ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color=C.MUTED,
                         action=lambda: self._restore_apps(bundle), action_label="Вернуть")
         self.on_library_changed()
 

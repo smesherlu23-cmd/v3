@@ -11,8 +11,13 @@ from . import widgets as Wg
 from .format import T
 from .images import icon_image, is_launcher_art, raster_path
 
-QUICK_H = C.QUICK_H
-BADGE = 14
+BADGE = 16
+# Значок с подложкой выделения вокруг, строка под именем — точка «открыто».
+ICON_PAD = 4
+STATUS_H = 14
+DOCK_PAD = 8
+DOCK_SPACING = 4
+TIP_WAIT_MS = 700
 
 
 class GridView:
@@ -21,6 +26,8 @@ class GridView:
         self._section_holders = {}
         self._piece_cache = {}
         self._used = set()
+        # Значки по программам — чтобы подбросить их при запуске, как в Dock.
+        self._icons = {}
 
     def build_content(self):
         self._used = set()
@@ -31,6 +38,8 @@ class GridView:
                                      if k in self._used}
             self._piece_cache = {k: v for k, v in self._piece_cache.items()
                                  if k in self._used}
+            self._icons = {k: v for k, v in self._icons.items()
+                           if k in self.ui._tile_cache or ("qcard", k) in self._piece_cache}
 
     def _build_content(self):
         screen = self.ui.view.screen
@@ -116,7 +125,7 @@ class GridView:
                            "категории слева.", "Добавить", self.ui.open_add)
 
     def _quick_row(self):
-        cards = []
+        cells = []
         for rec in self.ui.sets():
             if rec.get("quick"):
                 accel = self.ui._set_accels.get(rec["id"])
@@ -124,8 +133,8 @@ class GridView:
                 icons = tuple((a.get("icon"), a.get("icon_fit")) for a in self.ui.apps()
                               if a["id"] in members)
                 sig = (self.ui._tile_epoch, rec.get("name"), accel, members, icons)
-                cards.append(self._cached_piece(("qset", rec["id"]), sig,
-                                                 lambda r=rec: self._set_card(r)))
+                cells.append(self._cached_piece(("qset", rec["id"]), sig,
+                                                lambda r=rec: self._dock_set(r)))
         for app in queries.hotkey_apps(queries.visible(self.ui.apps()), self.ui._accels):
             accel = self.ui._accels.get(app["id"])
             cat = self.ui.cat_of(app)
@@ -134,26 +143,29 @@ class GridView:
             sig = (self.ui._tile_epoch, app.get("name"), app.get("icon"), app.get("icon_fit"),
                    app.get("category_id"), app.get("source"), accel, running, missing,
                    (cat.get("color"), cat.get("icon")) if cat else None)
-            cards.append(self._cached_piece(
+            cells.append(self._cached_piece(
                 ("qcard", app["id"]), sig,
-                lambda a=app, ac=accel, r=running, m=missing: self._quick_card(a, ac, r, m)))
+                lambda a=app, ac=accel, r=running, m=missing: self._dock_app(a, ac, r, m)))
         free = free_quick_slot(self.ui.apps())
-        if free and (not cards or self._fits_in_row(len(cards))):
-            cards.append(self._cached_piece(("qempty",), (self.ui._tile_epoch, free),
-                                             lambda f=free: self._quick_empty(f)))
+        if free and (not cells or self._fits_in_row(len(cells))):
+            cells.append(self._cached_piece(("qempty",), (self.ui._tile_epoch, free),
+                                            lambda f=free: self._dock_empty(f)))
 
         head = self._cached_piece(("qhead",), self.ui._tile_epoch, self._build_quick_head)
 
         self._used.add(("qrow",))
         holder = self._section_holders.get(("qrow",))
         if holder is None:
-            row = ft.Row(cards, spacing=12, wrap=True, run_spacing=12)
-            holder = ft.Container(row, padding=ft.Padding.only(bottom=16),
-                                  animate_opacity=ft.Animation(C.ANIM_FAST,
-                                                               ft.AnimationCurve.EASE_OUT))
+            # Полка в духе Dock: значки на общей подложке, без карточек.
+            shelf = ft.Container(
+                ft.Row(cells, spacing=DOCK_SPACING, wrap=True, run_spacing=DOCK_SPACING),
+                bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE),
+                border_radius=C.R_XL + 2, padding=ft.Padding.all(DOCK_PAD))
+            holder = ft.Container(shelf, padding=ft.Padding.only(bottom=24),
+                                  animate_opacity=Wg.anim(C.ANIM_FAST))
             self._section_holders[("qrow",)] = holder
         else:
-            holder.content.controls = cards
+            holder.content.content.controls = cells
         dim = self.ui.view.select_mode
         holder.opacity = 0.35 if dim else 1.0
         holder.disabled = dim
@@ -161,79 +173,74 @@ class GridView:
         return [head, holder]
 
     def _build_quick_head(self):
-        return ft.Container(T("Быстрый запуск", size=C.FS_TITLE, weight=ft.FontWeight.W_600,
-                              color=C.TEXT),
-                            padding=ft.Padding.only(top=8, bottom=12))
+        return ft.Container(Wg.caps("Быстрый запуск"),
+                            padding=ft.Padding.only(left=4, top=4, bottom=8))
 
     def _fits_in_row(self, count: int) -> bool:
-        gap = 12
-        per_row = max(1, int((self.ui._content_width() - 48 + gap) // (C.QUICK_W + gap)))
+        avail = self.ui._content_width() - 48 - 2 * DOCK_PAD - 2
+        per_row = max(1, int((avail + DOCK_SPACING) // (C.DOCK_CELL + DOCK_SPACING)))
         return count % per_row != 0
 
-    def _badged_icon(self, app, size, radius, running, missing, ring, glyph=None):
-        icon = self.ui.icon_slot(app, size, radius, glyph=glyph)
-        if missing:
-            return Wg.with_badge(icon, size, Wg.missing_badge(BADGE, ring), BADGE), None
-        if running:
-            badge = Wg.running_badge(BADGE, ring)
-            return Wg.with_badge(icon, size, badge, BADGE), badge
-        return icon, None
+    def _dock_cell(self, art, label, tooltip, on_click, running=False, label_color=None):
+        """Ячейка полки: значок, подпись, точка «открыто». Под курсором значок
+        увеличивается и приподнимается, как в Dock."""
+        holder = ft.Container(art, animate_scale=Wg.anim(C.ANIM_HOVER, spring=True))
+        cell = ft.Container(
+            ft.Column([holder, ft.Container(height=6),
+                       T(label, size=C.FS_CAPTION, weight=ft.FontWeight.W_500,
+                         color=label_color or C.TEXT_2, max_lines=1,
+                         overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER,
+                         width=C.DOCK_CELL - 8),
+                       ft.Container(height=3), Wg.dock_dot(running)],
+                      spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            width=C.DOCK_CELL, padding=ft.Padding.only(top=4, bottom=2),
+            tooltip=tooltip, on_click=lambda e: self._quick_launch(on_click))
 
-    def _quick_card(self, app, accel, running=False, missing=False):
-        icon, ring = self._badged_icon(app, 36, 10, running, missing, C.CARD, glyph=19)
-        card = ft.Container(
-            ft.Column([icon, ft.Container(height=8),
-                       T(app["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500,
-                         color=C.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)],
-                      spacing=0, tight=True),
-            width=C.QUICK_W, height=QUICK_H, bgcolor=C.CARD, border_radius=C.R_LARGE,
-            padding=ft.Padding.all(12),
-            tooltip=f"{app['name']} · {accel}" if accel else app["name"],
-            on_click=lambda e, i=app["id"]: self._quick_launch(lambda: self.ui._launch(i)))
-        self._hover_card(card, ring)
+        def on_hover(e):
+            # Растёт от нижнего края, как значки Dock под курсором.
+            holder.scale = ft.Scale(C.DOCK_SCALE if Wg.entered(e) else 1.0,
+                                    alignment=ft.Alignment.BOTTOM_CENTER)
+            Wg.safe_update(holder)
+        cell.on_hover = on_hover
+        return cell, holder
+
+    def _dock_app(self, app, accel, running=False, missing=False):
+        size = C.DOCK_ICON
+        icon = self.ui.icon_slot(app, size, Wg.squircle(size), glyph=round(size * 0.5))
+        if missing:
+            icon = Wg.with_badge(icon, size, Wg.missing_badge(BADGE, C.PANEL), BADGE)
+        tip = " · ".join(p for p in (app["name"], accel,
+                                     "файл не найден" if missing else None) if p)
+        cell, holder = self._dock_cell(icon, app["name"], tip,
+                                       lambda i=app["id"]: self.ui._launch(i), running)
+        self._icons.setdefault(app["id"], {})["dock"] = holder
         return ft.GestureDetector(
-            card, on_secondary_tap_down=lambda e, ap=app: self.ui.context_menus.app_menu(ap, e))
+            cell, on_secondary_tap_down=lambda e, ap=app: self.ui.context_menus.app_menu(ap, e))
 
     def _quick_launch(self, run):
-        # Карточки собираются один раз и переживают вход в режим выбора, где
-        # ряд приглушён: щелчок по нему тогда ничего не запускает.
+        # Ячейки собираются один раз и переживают вход в режим выбора, где
+        # полка приглушена: щелчок по ней тогда ничего не запускает.
         if not self.ui.view.select_mode:
             run()
 
-    def _hover_card(self, card, ring=None):
-        def on_hover(e):
-            hot = Wg.entered(e)
-            card.bgcolor = C.RAISED if hot else C.CARD
-            if ring is not None:
-                ring.border = ft.Border.all(2, card.bgcolor)
-            Wg.safe_update(card)
-        card.on_hover = on_hover
-
-    def _set_card(self, rec):
-        card = ft.Container(
-            ft.Column([
-                self.ui.set_mosaic(rec, 36, 10),
-                ft.Container(height=8),
-                T(rec["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500, color=C.TEXT,
-                  max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-            ], spacing=0, tight=True),
-            width=C.QUICK_W, height=QUICK_H, bgcolor=C.CARD, border_radius=C.R_LARGE,
-            padding=ft.Padding.all(12),
-            tooltip=f"Набор «{rec['name']}»",
-            on_click=lambda e, sid=rec["id"]: self._quick_launch(
-                lambda: self.ui.set_ops.launch_set(sid)))
-        self._hover_card(card)
+    def _dock_set(self, rec):
+        size = C.DOCK_ICON
+        cell, _holder = self._dock_cell(
+            self.ui.set_mosaic(rec, size, Wg.squircle(size)), rec["name"],
+            f"Набор «{rec['name']}»",
+            lambda sid=rec["id"]: self.ui.set_ops.launch_set(sid))
         return ft.GestureDetector(
-            card, on_secondary_tap_down=lambda e, r=rec: self.ui.context_menus.set_menu(r, e))
+            cell, on_secondary_tap_down=lambda e, r=rec: self.ui.context_menus.set_menu(r, e))
 
-    def _quick_empty(self, slot):
-        card = ft.Container(
-            ft.Icon(ft.Icons.ADD, size=18, color=C.FAINT),
-            width=C.QUICK_W, height=QUICK_H, border_radius=C.R_LARGE,
-            border=ft.Border.all(1, C.BORDER), alignment=ft.Alignment.CENTER,
-            tooltip=f"Закрепите приложение — оно встанет на Ctrl+{slot}",
-            on_click=lambda e: self.ui._toast_hint_quick())
-        return Wg.hoverable(card, None, C.CARD)
+    def _dock_empty(self, slot):
+        size = C.DOCK_ICON
+        plate = ft.Container(ft.Icon(ft.Icons.ADD_ROUNDED, size=20, color=C.FAINT),
+                             width=size, height=size, border_radius=Wg.squircle(size),
+                             border=ft.Border.all(1, C.BORDER), alignment=ft.Alignment.CENTER)
+        cell, _holder = self._dock_cell(
+            plate, f"Ctrl+{slot}", f"Закрепите приложение — оно встанет на Ctrl+{slot}",
+            self.ui._toast_hint_quick, label_color=C.FAINT)
+        return cell
 
     def _section_head(self, sec, key, collapsible=True):
         cat = next((c for c in self.ui.categories() if c["id"] == sec.get("cid")), None)
@@ -250,29 +257,26 @@ class GridView:
         """Заголовок раздела сворачивает его щелчком по названию.
 
         Стрелка стоит слева от названия: значок 14 px у правого края окна, в
-        тысяче пикселей от «Работы», не находили.
+        тысяче пикселей от «Работы», не находили. Линии через всё окно нет —
+        разделы отделяет воздух.
         """
         row = []
         if collapsible:
-            row.append(ft.Icon(ft.Icons.CHEVRON_RIGHT if collapsed else ft.Icons.EXPAND_MORE,
-                               size=18, color=C.FAINT))
+            row.append(ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED if collapsed
+                               else ft.Icons.EXPAND_MORE_ROUNDED, size=18, color=C.FAINT))
         row += [Wg.cat_glyph(cat, size=16) if cat
                 else ft.Container(width=8, height=8, border_radius=4, bgcolor=C.FAINT),
-                T(sec["name"], size=C.FS_TITLE, weight=ft.FontWeight.W_600, color=C.TEXT)]
-        if collapsed:
-            row.append(T(str(len(sec["apps"])), size=C.FS_SMALL, color=C.MUTED_2))
+                T(sec["name"], size=C.FS_TITLE, weight=ft.FontWeight.W_600, color=C.TEXT),
+                T(str(len(sec["apps"])), size=C.FS_SMALL, color=C.FAINT)]
         label = ft.Container(
             ft.Row(row, spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.Padding.symmetric(vertical=4, horizontal=4), border_radius=C.R_SMALL,
+            padding=ft.Padding.symmetric(vertical=4, horizontal=6), border_radius=C.R,
             tooltip=("Развернуть" if collapsed else "Свернуть") if collapsible else None,
             on_click=(lambda e, cid=sec["cid"]: self.ui._toggle_section(cid))
             if collapsible else None)
         if collapsible:
             Wg.hoverable(label, None, C.CARD)
-        head = ft.Container(
-            ft.Row([label, ft.Container(height=1, bgcolor=C.LINE, expand=True)], spacing=12,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.Padding.only(bottom=8))
+        head = ft.Container(ft.Row([label]), padding=ft.Padding.only(bottom=6))
         if not cat:
             return head
         return ft.GestureDetector(
@@ -291,7 +295,7 @@ class GridView:
         if holder is None:
             row = ft.Row(tiles, wrap=True, spacing=C.TILE_GAP, run_spacing=C.TILE_GAP,
                          vertical_alignment=ft.CrossAxisAlignment.START)
-            holder = ft.Container(row, padding=ft.Padding.only(bottom=24))
+            holder = ft.Container(row, padding=ft.Padding.only(bottom=28))
             self._section_holders[("grid", key)] = holder
         else:
             holder.content.controls = tiles
@@ -355,8 +359,13 @@ class GridView:
             return
         self.ui._reorder_apps(section_ids, list(payload["ids"]), target_id)
 
+    def bounce(self, app_id):
+        """Значок запущенной программы подпрыгивает — в сетке и на полке."""
+        for holder in self._icons.get(app_id, {}).values():
+            Wg.hop(holder)
+
     def _tile_meta(self, app, running: bool) -> tuple[str, str, bool]:
-        """Вторая строка плитки: (текст, цвет, моноширинный ли)."""
+        """Пояснение к программе: (текст, цвет, моноширинный ли)."""
         if self.ui.view.select_mode:
             return "", C.MUTED_2, False
         if app["id"] in self.ui.missing:
@@ -368,25 +377,42 @@ class GridView:
             return accel, C.MUTED_2, True
         return KINDS.get(app.get("kind") or "", ""), C.MUTED_2, False
 
+    def _tile_tip(self, app, running: bool, height: int) -> ft.Tooltip | None:
+        """Подсказка у значка: полное имя и то, что под значком не поместилось.
+
+        С задержкой, как в Finder: пока курсор просто идёт по сетке, подписи
+        не закрываются всплывающими подсказками. И под ячейкой, а не на ней:
+        иначе она ложилась ровно на подпись.
+        """
+        meta, _color, _mono = self._tile_meta(app, running)
+        name = app["name"]
+        text = f"{name} · {meta}" if meta else (name if len(name) > 14 else None)
+        if not text:
+            return None
+        return ft.Tooltip(message=text, wait_duration=TIP_WAIT_MS, prefer_below=True,
+                          vertical_offset=height / 2 + 4)
+
     def _select_box(self, picked):
         accent = self.ui._accent()
         return ft.Container(
-            ft.Icon(ft.Icons.CHECK, size=14, color=C.on_color(accent)) if picked else None,
+            ft.Icon(ft.Icons.CHECK_ROUNDED, size=14, color=C.on_color(accent)) if picked else None,
             width=20, height=20, border_radius=10,
-            bgcolor=accent if picked else C.CARD,
+            bgcolor=accent if picked else C.with_alpha(C.BG, 0.85),
             border=None if picked else ft.Border.all(1.5, C.FAINT),
-            alignment=ft.Alignment.CENTER)
+            shadow=ft.BoxShadow(blur_radius=4, offset=ft.Offset(0, 1),
+                                color=C.with_alpha(C.INK, 0.25)),
+            alignment=ft.Alignment.CENTER, animate=Wg.anim(C.ANIM_FAST))
 
-    def _more_button(self, app, size=26, visible=False, bgcolor=None):
-        """«···» на плитке: то же меню, что правый щелчок. Видна под курсором.
+    def _more_button(self, app, size=24, visible=False, bgcolor=None):
+        """«···» у значка: то же меню, что правый щелчок. Видна под курсором.
 
         Нажатие, а не щелчок контейнера: у нажатия есть координаты, и меню
         встаёт у самой кнопки, а не посередине окна. Плитку под ней нажатие
         не запускает — его забирает кнопка.
         """
         return ft.GestureDetector(
-            ft.Container(ft.Icon(ft.Icons.MORE_HORIZ, size=16, color=C.MUTED),
-                         width=size, height=size, border_radius=C.R_SMALL,
+            ft.Container(ft.Icon(ft.Icons.MORE_HORIZ_ROUNDED, size=16, color=C.TEXT_2),
+                         width=size, height=size, border_radius=size / 2,
                          bgcolor=bgcolor or C.RAISED, alignment=ft.Alignment.CENTER,
                          tooltip="Меню"),
             mouse_cursor=ft.MouseCursor.CLICK, visible=visible,
@@ -396,109 +422,127 @@ class GridView:
         marks = []
         if self.ui.view.select_mode:
             marks.append(ft.Container(self._select_box(a["id"] in self.ui.view.sel),
-                                      left=8, top=8))
+                                      left=10, top=4))
             return marks
         if a.get("favorite"):
-            marks.append(ft.Container(ft.Icon(ft.Icons.STAR, size=14, color=C.STAR),
-                                      left=9, top=9, tooltip="В избранном"))
-        marks.append(ft.Container(more, right=6, top=6))
+            marks.append(ft.Container(ft.Icon(ft.Icons.STAR_ROUNDED, size=15, color=C.STAR),
+                                      left=8, top=6, tooltip="В избранном"))
+        marks.append(ft.Container(more, right=6, top=4))
         return marks
+
+    def _label(self, text, width, selected, size=C.FS_SMALL):
+        """Имя под значком. У выбранного — плашка акцента по ширине имени, как в Finder."""
+        accent = self.ui._accent()
+        pill = ft.Container(
+            T(text, size=size, weight=ft.FontWeight.W_500,
+              color=C.on_color(accent) if selected else C.TEXT, max_lines=1,
+              overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
+            bgcolor=accent if selected else None, border_radius=C.R_SMALL - 1,
+            padding=ft.Padding.symmetric(vertical=1, horizontal=6),
+            expand=True, expand_loose=True)
+        return ft.Container(ft.Row([pill], alignment=ft.MainAxisAlignment.CENTER),
+                            width=width)
+
+    def _status_line(self, a, running, width):
+        """Под именем: точка «открыто», как в Dock, или «файл не найден»."""
+        if a["id"] in self.ui.missing and not self.ui.view.select_mode:
+            return ft.Container(T("файл не найден", size=C.FS_CAPTION, color=C.WARN_TEXT,
+                                  max_lines=1, text_align=ft.TextAlign.CENTER, width=width),
+                                height=STATUS_H, alignment=ft.Alignment.CENTER)
+        return ft.Container(Wg.dock_dot(running), height=STATUS_H,
+                            alignment=ft.Alignment.CENTER)
 
     def _build_tile(self, a, compact, running, selected, ids_box, box=None):
         width = C.TILE_W_COMPACT if compact else C.TILE_W
         height = C.TILE_H_COMPACT if compact else C.TILE_H
         size = C.TILE_ICON_COMPACT if compact else C.TILE_ICON
         missing = a["id"] in self.ui.missing
-        rest_bg = C.RAISED if selected else C.CARD
-        icon, ring = self._badged_icon(a, size, 12 if not compact else 10, running, missing,
-                                       rest_bg, glyph=round(size * 0.48))
-
-        meta, meta_color, mono = self._tile_meta(a, running)
+        radius = Wg.squircle(size)
+        icon = self.ui.icon_slot(a, size, radius, glyph=round(size * 0.5))
+        if missing:
+            icon = Wg.with_badge(icon, size, Wg.missing_badge(BADGE, C.BG), BADGE)
+        # Выбранный значок — на серой подложке, имя — на плашке акцента.
+        art = ft.Container(icon, padding=ft.Padding.all(ICON_PAD),
+                           border_radius=radius + ICON_PAD,
+                           bgcolor=C.RAISED if selected else None,
+                           animate=Wg.anim(C.ANIM_FAST))
+        self._icons.setdefault(a["id"], {})["grid"] = art
         body = ft.Column([
-            icon,
-            ft.Container(height=8 if compact else 10),
-            T(a["name"], size=C.FS_SMALL, weight=ft.FontWeight.W_500, color=C.TEXT,
-              max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER,
-              width=width - 16),
-            # Вторая строка есть всегда, пусть и пустая: высота плиток одна.
-            T(meta or " ", size=C.FS_CAPTION, color=meta_color, max_lines=1,
-              overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER,
-              width=width - 16, font_family="monospace" if mono else None),
-        ], spacing=2, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            art,
+            ft.Container(height=4 if compact else 6),
+            self._label(a["name"], width - 8, selected),
+            self._status_line(a, running, width - 8),
+        ], spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         more = self._more_button(a)
-        border = ft.Border.all(2, self.ui._accent() if selected else C.TRANSPARENT)
+        border = ft.Border.all(2, C.TRANSPARENT)
         tile = ft.Container(
-            ft.Stack([ft.Container(body, left=0, right=0, top=12 if compact else 14,
+            ft.Stack([ft.Container(body, left=0, right=0, top=4 if compact else 6,
                                    alignment=ft.Alignment.TOP_CENTER)]
                      + self._corner_marks(a, more)),
-            width=width, height=height, bgcolor=rest_bg, border=border,
-            border_radius=C.R_LARGE, clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
-            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT),
-        )
+            width=width, height=height, border=border, border_radius=C.R_LARGE,
+            tooltip=self._tile_tip(a, running, height), animate=Wg.anim(C.ANIM_TILE))
         if box is not None:
             box["tile"] = tile
             box["border"] = border
+        hover, down, up = Wg.lift(art)
 
         def on_hover(e):
             hot = Wg.entered(e)
             more.visible = hot and not self.ui.view.select_mode
-            if not selected:
-                tile.bgcolor = C.RAISED if hot else C.CARD
-                tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
-                if ring is not None:
-                    ring.border = ft.Border.all(2, tile.bgcolor)
+            tile.bgcolor = C.CARD if hot and not selected else None
             Wg.safe_update(tile)
+            hover(hot)
         tile.on_hover = on_hover
-        return self._tile_gestures(tile, a, ids_box)
+        return self._tile_gestures(tile, a, ids_box, down, up)
 
     def _build_poster_tile(self, a, compact, running, selected, ids_box, box=None):
         width = C.POSTER_W_COMPACT if compact else C.POSTER_W
         height = C.POSTER_H_COMPACT if compact else C.POSTER_H
         poster = icon_image(a.get("poster"), width=width, height=height,
                             fit=ft.BoxFit.COVER) or ft.Container()
-        meta, _color, _mono = self._tile_meta(a, running)
-        lines = [T(a["name"], size=C.FS_SMALL, weight=ft.FontWeight.W_600, color=C.WHITE,
-                   max_lines=2, overflow=ft.TextOverflow.ELLIPSIS)]
-        if meta and (running or a["id"] in self.ui.missing):
-            lines.append(T(meta, size=C.FS_CAPTION, max_lines=1,
-                           color=C.DARK_MEANING["GREEN_TEXT"] if running
-                           else C.DARK_MEANING["WARN_TEXT"]))
-        scrim = ft.Container(
-            ft.Column(lines, spacing=2, tight=True),
-            left=0, right=0, bottom=0, padding=ft.Padding.only(left=8, top=24, right=8, bottom=8),
-            gradient=ft.LinearGradient(begin=ft.Alignment.TOP_CENTER,
-                                       end=ft.Alignment.BOTTOM_CENTER,
-                                       colors=list(C.POSTER_SCRIM)))
+        art = ft.Container(
+            poster, width=width, height=height, bgcolor=C.CARD, border_radius=C.R_LARGE,
+            border=ft.Border.all(3, self.ui._accent() if selected else C.TRANSPARENT),
+            clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
+            shadow=ft.BoxShadow(blur_radius=12, offset=ft.Offset(0, 4),
+                                color=C.with_alpha(C.INK, 0.3)),
+            animate=Wg.anim(C.ANIM_FAST))
+        self._icons.setdefault(a["id"], {})["grid"] = art
         more = self._more_button(a)
-        children = [poster, scrim] + self._corner_marks(a, more)
-
+        body = ft.Column([art, ft.Container(height=6),
+                          self._label(a["name"], width, selected),
+                          self._status_line(a, running, width)],
+                         spacing=0, tight=True,
+                         horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        border = ft.Border.all(2, C.TRANSPARENT)
+        cell_h = height + 4 + 6 + 18 + STATUS_H + 6
         tile = ft.Container(
-            ft.Stack(children), width=width, height=height, bgcolor=C.CARD,
-            border=ft.Border.all(2, self.ui._accent() if selected else C.TRANSPARENT),
-            border_radius=C.R_LARGE, clip_behavior=ft.ClipBehavior.HARD_EDGE,
-            animate=ft.Animation(C.ANIM_TILE, ft.AnimationCurve.EASE_OUT),
-            animate_scale=ft.Animation(C.ANIM_HOVER, ft.AnimationCurve.EASE_OUT))
+            ft.Stack([ft.Container(body, left=0, right=0, top=4)]
+                     + self._corner_marks(a, more)),
+            width=width + 8, height=cell_h, border=border, border_radius=C.R_LARGE,
+            tooltip=self._tile_tip(a, running, cell_h), animate=Wg.anim(C.ANIM_TILE))
         if box is not None:
             box["tile"] = tile
-            box["border"] = tile.border
+            box["border"] = border
+        hover, down, up = Wg.lift(art, hover=1.04)
 
         def on_hover(e):
             hot = Wg.entered(e)
             more.visible = hot and not self.ui.view.select_mode
-            if not selected:
-                tile.scale = C.HOVER_SCALE_SUBTLE if hot else 1.0
-            Wg.safe_update(tile)
+            Wg.safe_update(more)
+            hover(hot)
         tile.on_hover = on_hover
-        return self._tile_gestures(tile, a, ids_box)
+        return self._tile_gestures(tile, a, ids_box, down, up)
 
-    def _tile_gestures(self, tile, a, ids_box):
+    def _tile_gestures(self, tile, a, ids_box, down=None, up=None):
         # Запуск по отпусканию, а не по нажатию: нажатие ещё может оказаться
-        # началом перетаскивания плитки, и тогда программа запускаться не должна.
+        # началом перетаскивания плитки, и тогда программа запускаться не
+        # должна. Нажатие только утапливает значок.
         return ft.GestureDetector(
             tile, mouse_cursor=ft.MouseCursor.CLICK,
             on_tap=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
+            on_tap_down=down, on_tap_up=up, on_tap_cancel=up,
             on_secondary_tap_down=lambda e, ap=a: self.ui.context_menus.app_menu(ap, e))
 
     def _list(self, apps, key):
@@ -507,7 +551,7 @@ class GridView:
         self._used.add(("list", key))
         holder = self._section_holders.get(("list", key))
         if holder is None:
-            col = ft.Column(rows, spacing=4)
+            col = ft.Column(rows, spacing=2)
             holder = ft.Container(col, padding=ft.Padding.only(bottom=24))
             self._section_holders[("list", key)] = holder
         else:
@@ -515,6 +559,7 @@ class GridView:
         return holder
 
     def _list_row(self, a, ids):
+        """Строка списка как в Finder: без карточки, выбранная — залита акцентом."""
         running = a["id"] in self.ui.running
         picked = a["id"] in self.ui.view.sel
         selected = picked or (not self.ui.view.select_mode and a["id"] == self.ui._sel_id)
@@ -528,32 +573,38 @@ class GridView:
             return hit[1]
         ids_box = {"ids": ids}
         missing = a["id"] in self.ui.missing
-        rest_bg = C.RAISED if selected else C.CARD
-        lines = [T(a["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500, color=C.TEXT,
-                   max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
+        accent = self.ui._accent()
+        ink = C.on_color(accent) if selected else None
         meta, meta_color, mono = self._tile_meta(a, running)
-        if meta:
-            lines.append(T(meta, size=C.FS_SMALL, color=meta_color,
-                           font_family="monospace" if mono else None))
         controls = []
         if self.ui.view.select_mode:
             controls.append(self._select_box(picked))
-        icon, ring = self._badged_icon(a, 32, 8, running, missing, rest_bg, glyph=17)
-        controls += [icon, ft.Column(lines, spacing=2, expand=True, tight=True)]
+        icon = self.ui.icon_slot(a, 28, Wg.squircle(28), glyph=15)
+        if missing:
+            icon = Wg.with_badge(icon, 28, Wg.missing_badge(12, accent if selected else C.BG),
+                                 12)
+        controls += [ft.Container(Wg.dock_dot(running), width=6), icon,
+                     T(a["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500,
+                       color=ink or C.TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+                       expand=True)]
+        if meta:
+            controls.append(T(meta, size=C.FS_SMALL,
+                              color=C.with_alpha(ink, 0.85) if ink else meta_color,
+                              font_family="monospace" if mono else None, max_lines=1))
         if a.get("favorite"):
-            controls.append(ft.Icon(ft.Icons.STAR, size=16, color=C.STAR))
+            controls.append(ft.Icon(ft.Icons.STAR_ROUNDED, size=16,
+                                    color=ink or C.STAR))
         if not self.ui.view.select_mode:
-            controls.append(self._more_button(a, size=28, visible=True,
+            controls.append(self._more_button(a, size=26, visible=True,
                                               bgcolor=C.TRANSPARENT))
-        row = ft.Container(ft.Row(controls, spacing=12,
+        row = ft.Container(ft.Row(controls, spacing=10,
                                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                           padding=ft.Padding.symmetric(vertical=8, horizontal=12),
-                           border_radius=C.R,
-                           border=ft.Border.all(2, self.ui._accent() if selected
-                                                else C.TRANSPARENT),
-                           bgcolor=rest_bg)
+                           height=40, padding=ft.Padding.symmetric(horizontal=8),
+                           border_radius=C.R, border=ft.Border.all(2, C.TRANSPARENT),
+                           bgcolor=accent if selected else None,
+                           animate=Wg.anim(C.ANIM_FAST))
         if not selected:
-            self._hover_card(row, ring)
+            Wg.hoverable(row, None, C.CARD)
         built = ft.GestureDetector(
             row,
             on_tap=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),
@@ -595,9 +646,9 @@ class GridView:
                                     alignment=ft.MainAxisAlignment.CENTER), width=720),
                 ft.Container(height=24),
                 ft.Row([Wg.primary_btn(f"Добавить {picked}" if picked else "Добавить",
-                                       scan.add_suggestions, self.ui._accent(), ft.Icons.ADD),
+                                       scan.add_suggestions, self.ui._accent(), ft.Icons.ADD_ROUNDED),
                         Wg.secondary_btn("Всё найденное", scan.review_suggestions,
-                                         ft.Icons.SEARCH)],
+                                         ft.Icons.SEARCH_ROUNDED)],
                        spacing=8, alignment=ft.MainAxisAlignment.CENTER),
                 ft.Container(height=12),
                 Wg.quiet_btn("Не сейчас", scan.dismiss_suggestions, color=C.MUTED),
@@ -614,7 +665,7 @@ class GridView:
                                  overflow=ft.TextOverflow.ELLIPSIS),
                                T(s["hint"], size=C.FS_SMALL, color=C.MUTED_2, max_lines=1)],
                               spacing=2, tight=True, expand=True),
-                    ft.Icon(ft.Icons.CHECK_BOX if on else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                    ft.Icon(ft.Icons.CHECK_BOX_ROUNDED if on else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED,
                             size=18, color=accent if on else C.FAINT)],
                    spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             width=232, height=56, padding=ft.Padding.symmetric(horizontal=12),
@@ -634,7 +685,7 @@ class GridView:
             # сделать, поэтому кнопка главная, залитая.
             controls += [ft.Container(height=24),
                          ft.Row([Wg.primary_btn(btn_label, on_click, self.ui._accent(),
-                                                ft.Icons.ADD)],
+                                                ft.Icons.ADD_ROUNDED)],
                                 alignment=ft.MainAxisAlignment.CENTER)]
         return ft.Container(
             ft.Column(controls, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),

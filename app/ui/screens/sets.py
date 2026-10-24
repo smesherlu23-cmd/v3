@@ -39,9 +39,9 @@ def _set_header(ui, rec):
                  ft.Container(T(accel, size=C.FS_SMALL, color=C.MUTED, font_family="monospace"),
                               tooltip="Запускает набор, пока открыто окно Centurio")]
     monitor = ft.Container(
-        ft.Row([ft.Icon(ft.Icons.DESKTOP_WINDOWS, size=14, color=C.FAINT),
+        ft.Row([ft.Icon(ft.Icons.DESKTOP_WINDOWS_ROUNDED, size=14, color=C.FAINT),
                 T(f"Монитор {rec['monitor'] + 1}", size=C.FS_SMALL, color=C.MUTED),
-                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14, color=C.FAINT)],
+                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, size=14, color=C.FAINT)],
                spacing=4, tight=True),
         tooltip="Куда расставлять окна", border_radius=C.R_SMALL,
         padding=ft.Padding.symmetric(vertical=2, horizontal=4),
@@ -49,9 +49,9 @@ def _set_header(ui, rec):
     meta += [_meta_divider(), Wg.hoverable(monitor, None, C.CARD)]
     right = [Wg.secondary_btn("Запомнить, как стоят окна",
                               lambda: ui.set_ops.capture_set_layout(rec["id"]),
-                              ft.Icons.CENTER_FOCUS_STRONG),
+                              ft.Icons.CENTER_FOCUS_STRONG_ROUNDED),
              Wg.primary_btn("Запустить набор", lambda: ui.set_ops.launch_set(rec["id"]),
-                            ui._accent(), ft.Icons.PLAY_ARROW)]
+                            ui._accent(), ft.Icons.PLAY_ARROW_ROUNDED)]
     return ft.Row([
         ui.set_mosaic(rec, 48, 12),
         ft.Column([ft.Container(name, height=28),
@@ -66,7 +66,7 @@ def _meta_divider():
 
 
 def _layout_column(ui, rec):
-    head = ft.Row([_caps("РАСКЛАДКА"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
+    head = ft.Row([_caps("Раскладка"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
                   spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     panel = ft.Container(
         ft.Column([_canvas(ui, rec), _no_place(ui, rec)], spacing=12, tight=True),
@@ -253,7 +253,7 @@ def _no_place(ui, rec):
                     rec, en, e)))
     if not chips:
         return ft.Container(height=0)
-    return ft.Row([ft.Container(_caps("БЕЗ МЕСТА"), padding=ft.Padding.only(top=8)),
+    return ft.Row([ft.Container(_caps("Без места"), padding=ft.Padding.only(top=8)),
                    ft.Row(chips, spacing=8, wrap=True, run_spacing=8, expand=True)],
                   spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
@@ -285,11 +285,11 @@ def _preset_thumb(ui, rec, key):
 
 
 def _order_column(ui, rec):
-    head = ft.Row([_caps("ПОРЯДОК ЗАПУСКА"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
+    head = ft.Row([_caps("Порядок запуска"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
                   spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     rows = [_order_row(ui, rec, entry) for entry in rec["items"]]
     add = ft.Container(
-        ft.Row([ft.Icon(ft.Icons.ADD, size=16, color=C.MUTED),
+        ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=C.MUTED),
                 T("Добавить программу", size=C.FS_BODY, color=C.TEXT_2)],
                spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER),
         height=44, border_radius=C.R, border=ft.Border.all(1, C.BORDER),
@@ -301,7 +301,7 @@ def _order_column(ui, rec):
     delay = ft.Container(
         ft.Row([T("без паузы" if not rec["delay_seconds"] else f"{rec['delay_seconds']:g} с",
                   size=C.FS_SMALL, color=C.TEXT, font_family="monospace"),
-                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=14, color=C.FAINT)],
+                ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, size=14, color=C.FAINT)],
                spacing=4, tight=True),
         height=30, padding=ft.Padding.symmetric(horizontal=12),
         bgcolor=C.CARD, border_radius=C.R, alignment=ft.Alignment.CENTER,
@@ -326,8 +326,8 @@ def _target_row(ui, rec):
                            size=28)
 
     return ft.Container(
-        ft.Row([ft.Icon(ft.Icons.LINK, size=16, color=C.FAINT), field,
-                pick(ft.Icons.FOLDER_OPEN, "Выбрать папку", True),
+        ft.Row([ft.Icon(ft.Icons.LINK_ROUNDED, size=16, color=C.FAINT), field,
+                pick(ft.Icons.FOLDER_OPEN_ROUNDED, "Выбрать папку", True),
                 pick(ft.Icons.INSERT_DRIVE_FILE_OUTLINED, "Выбрать файл", False)],
                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         height=44, padding=ft.Padding.only(left=12, right=8), border_radius=C.R,
@@ -354,7 +354,7 @@ def _order_row(ui, rec, entry):
     rest_bg = C.PANEL if muted else C.CARD
     row = ft.Container(
         ft.Row([
-            ft.Icon(ft.Icons.DRAG_INDICATOR, size=16, color=C.FAINT),
+            ft.Icon(ft.Icons.DRAG_INDICATOR_ROUNDED, size=16, color=C.FAINT),
             ui.icon_slot(app, 32, 8, glyph=16),
             ft.Column([T(app["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500,
                          color=C.TEXT_2 if muted else C.TEXT, max_lines=1,
@@ -362,7 +362,7 @@ def _order_row(ui, rec, entry):
                        T(place, size=C.FS_SMALL, color=C.MUTED_2, max_lines=1,
                          overflow=ft.TextOverflow.ELLIPSIS)],
                       spacing=2, expand=True, tight=True),
-            Wg.icon_btn(ft.Icons.MORE_HORIZ, "Меню",
+            Wg.icon_btn(ft.Icons.MORE_HORIZ_ROUNDED, "Меню",
                         lambda en=entry: ui.context_menus.set_item_menu(rec, en, None),
                         size=28, color=C.FAINT),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),

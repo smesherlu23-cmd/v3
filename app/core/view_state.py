@@ -26,7 +26,7 @@ class ViewState:
         self.query = ""
         self.sort = s.get("view_sort") if s.get("view_sort") in queries.SORT_KEYS else "alpha"
         self.mode = s.get("view_mode") if s.get("view_mode") in MODE_KEYS else "grid"
-        self.sidebar_open = True
+        self.sidebar_open = s.get("sidebar_open", True) is not False
         self.selected = -1
         self.screen = "grid"
         self.palette_open = False
@@ -104,7 +104,12 @@ class ViewState:
             self.persist()
 
     def toggle_sidebar(self):
-        self.sidebar_open = not self.sidebar_open
+        self.set_sidebar(not self.sidebar_open)
+
+    def set_sidebar(self, open_: bool):
+        """Развёрнутая панель или полоса значков — запоминается между запусками."""
+        self.sidebar_open = bool(open_)
+        self.store.set_setting("sidebar_open", self.sidebar_open, persist="debounce")
 
     def revalidate(self, categories):
         new = queries.valid_filter(self.filter, categories)

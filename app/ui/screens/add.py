@@ -40,7 +40,7 @@ def _add_header(ui):
     rescan = Wg.secondary_btn("Сканировать снова",
                               (lambda: None) if ui.scan.scanning()
                               else (lambda: ui.scan.start_scan(force=True)),
-                              ft.Icons.REFRESH)
+                              ft.Icons.REFRESH_ROUNDED)
     if ui.scan.scanning():
         rescan.content.controls[0] = Wg.spinner(16)
     return _screen_header("Найти и добавить", subtitle, ui.back_to_grid, extra=[rescan])
@@ -67,7 +67,7 @@ def _input_box(ui, state):
     if box is None:
         state["input_add"] = ft.Container()
         box = ft.Container(
-            ft.Row([ft.Icon(ft.Icons.SEARCH, size=16, color=C.MUTED_2),
+            ft.Row([ft.Icon(ft.Icons.SEARCH_ROUNDED, size=16, color=C.MUTED_2),
                     _input_field(ui, state), state["input_add"]],
                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             height=40, bgcolor=C.CARD, border=ft.Border.all(1, C.LINE), border_radius=C.R,
@@ -77,7 +77,7 @@ def _input_box(ui, state):
     state["input_add"].content = (
         Wg.primary_btn("Добавить в список",
                        lambda: ui.in_background(ui.scan.add_manual_path, path),
-                       ui._accent(), ft.Icons.ADD, height=32)
+                       ui._accent(), ft.Icons.ADD_ROUNDED, height=32)
         if looks_like_target(path) else None)
     return box
 
@@ -108,7 +108,7 @@ def _add_search(ui, state):
         _input_box(ui, state),
         Wg.secondary_btn("Файл…", ui.scan.pick_file, ft.Icons.INSERT_DRIVE_FILE_OUTLINED,
                          height=40),
-        Wg.secondary_btn("Папка…", ui.scan.pick_folder, ft.Icons.FOLDER_OPEN, height=40),
+        Wg.secondary_btn("Папка…", ui.scan.pick_folder, ft.Icons.FOLDER_OPEN_ROUNDED, height=40),
         Wg.hoverable(only_new, None, C.CARD),
     ]
     holder.controls = [state["search_row_holder"]]
@@ -147,7 +147,7 @@ def _found_list(ui, state):
 
 def _inline_error(ui, err):
     return ft.Container(
-        ft.Row([ft.Icon(ft.Icons.ERROR_OUTLINE, size=16, color=C.DANGER),
+        ft.Row([ft.Icon(ft.Icons.ERROR_OUTLINE_ROUNDED, size=16, color=C.DANGER),
                 ft.Column([T(f"{err.get('label') or 'Источник'} не отдал список программ",
                              size=C.FS_BODY, color=C.TEXT),
                            T("Остальные источники прочитались", size=C.FS_SMALL,
@@ -176,7 +176,7 @@ def _add_empty(ui):
                 Wg.secondary_btn("Показать все найденные" if only_new else "Повторить поиск",
                                  ui.scan.toggle_only_new if only_new
                                  else (lambda: ui.scan.start_scan(force=True))),
-                Wg.secondary_btn("Выбрать файл", ui.scan.pick_file, ft.Icons.FOLDER_OPEN),
+                Wg.secondary_btn("Выбрать файл", ui.scan.pick_file, ft.Icons.FOLDER_OPEN_ROUNDED),
             ], spacing=8), padding=ft.Padding.only(top=8)),
         ], spacing=8, tight=True), width=480, padding=ft.Padding.only(top=32))
 
@@ -186,11 +186,11 @@ def _add_group(ui, group):
     picked = [k for k in keys if k in ui.view.add_sel]
     accent = ui._accent()
     if keys and len(picked) == len(keys):
-        box, box_color = ft.Icons.CHECK_BOX, accent
+        box, box_color = ft.Icons.CHECK_BOX_ROUNDED, accent
     elif picked:
-        box, box_color = ft.Icons.INDETERMINATE_CHECK_BOX, accent
+        box, box_color = ft.Icons.INDETERMINATE_CHECK_BOX_ROUNDED, accent
     else:
-        box, box_color = ft.Icons.CHECK_BOX_OUTLINE_BLANK, C.FAINT
+        box, box_color = ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED, C.FAINT
 
     cat = group.get("cat")
     glyph = (Wg.cat_glyph(cat, size=16) if cat
@@ -214,9 +214,9 @@ def _add_row(ui, row):
     checked = row["key"] in ui.view.add_sel
     accent = ui._accent()
     if not row["is_new"]:
-        box = ft.Icon(ft.Icons.CHECK_CIRCLE, size=18, color=C.GREEN)
+        box = ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, size=18, color=C.GREEN)
     else:
-        box = ft.Icon(ft.Icons.CHECK_BOX if checked else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+        box = ft.Icon(ft.Icons.CHECK_BOX_ROUNDED if checked else ft.Icons.CHECK_BOX_OUTLINE_BLANK_ROUNDED,
                       size=18, color=accent if checked else C.FAINT)
 
     item = row["item"]
@@ -238,7 +238,7 @@ def _add_row(ui, row):
             ft.Row([Wg.cat_glyph(cat, size=14) if cat
                     else T("Категория", size=C.FS_SMALL, color=C.MUTED_2),
                     T(cat["name"], size=C.FS_SMALL, color=C.TEXT_2) if cat else ft.Container(),
-                    ft.Icon(ft.Icons.SWAP_VERT, size=14, color=C.FAINT)],
+                    ft.Icon(ft.Icons.SWAP_VERT_ROUNDED, size=14, color=C.FAINT)],
                    spacing=8, tight=True),
             height=28, padding=ft.Padding.symmetric(horizontal=12),
             bgcolor=C.RAISED if checked else C.CARD, border_radius=14,
@@ -262,11 +262,11 @@ def _add_footer(ui):
     return ft.Container(
         ft.Row(left + [
             ft.Container(expand=True),
-            ft.Container(Wg.secondary_btn("Решу позже", ui.scan.defer_add, ft.Icons.INBOX),
+            ft.Container(Wg.secondary_btn("Решу позже", ui.scan.defer_add, ft.Icons.INBOX_ROUNDED),
                          tooltip="Отмеченное подождёт в «Новых программах» — "
                                  "разложите по одной, когда будет время"),
             Wg.primary_btn(f"Добавить {count}" if count else "Добавить", ui.scan.commit_add,
-                           ui._accent(), ft.Icons.ADD),
+                           ui._accent(), ft.Icons.ADD_ROUNDED),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         height=64, padding=ft.Padding.symmetric(horizontal=24),
         border=ft.Border.only(top=ft.BorderSide(1, C.LINE)))

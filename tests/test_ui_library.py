@@ -13,6 +13,7 @@ from helpers import (
     _tap,
     _tap_mods,
     _texts,
+    _tips,
     _ui_for,
     _walk,
     ok,
@@ -141,15 +142,15 @@ def test_ui_single_screen_layout():
         ui, page = _ui_for(store)
 
         ok(page.controls, "mount puts a control tree on the page")
-        ok(ui.rail_container.width == 72, "the rail is 72 wide")
-        ok(ui.sidebar_container.width == 232, "the sidebar is 232 wide")
+        ok(ui.sidebar_container.width == C.SIDEBAR_W == 240,
+           "one sidebar, 240 wide, as in Finder")
         ok(ui.sidebar_container.visible, "and it is shown")
-        ok(ui.toolbar_holder.visible, "the content toolbar is there")
+        ok(not hasattr(ui, "rail_container"), "the separate icon rail is gone")
         ok(not hasattr(ui, "status_container"),
-           "the status bar is gone — the sidebar footer and the rail badge carry it")
+           "the status bar is gone — the sidebar footer carries it")
 
         head = _texts(ui.header_holder)
-        ok("Centurio" in head, "the header carries the logo")
+        ok("Все программы" in head, "the title bar names the open section, as in Finder")
         ok("Ctrl+Пробел" not in head,
            "the search hotkey chip is a pure hint — it stays gone from the idle header")
         ok(not any("Запуск" == t for t in head),
@@ -157,22 +158,27 @@ def test_ui_single_screen_layout():
         ok(ui.search_field.hint_text == "Найти или запустить",
            "one field both searches and launches")
 
-        rail = _texts(ui.rail_container)
-        ok(not rail, "the rail is icons only, as it always was")
-
         side = _texts(ui.sidebar_container)
-        for label in ("Все программы", "Избранное", "Недавние", "Запущено", "НАБОРЫ"):
+        for label in ("Все программы", "Избранное", "Недавние", "Запущено", "Наборы"):
             ok(label in side, f"the sidebar has «{label}»")
         ok(not any("приложени" in t for t in side),
            "the two-part «128 приложений · 4 категории» line was shortened away")
-        ok("НЕДАВНИЕ" not in side, "the recent list that duplicated the grid is gone")
 
-        bar = _texts(ui.toolbar_holder)
-        ok("Выбрать" in bar, "the toolbar starts the bulk-select mode")
-        ok("По алфавиту" in bar, "keeps the sort selector")
-        ok("Добавить" in bar, "and carries one primary action")
+        bar = _tips(ui.toolbar_holder)
+        ok(ui.toolbar_holder.content is not None, "the toolbar sits in the title bar")
+        ok("Выбрать несколько" in bar, "the toolbar starts the bulk-select mode")
+        ok("Порядок: по алфавиту" in bar, "keeps the sort selector")
+        ok("Найти и добавить программы" in bar, "and the add button")
         ok(not any("Обновить" in t or "сканировать" in t.lower() for t in bar),
            "rescanning still lives in the right-click menu, not here")
+
+        ui._toggle_sidebar()
+        ok(ui.sidebar_container.width == C.SIDEBAR_RAIL_W,
+           "the sidebar folds to a strip of icons")
+        ok(not _texts(ui.sidebar_container), "which carries no labels")
+        ok(store.settings()["sidebar_open"] is False, "and the choice is remembered")
+        ui._toggle_sidebar()
+        ok(ui.sidebar_container.width == C.SIDEBAR_W, "and opens back")
 
         content = _texts(ft.Column(ui.content_col.controls))
         ok("Быстрый запуск" in content, "the quick-launch strip is still drawn")
@@ -195,16 +201,19 @@ def test_ui_single_screen_layout():
         # по которой щёлкнули, уезжала в другой ряд.
         ok(ui._content_width() == width_before,
            "the grid keeps its width — no column is taken away from under the tile")
-        ok(ui.inspector_overlay.right == 0 and ui.inspector_overlay.top == 52,
-           "the panel floats on the right, under the header")
+        ok(ui.inspector_overlay.right == 12 and ui.inspector_overlay.top == C.HEADER_H + 12,
+           "the panel floats on the right, under the header, clear of the edges")
 
-        # Ещё более узкое окно убирает боковую панель.
+        # Узкое окно сворачивает панель до значков, а не убирает её.
         page.window.width = 960
         ui.refresh()
-        ok(not ui.sidebar_container.visible, "below 1000 the sidebar goes away")
+        ok(ui.sidebar_container.visible and ui.sidebar_container.width == C.SIDEBAR_RAIL_W,
+           "below 1100 the sidebar folds to icons by itself")
+        ok(store.settings()["sidebar_open"] is not False,
+           "without changing what the person chose")
         page.window.width = 1400
         ui.refresh()
-        ok(ui.sidebar_container.visible, "and comes back when there is room")
+        ok(ui.sidebar_container.width == C.SIDEBAR_W, "and opens when there is room")
 
 
 def test_ui_matches_the_design_sizes():
@@ -236,25 +245,23 @@ def test_ui_matches_the_design_sizes():
         ui, _ = _ui_for(store)
 
         ok(ui.header_holder.content.height == C.HEADER_H == 52, "the header is 52 tall")
-        ok(ui.search_box.width == C.SEARCH_W == 560, "the search field is 560 wide")
-        ok(ui.rail_container.width == 72 and ui.sidebar_container.width == 232,
-           "the rail is 72 and the sidebar 232")
-        ok(_sized(ui.rail_container, 42, 42), "the rail buttons are 42x42")
-        ok(_sized(ui.rail_container, 3, 26), "with a 3x26 indicator on the active one")
+        ok(ui.search_box.width == C.SEARCH_W == 480, "the search field is 480 wide")
+        ok(ui.sidebar_container.width == C.SIDEBAR_W == 240, "the sidebar is 240")
+        ok(_sized(ui.sidebar_container, None, C.SIDEBAR_ROW_H) and C.SIDEBAR_ROW_H == 30,
+           "with 30 px rows, as in Finder")
 
         content = ft.Column(ui.content_col.controls)
-        ok(_sized(content, C.QUICK_W, 88) and C.QUICK_W == 132,
-           "a quick-launch card is 132 wide")
-        # Плитка почти квадратная, значок крупно: у прежней 164×146 значок 50 px
-        # занимал десятую часть площади, остальное было тёмной пустотой.
-        ok(_sized(content, C.TILE_W, C.TILE_H) and (C.TILE_W, C.TILE_H) == (120, 128),
-           "a tile is 120x128")
-        ok(_sized(content, C.TILE_ICON, C.TILE_ICON) and C.TILE_ICON == 56,
-           "with a 56 px icon — almost half the tile")
-        ok(_sized(content, C.POSTER_W, C.POSTER_H) and (C.POSTER_W, C.POSTER_H) == (120, 180),
-           "a game poster is 120x180, as wide as a tile")
+        ok(_sized(content, C.DOCK_CELL, None) and (C.DOCK_CELL, C.DOCK_ICON) == (84, 48),
+           "the quick-launch shelf holds 84 px cells with 48 px icons, like the Dock")
+        # Как в Launchpad: значок без карточки, имя под ним.
+        ok(_sized(content, C.TILE_W, C.TILE_H) and (C.TILE_W, C.TILE_H) == (104, 116),
+           "a program cell is 104x116")
+        ok(_sized(content, C.TILE_ICON, C.TILE_ICON) and C.TILE_ICON == 60,
+           "with a 60 px icon")
+        ok(_sized(content, C.POSTER_W, C.POSTER_H) and (C.POSTER_W, C.POSTER_H) == (104, 148),
+           "a game poster is 104x148, as wide as a cell")
         per_row = (ui._content_width() - 48 + C.TILE_GAP) // (C.TILE_W + C.TILE_GAP)
-        ok(per_row == 8, f"eight programs fit a row of the 1400 px window ({per_row})")
+        ok(per_row == 9, f"nine programs fit a row of the 1400 px window ({per_row})")
 
         ui._select_tile(app_id)
         ok(ui.inspector_overlay.width == 320, "the inspector is 320 wide")
@@ -272,11 +279,11 @@ def test_ui_matches_the_design_sizes():
 
         ui.toggle_select_mode()
         ui._tile_tap(second, [second])
-        ok(_sized(ui.bulk_layer, None, 56), "the floating action bar is 56 tall")
+        ok(_sized(ui.bulk_layer, None, 52), "the floating action bar is 52 tall")
         ok(ui.bulk_layer.bottom == 26, "sitting 26 off the bottom")
         ok(_sized(ft.Column(ui.content_col.controls), 20, 20),
            "and the tiles carry a 20x20 checkbox in this mode")
-        ok(ui.bulk_layer.bottom == 26 and ui.toast.control.bottom > 56 + 26,
+        ok(ui.bulk_layer.bottom == 26 and ui.toast.control.bottom > 52 + 26,
            "the toasts step above the bar")
         ui.toggle_select_mode()
 
@@ -544,7 +551,7 @@ def test_ui_inspector_replaces_the_modal_form():
         ok("Своя горячая клавиша" not in shown, "and no system-wide hotkey field any more")
         ok("В набор" in shown,
            "«В наборах» stays even for an app in none — that's how it joins the first one")
-        ok("ПАРАМЕТРЫ ЗАПУСКА" in shown, "and the collapsed launch options")
+        ok("Параметры запуска" in shown, "and the collapsed launch options")
         ok(not any("Скрыть" in t for t in shown),
            "«Скрыть» didn't come along when the popup's items moved in here")
 
@@ -700,9 +707,12 @@ def test_ui_click_launches_right_click_opens_the_menu():
         ui.launcher.running_ids.return_value = []
 
         taps = tile_taps()
-        ok(len(taps) == 2 and all(g.on_tap and not g.on_tap_down for g in taps),
-           "tiles launch when the button is released, not pressed: a press may "
-           "start a drag, and dragging a tile must not launch the app")
+        ok(len(taps) == 2 and all(g.on_tap for g in taps), "both tiles take a click")
+        taps[0].on_tap_down(_tap())
+        ok(not ui.launcher.launch.called,
+           "a press only pushes the icon in; the app launches on release, since a "
+           "press may start a drag, and dragging a tile must not launch the app")
+        taps[0].on_tap_up(_tap())
         taps[0].on_tap(types_ns(control=taps[0]))
         ok(ui.launcher.launch.called, "a plain click launches the app directly")
         ok(ui.view.inspector is None, "without opening the inspector")
@@ -760,7 +770,7 @@ def test_ui_bulk_operations():
         ok(not ui.bulk_layer.visible, "and the bar waits until something is picked")
         bar = _texts(ui.toolbar_holder)
         ok("Выбрать всё" in bar, "the toolbar offers to take the whole view")
-        ok("Добавить" in bar, "the primary add button stays put, even in select mode")
+        ok("Готово" in bar, "and one clear way out of the mode")
 
         ui._tile_tap(ids[0], ids)
         ok(ui.view.sel == [ids[0]], "a click picks one")
@@ -1185,7 +1195,7 @@ def test_ui_icons_are_never_letters():
         ok(slot.bgcolor == C.RAISED, "an icon-less app gets the neutral pad")
         ok(isinstance(slot.content, ft.Icon), "with a glyph, not a letter")
         ok(slot.content.color == C.MUTED, "in the muted placeholder colour")
-        ok(slot.content.icon == ft.Icons.FOLDER, "and the glyph is its category's")
+        ok(slot.content.icon == ft.Icons.FOLDER_ROUNDED, "and the glyph is its category's")
 
         icon_png = iconify.generate_icon(os.path.join(d, "real.png"), 32)
         store.update_app(app["id"], {"icon": str(icon_png)})
@@ -1285,7 +1295,8 @@ def test_toast_lifecycle():
                detail="Остальные источники прочитались", action_label="Повторить",
                action=lambda: None)
     ok(host.icon.color == C.DANGER, "an error toast is red")
-    ok(host.card.bgcolor == C.ERR_BG, "and looks different, not just differently worded")
+    ok(host.card.bgcolor != C.GLASS and host.card.border.top.color == C.ERR_BORDER,
+       "and looks different, not just differently worded")
     ok(host.detail.visible, "a second line explains what happened")
     ok(host.action_label.value == "Повторить", "and the action closes it")
 

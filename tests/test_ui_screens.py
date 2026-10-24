@@ -11,6 +11,7 @@ from helpers import (
     _menu_labels,
     _settle_threads,
     _texts,
+    _tips,
     _ui_for,
     ft,
     ok,
@@ -62,7 +63,7 @@ def test_ui_inbox_badge_and_triage():
         creative_id = store.add_category("Творчество")["id"]
         ui, _ = _ui_for(store)
 
-        ok(not any("12" in t for t in _texts(ui.rail_container)),
+        ok(not any("12" in t for t in _texts(ui.sidebar_container)),
            "an empty queue shows no badge at all")
 
         store.queue_inbox([
@@ -70,7 +71,7 @@ def test_ui_inbox_badge_and_triage():
             {"name": "Krita", "path": "C:/krita.exe", "source": "startmenu"},
         ])
         ui.refresh()
-        ok("2" in _texts(ui.rail_container), "the badge counts what is waiting")
+        ok("2" in _texts(ui.sidebar_container), "the badge counts what is waiting")
 
         ui.open_triage()
         shown = _texts(ft.Column(ui.content_col.controls)) if False else _texts(
@@ -159,7 +160,7 @@ def test_ui_sets():
         ok(ui.view.active_set == rec["id"], "and opens its own screen straight away")
 
         screen = _texts(ft.Column(ui.content_col.controls))
-        for label in ("РАСКЛАДКА", "ПОРЯДОК ЗАПУСКА", "Запустить набор",
+        for label in ("Раскладка", "Порядок запуска", "Запустить набор",
                       "Запомнить, как стоят окна", "60 / 40", "Пауза между запусками"):
             ok(label in screen, f"the set screen carries «{label}»")
         ok("слева · 60%" in screen, "and says where each program's window goes")
@@ -224,7 +225,7 @@ def test_ui_sets():
            "a member can start minimised, and then it has no place")
         ui._open_set(rec["id"])
         board = _texts(ft.Column(ui.content_col.controls))
-        ok("БЕЗ МЕСТА" in board and "свёрнутым" in board,
+        ok("Без места" in board and "свёрнутым" in board,
            "which the screen says out loud, under the layout — not only in the list")
 
         # Из строки «без места» программу тащат на пустое место схемы.
@@ -445,7 +446,7 @@ def test_ui_category_popover():
         ok(ui.popover_layer.visible, "the popover opens next to the rail")
         ok(not page.opened, "and it is not a dialog")
         shown = _texts(ui.popover_layer.content)
-        ok("ЦВЕТ" in shown and "ИКОНКА" in shown, "it has the colour and icon groups")
+        ok("Цвет" in shown and "Значок" in shown, "it has the colour and icon groups")
         ok("Своя картинка" in shown, "and the custom-image row")
         ok("Удалить категорию" in shown, "and deletion, without a second dialog")
 
@@ -532,7 +533,8 @@ def test_ui_calm_mode():
                     + _texts(ui.inspector_overlay))
 
         quiet = everything()
-        ok("Ctrl+1" in quiet, "item 1: the tile's own hotkey still shows")
+        ok(any("Ctrl+1" in t for t in _tips(ft.Column(ui.content_col.controls))),
+           "item 1: the tile's own hotkey still shows, in its tooltip")
         ok(any(t.startswith("C:\\") for t in quiet),
            "item 2: the inspector's technical block (path) is untouched")
         ok(any(t.startswith("Место 1") for t in quiet),
@@ -578,8 +580,8 @@ def test_ui_calm_mode():
 
         store.queue_inbox([{"name": "Krita", "path": "C:/krita.exe", "source": "startmenu"}])
         ui.refresh()
-        ok(any("1" in t for t in _texts(ui.rail_container)),
-           "group 2: «сколько в разборе» — the rail badge — stays visible")
+        ok(any("1" in t for t in _texts(ui.sidebar_container)),
+           "group 2: «сколько в разборе» — the sidebar badge — stays visible")
         ui.open_triage()
         triage_screen = _texts(ui.content_col.controls[0])
         ok(any("Осталось" in t for t in triage_screen),
@@ -721,14 +723,13 @@ def test_ui_settings_screen():
             ok(tab in shown, f"the section «{tab}» is in the left column")
         ok("Категории" not in shown, "and «Категории» is not a settings section")
         ok(ui.view.settings_tab == "view", "«Вид» is the one open to begin with")
-        for row in ("ОФОРМЛЕНИЕ", "АКЦЕНТ", "ПЛИТКИ", "Постеры для игр"):
+        for row in ("Внешний вид", "Акцент", "Значки программ", "Боковая панель",
+                    "Постеры для игр"):
             ok(row in shown, f"«{row}» is on it")
-        ok("Огромная" not in shown and "Очень крупная" in shown,
-           "the biggest rail size is «Очень крупная», not a joke")
         # Настройки — на всю ширину: полоса категорий и панель библиотеки не
         # стоят рядом с их собственной навигацией.
-        ok(not ui.rail_container.visible and not ui.sidebar_container.visible,
-           "the settings take the whole window, without the library's rail and sidebar")
+        ok(not ui.sidebar_container.visible,
+           "the settings take the whole window, without the library's sidebar")
         ok("Спокойный вид" not in shown,
            "calm mode is the only mode now — there is no switch left for it")
 
@@ -749,7 +750,7 @@ def test_ui_settings_screen():
             here = _texts(ui.content_col.controls[0])
             for row in rows:
                 ok(row in here, f"«{row}» is on the «{tab}» section")
-            ok("АКЦЕНТ" not in here, f"and «{tab}» does not carry «Вид»'s controls")
+            ok("Акцент" not in here, f"and «{tab}» does not carry «Вид»'s controls")
             if tab == "keys":
                 ok("Подсказки клавиш" not in here,
                    "its own switch went with it — the footer it controlled is gone too")

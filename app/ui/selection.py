@@ -5,6 +5,7 @@ import flet as ft
 
 from ..core import queries
 from . import screens
+from . import widgets as Wg
 
 
 class SelectionMixin:
@@ -18,8 +19,14 @@ class SelectionMixin:
             self.bulk_card.offset = ft.Offset(0, 0.3)
             return
         self.bulk_card.content = screens.build_bulk_bar(self)
-        self.bulk_card.opacity = 1
-        self.bulk_card.offset = ft.Offset(0, 0)
+        if self.bulk_layer.visible:
+            self.bulk_card.opacity = 1
+            self.bulk_card.offset = ft.Offset(0, 0)
+        else:
+            # Скрытый слой Flutter не рисует вовсе: показанный, он появился бы
+            # сразу на месте. Панель выезжает снизу отдельным кадром.
+            Wg.enter(self.bulk_card, {"opacity": 0, "offset": ft.Offset(0, 0.4)},
+                     {"opacity": 1, "offset": ft.Offset(0, 0)})
         self.bulk_layer.visible = True
 
     def _flat_apps(self, sections=None):

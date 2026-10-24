@@ -47,7 +47,7 @@ class LibraryFilesMixin:
             self.toast.error("Не удалось создать копию", action=self.backup,
                              action_label="Повторить")
             return
-        self.toast.show(f"Копия сохранена: {path.name}", icon=ft.Icons.BACKUP,
+        self.toast.show(f"Копия сохранена: {path.name}", icon=ft.Icons.BACKUP_ROUNDED,
                         icon_color=C.MUTED)
 
     def pick_backup(self):
@@ -74,11 +74,11 @@ class LibraryFilesMixin:
             except OSError:
                 continue
             count = summary["apps"]
-            rows.append(menus.item(ft.Icons.HISTORY, when,
+            rows.append(menus.item(ft.Icons.HISTORY_ROUNDED, when,
                                    lambda p=path: self.restore_backup(str(p)),
                                    hint=f"{count} {plu_programs(count)}"))
         rows += [menus.separator(),
-                 menus.item(ft.Icons.FOLDER_OPEN, "Из файла…", self.pick_backup)]
+                 menus.item(ft.Icons.FOLDER_OPEN_ROUNDED, "Из файла…", self.pick_backup)]
         self.menu.show(self._window_width() / 2 - 120, 180.0, rows,
                        header=menus.text_header("Восстановить библиотеку"))
 
@@ -104,7 +104,7 @@ class LibraryFilesMixin:
                              detail=str(src))
             return
         self.view.set_screen("grid")
-        self.toast.show(f"Библиотека восстановлена из {Path(src).name}", icon=ft.Icons.RESTORE,
+        self.toast.show(f"Библиотека восстановлена из {Path(src).name}", icon=ft.Icons.RESTORE_ROUNDED,
                         icon_color=C.MUTED, action=lambda: self._undo_restore(safety),
                         action_label="Вернуть")
         self.on_library_changed()

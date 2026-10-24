@@ -7,13 +7,13 @@ from .. import colors as C
 from .. import theme
 from .. import widgets as Wg
 from ..format import T, as_icon
-from .common import _caps, _field, _screen_header
+from .common import _caps, _field
 
 # Порядок ровно как в C.ACCENT_CHOICES — имена без хекс-литералов, иначе
 # цвет утёк бы из colors.py (это сторожит test_colours_come_from_one_file).
 ACCENT_NAMES = dict(zip(C.ACCENT_CHOICES, (
-    "Нейтральный", "Синий", "Бирюзовый", "Зелёный",
-    "Оранжевый", "Коралловый", "Красный", "Фиолетовый"), strict=True))
+    "Синий", "Фиолетовый", "Розовый", "Красный", "Оранжевый",
+    "Жёлтый", "Зелёный", "Графит", "Нейтральный"), strict=True))
 
 # Тон фона — только градусы, без «нейтрального» серого как отдельного цвета:
 # им управляет `None` (см. theme.py). Порядок — под ряд свотчей в интерфейсе.
@@ -23,49 +23,60 @@ BG_TINT_NAMES = {None: "Нейтральный", 222: "Синий", 268: "Фио
 
 
 SETTINGS_TABS = (
-    ("view", "Вид", ft.Icons.PALETTE),
-    ("keys", "Клавиши", ft.Icons.KEYBOARD),
-    ("startup", "Запуск и трей", ft.Icons.POWER_SETTINGS_NEW),
-    ("library", "Библиотека", ft.Icons.STORAGE),
+    ("view", "Вид", ft.Icons.PALETTE_ROUNDED),
+    ("keys", "Клавиши", ft.Icons.KEYBOARD_ROUNDED),
+    ("startup", "Запуск и трей", ft.Icons.POWER_SETTINGS_NEW_ROUNDED),
+    ("library", "Библиотека", ft.Icons.INVENTORY_2_ROUNDED),
 )
+TAB_TITLES = {key: label for key, label, _icon in SETTINGS_TABS}
 
 
 def build_settings_screen(ui):
-    """Настройки — на всю ширину окна, со своей навигацией слева.
+    """Настройки в духе macOS: разделы слева с цветными значками, справа —
+    группы-карточки со строками.
 
-    Внутри библиотеки рядом оставались полоса категорий и боковая панель:
-    три колонки и полтысячи пикселей до первого переключателя.
+    На всю ширину окна: внутри библиотеки рядом оставались полоса категорий и
+    боковая панель — три колонки и полтысячи пикселей до первого переключателя.
     """
     tab = ui.view.settings_tab
     nav_rows = [_settings_nav_row(ui, key, label, icon, key == tab)
                 for key, label, icon in SETTINGS_TABS]
     nav = ft.Container(
-        ft.Column(nav_rows + [ft.Container(expand=True),
-                              T(f"Centurio {__version__}", size=C.FS_SMALL, color=C.MUTED_2)],
-                  spacing=4, expand=True),
-        width=C.SETTINGS_NAV_W, padding=ft.Padding.only(left=16, top=16, right=16, bottom=16),
+        ft.Column([ft.Container(T("Настройки", size=C.FS_HEADING, weight=ft.FontWeight.BOLD,
+                                  color=C.TEXT), padding=ft.Padding.only(left=8, bottom=12))]
+                  + nav_rows + [ft.Container(expand=True),
+                                ft.Container(T(f"Centurio {__version__}", size=C.FS_SMALL,
+                                               color=C.MUTED_2),
+                                             padding=ft.Padding.only(left=8))],
+                  spacing=2, expand=True),
+        width=C.SETTINGS_NAV_W, bgcolor=C.PANEL,
+        padding=ft.Padding.only(left=12, top=20, right=12, bottom=16),
         border=ft.Border.only(right=ft.BorderSide(1, C.LINE)))
 
+    title = ft.Row([T(TAB_TITLES.get(tab, "Вид"), size=C.FS_HEADING, weight=ft.FontWeight.BOLD,
+                      color=C.TEXT, expand=True),
+                    T("Всё сохраняется само", size=C.FS_SMALL, color=C.MUTED_2),
+                    Wg.icon_btn(ft.Icons.CLOSE_ROUNDED, "Закрыть", ui.back_to_grid, size=30)],
+                   spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     body = ft.Container(
-        ft.Column(_settings_pane(ui, tab), spacing=24, scroll=ft.ScrollMode.AUTO,
+        ft.Column([title] + _settings_pane(ui, tab), spacing=24, scroll=ft.ScrollMode.AUTO,
                   expand=True),
-        expand=True, padding=ft.Padding.only(left=32, top=24, right=32, bottom=24))
+        expand=True, padding=ft.Padding.only(left=32, top=20, right=32, bottom=24))
 
-    return ft.Column([
-        _screen_header("Настройки", "Всё сохраняется само", ui.back_to_grid),
-        ft.Row([nav, ft.Container(body, width=760)],
-               spacing=0, expand=True, vertical_alignment=ft.CrossAxisAlignment.START),
-    ], spacing=0, expand=True)
+    return ft.Row([nav, ft.Container(body, width=720)], spacing=0, expand=True,
+                  vertical_alignment=ft.CrossAxisAlignment.STRETCH)
 
 
 def _settings_nav_row(ui, key, label, icon, active):
+    tile = ft.Container(ft.Icon(as_icon(icon), size=14, color=C.WHITE), width=22, height=22,
+                        border_radius=C.R_SMALL, bgcolor=C.SETTINGS_TINTS.get(key, C.ACCENT),
+                        alignment=ft.Alignment.CENTER)
     row = ft.Container(
-        ft.Row([ft.Icon(as_icon(icon), size=16, color=C.TEXT if active else C.MUTED),
-                T(label, size=C.FS_BODY, color=C.TEXT if active else C.TEXT_2,
-                  weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400)],
-               spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=36, border_radius=C.R, padding=ft.Padding.symmetric(horizontal=12),
-        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+        ft.Row([tile, T(label, size=C.FS_BODY, color=C.TEXT,
+                        weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400)],
+               spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        height=32, border_radius=C.R_SMALL, padding=ft.Padding.symmetric(horizontal=8),
+        animate=Wg.anim(C.ANIM_FAST),
         on_click=lambda e: ui.set_settings_tab(key))
     if active:
         row.bgcolor = C.RAISED
@@ -73,11 +84,31 @@ def _settings_nav_row(ui, key, label, icon, active):
     return Wg.hoverable(row, None, C.CARD)
 
 
-def _group(label, *controls, note=None):
-    items = [_caps(label)] + [ft.Row([c], tight=True) for c in controls]
+def _card(rows):
+    """Группа строк на одной карточке, с тонкими разделителями — как в macOS."""
+    items = []
+    for index, row in enumerate(r for r in rows if r is not None):
+        if index:
+            items.append(ft.Container(height=1, bgcolor=C.LINE, margin=ft.Margin.only(left=16)))
+        items.append(row)
+    return ft.Container(ft.Column(items, spacing=0, tight=True), bgcolor=C.CARD,
+                        border_radius=C.R_LARGE, clip_behavior=ft.ClipBehavior.ANTI_ALIAS)
+
+
+def _group(label, rows, note=None):
+    items = []
+    if label:
+        items.append(ft.Container(_caps(label), padding=ft.Padding.only(left=12)))
+    items.append(_card(rows))
     if note:
-        items.append(T(note, size=C.FS_SMALL, color=C.MUTED_2))
-    return ft.Column(items, spacing=12, tight=True)
+        items.append(ft.Container(T(note, size=C.FS_SMALL, color=C.MUTED_2),
+                                  padding=ft.Padding.only(left=12, right=12)))
+    return ft.Column(items, spacing=8, tight=True)
+
+
+def _block(control):
+    """Строка без подписи слева — для рядов образцов и раскрытых панелей."""
+    return ft.Container(control, padding=ft.Padding.symmetric(vertical=14, horizontal=16))
 
 
 def _settings_pane(ui, tab):
@@ -94,7 +125,7 @@ def _accent_swatch(ui, col, current):
     selected = col.lower() == current.lower()
     shown = C.readable(col)
     swatch = ft.Container(
-        ft.Icon(ft.Icons.CHECK, size=16, color=C.on_color(shown)) if selected else None,
+        ft.Icon(ft.Icons.CHECK_ROUNDED, size=16, color=C.on_color(shown)) if selected else None,
         width=32, height=32, border_radius=16, bgcolor=shown,
         border=ft.Border.all(2, C.TEXT) if selected else ft.Border.all(1, C.LINE),
         alignment=ft.Alignment.CENTER, tooltip=ACCENT_NAMES.get(col),
@@ -251,7 +282,7 @@ def _bg_tint_picker(ui):
 
 
 def _custom_colors(ui):
-    """«Свои цвета» — свёрнуты: темы и восемь акцентов закрывают почти всё.
+    """«Свои цвета» — свёрнуты: темы и готовые акценты закрывают почти всё.
 
     Четыре пересекающихся способа задать цвет сразу на виду только путали.
     """
@@ -262,26 +293,20 @@ def _custom_colors(ui):
         ui.refresh()
 
     head = ft.Container(
-        ft.Row([ft.Icon(ft.Icons.EXPAND_MORE if open_now else ft.Icons.CHEVRON_RIGHT,
-                        size=18, color=C.FAINT),
-                T("Свои цвета", size=C.FS_BODY, weight=ft.FontWeight.W_500, color=C.TEXT_2),
+        ft.Row([T("Свои цвета", size=C.FS_BODY, color=C.TEXT, expand=True),
                 T("HEX, тон и яркость акцента, тон фона, контраст", size=C.FS_SMALL,
-                  color=C.MUTED_2)],
+                  color=C.MUTED_2),
+                ft.Icon(ft.Icons.EXPAND_MORE_ROUNDED if open_now
+                        else ft.Icons.CHEVRON_RIGHT_ROUNDED, size=18, color=C.FAINT)],
                spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.Padding.symmetric(vertical=8, horizontal=8), border_radius=C.R,
-        on_click=toggle)
-    Wg.hoverable(head, None, C.CARD)
+        padding=ft.Padding.symmetric(vertical=12, horizontal=16), on_click=toggle)
+    Wg.hoverable(head, None, C.RAISED)
     if not open_now:
-        return head
-    return ft.Column([
-        head,
-        ft.Container(ft.Column([
-            _custom_accent(ui),
-            _bg_tint_picker(ui),
-            ft.Column([T("Контраст", size=C.FS_BODY, color=C.TEXT_2), _contrast_segments(ui)],
-                      spacing=12, tight=True),
-        ], spacing=24, tight=True), padding=ft.Padding.only(left=24, top=8)),
-    ], spacing=0, tight=True)
+        return [head]
+    return [head,
+            _block(_custom_accent(ui)),
+            _block(_bg_tint_picker(ui)),
+            _row("Контраст", _contrast_segments(ui))]
 
 
 def _contrast_segments(ui):
@@ -294,23 +319,28 @@ def _appearance_segments(ui):
                      (("Тёмное", "dark"), ("Светлое", "light"), ("Как в Windows", "system")))
 
 
+def _sidebar_segments(ui):
+    return Wg.segmented((("С подписями", True), ("Только значки", False)),
+                        ui.view.sidebar_open, ui.set_sidebar_open)
+
+
 def _settings_view(ui):
     return [
-        _group("ОФОРМЛЕНИЕ", _appearance_segments(ui),
-               note="«Как в Windows» следует настройке «Цвет приложений» в Параметрах."),
-        _group("ТЕМА", _theme_cards(ui)),
-        _group("АКЦЕНТ", _accent_swatches(ui)),
-        _custom_colors(ui),
-        Wg.divider(),
-        _group("ПЛИТКИ", _tile_segments(ui)),
-        _group("ПОЛОСА КАТЕГОРИЙ", _rail_segments(ui)),
-        _switch(ui, "Подписи под значками категорий", "rail_labels",
-                "Полоса слева станет шире, зато категории не придётся угадывать"),
-        Wg.divider(),
-        _switch(ui, "Показывать «Быстрый запуск»", "show_quick_row",
-                "Ряд закреплённых программ над сеткой, Ctrl+1…9"),
-        _switch(ui, "Постеры для игр", "game_posters",
-                "Обложки Steam и Epic Games вместо значков"),
+        _group("Внешний вид", [
+            _row("Оформление", _appearance_segments(ui)),
+            _block(_theme_cards(ui)),
+            _row("Акцент", _accent_swatches(ui)),
+        ] + _custom_colors(ui),
+            note="«Как в Windows» следует настройке «Цвет приложений» в Параметрах."),
+        _group("Окно", [
+            _row("Значки программ", _tile_segments(ui)),
+            _row("Боковая панель", _sidebar_segments(ui),
+                 sub="В узком окне она сама сворачивается до значков"),
+            _switch(ui, "Показывать «Быстрый запуск»", "show_quick_row",
+                    "Полка закреплённых программ над сеткой, Ctrl+1…9"),
+            _switch(ui, "Постеры для игр", "game_posters",
+                    "Обложки Steam и Epic Games вместо значков"),
+        ]),
     ]
 
 
@@ -329,38 +359,40 @@ KEY_HINTS = (
 
 def _key_hint(keys, text):
     return _row(text, ft.Container(T(keys, size=C.FS_SMALL, color=C.TEXT, font_family="monospace"),
-                                   height=28, padding=ft.Padding.symmetric(horizontal=12),
-                                   bgcolor=C.CARD, border=ft.Border.all(1, C.LINE),
-                                   border_radius=C.R_SMALL, alignment=ft.Alignment.CENTER))
+                                   height=26, padding=ft.Padding.symmetric(horizontal=10),
+                                   bgcolor=C.RAISED, border_radius=C.R_SMALL,
+                                   alignment=ft.Alignment.CENTER))
 
 
 def _settings_keys(ui):
-    return [ft.Column([_key_hint(keys, text) for keys, text in KEY_HINTS], spacing=12),
-            Wg.divider(),
-            _settings_note("Клавиши работают, только когда открыто окно Centurio: в других "
-                           "программах те же сочетания делают то, что делали. Открыть окно "
-                           "можно щелчком по значку в трее или повторным запуском Centurio."),
-            _settings_note("Чтобы звать окно с клавиатуры, закрепите Centurio на панели задач "
-                           "(правый щелчок по значку → «Закрепить на панели задач»). Тогда "
-                           "Win+цифра — номер значка слева — откроет уже запущенный Centurio."),
-            ]
+    return [_group("Сочетания клавиш", [_key_hint(keys, text) for keys, text in KEY_HINTS],
+                   note="Клавиши работают, только когда открыто окно Centurio: в других "
+                        "программах те же сочетания делают то, что делали."),
+            _group("Как позвать окно", [_block(T(
+                "Щелчком по значку в трее или повторным запуском Centurio. Чтобы звать "
+                "окно с клавиатуры, закрепите Centurio на панели задач (правый щелчок по "
+                "значку → «Закрепить на панели задач»): тогда Win+цифра — номер значка "
+                "слева — откроет уже запущенный Centurio.", size=C.FS_BODY, color=C.TEXT_2))])]
 
 
 def _settings_startup(ui):
     return [
-        _switch(ui, "Запускать вместе с Windows", "autostart",
-                "Centurio стартует свёрнутым в трей и ждёт, пока вы его позовёте"),
-        _switch(ui, "Закрытие окна оставляет Centurio в трее", "close_to_tray",
-                "Крестик прячет окно, а не выходит. Выйти — «Выход» в меню значка в трее"),
-        _switch(ui, "Свёрнутое окно уходит в трей, а не на панель задач", "minimize_to_tray",
-                "Кнопка «Свернуть» прячет окно туда же, куда крестик"),
-        _switch(ui, "Прятать окно после запуска программы", "hide_after",
-                "Запустили из поиска — окно Centurio уходит, не мешая"),
-        Wg.divider(),
-        _switch(ui, "Проверять обновления", "check_updates",
-                "Раз в день Centurio спрашивает GitHub, вышла ли новая версия. "
-                "Ничего о компьютере и библиотеке не отправляется."),
-        _row(_update_status(ui), _update_action(ui)),
+        _group("Запуск и окно", [
+            _switch(ui, "Запускать вместе с Windows", "autostart",
+                    "Centurio стартует свёрнутым в трей и ждёт, пока вы его позовёте"),
+            _switch(ui, "Закрытие окна оставляет Centurio в трее", "close_to_tray",
+                    "Крестик прячет окно, а не выходит. Выйти — «Выход» в меню значка в трее"),
+            _switch(ui, "Свёрнутое окно уходит в трей, а не на панель задач",
+                    "minimize_to_tray", "Кнопка «Свернуть» прячет окно туда же, куда крестик"),
+            _switch(ui, "Прятать окно после запуска программы", "hide_after",
+                    "Запустили из поиска — окно Centurio уходит, не мешая"),
+        ]),
+        _group("Обновления", [
+            _switch(ui, "Проверять обновления", "check_updates",
+                    "Раз в день Centurio спрашивает GitHub, вышла ли новая версия. "
+                    "Ничего о компьютере и библиотеке не отправляется."),
+            _row(_update_status(ui), _update_action(ui)),
+        ]),
     ]
 
 
@@ -372,8 +404,8 @@ def _update_status(ui):
 def _update_action(ui):
     if ui.updates.available():
         return Wg.primary_btn("Скачать", lambda: ui.open_url(ui.updates.url()), ui._accent(),
-                              ft.Icons.DOWNLOAD, height=32)
-    return Wg.secondary_btn("Проверить сейчас", ui.updates.check_now, ft.Icons.REFRESH,
+                              ft.Icons.DOWNLOAD_ROUNDED, height=32)
+    return Wg.secondary_btn("Проверить сейчас", ui.updates.check_now, ft.Icons.REFRESH_ROUNDED,
                             height=32)
 
 
@@ -382,26 +414,31 @@ def _settings_library(ui):
     cache_label = (f"{size / (1024 * 1024):.0f} МБ" if size >= 1024 * 1024
                    else f"{max(1, size // 1024)} КБ" if size else "пусто")
     return [
-        _switch(ui, "Новое сначала в «Новые программы»", "triage",
-                "Найденные программы ждут там, пока вы решите, куда их положить"),
-        _switch(ui, "Проверять новое раз в 15 минут", "auto_rescan",
-                "Установили программу — она сама появится в «Новых программах»"),
-        Wg.divider(),
-        _row("Кэш значков",
-             ft.Row([T(cache_label, size=C.FS_SMALL, color=C.MUTED_2, font_family="monospace"),
-                     Wg.secondary_btn("Очистить", ui.clear_icon_cache, height=32)],
-                    spacing=12, tight=True)),
-        _row("Копия библиотеки",
-             ft.Row([Wg.secondary_btn("Восстановить…", ui.restore_menu, ft.Icons.RESTORE,
-                                      height=32),
-                     Wg.secondary_btn("Сохранить", ui.backup, ft.Icons.BACKUP, height=32)],
-                    spacing=8, tight=True),
-             sub=_auto_backup_note(ui)),
-        _row("Файл библиотеки", Wg.secondary_btn("Показать в папке", ui.show_data_folder,
-                                                  ft.Icons.FOLDER_OPEN, height=32)),
-        Wg.divider(),
-        _switch(ui, "Подробный журнал", "debug_log",
-                "Пишет больше подробностей в centurio.log — для разбора ошибок"),
+        _group("Новые программы", [
+            _switch(ui, "Новое сначала в «Новые программы»", "triage",
+                    "Найденные программы ждут там, пока вы решите, куда их положить"),
+            _switch(ui, "Проверять новое раз в 15 минут", "auto_rescan",
+                    "Установили программу — она сама появится в «Новых программах»"),
+        ]),
+        _group("Данные", [
+            _row("Кэш значков",
+                 ft.Row([T(cache_label, size=C.FS_SMALL, color=C.MUTED_2,
+                           font_family="monospace"),
+                         Wg.secondary_btn("Очистить", ui.clear_icon_cache, height=28)],
+                        spacing=12, tight=True)),
+            _row("Копия библиотеки",
+                 ft.Row([Wg.secondary_btn("Восстановить…", ui.restore_menu,
+                                          ft.Icons.RESTORE_ROUNDED, height=28),
+                         Wg.secondary_btn("Сохранить", ui.backup, ft.Icons.BACKUP_ROUNDED,
+                                          height=28)],
+                        spacing=8, tight=True),
+                 sub=_auto_backup_note(ui)),
+            _row("Файл библиотеки", Wg.secondary_btn("Показать в папке", ui.show_data_folder,
+                                                      ft.Icons.FOLDER_OPEN_ROUNDED,
+                                                      height=28)),
+            _switch(ui, "Подробный журнал", "debug_log",
+                    "Пишет больше подробностей в centurio.log — для разбора ошибок"),
+        ]),
     ]
 
 
@@ -411,12 +448,6 @@ def _auto_backup_note(ui):
     return f"{note} Последняя — {last}." if last else note
 
 
-def _settings_note(text):
-    return ft.Container(
-        T(text, size=C.FS_SMALL, color=C.MUTED),
-        padding=ft.Padding.all(12), border_radius=C.R, bgcolor=C.CARD)
-
-
 def _row(title, control, on_click=None, sub=None):
     left = [T(title, size=C.FS_BODY, color=C.TEXT)]
     if sub:
@@ -424,6 +455,7 @@ def _row(title, control, on_click=None, sub=None):
     return ft.Container(
         ft.Row([ft.Column(left, spacing=2, tight=True, expand=True), control],
                spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(vertical=10, horizontal=16),
         on_click=(lambda e: on_click()) if on_click else None)
 
 
@@ -435,24 +467,10 @@ def _switch(ui, title, key, sub=None):
 
 
 def _segments(ui, key, default, options):
-    def segment(label, value):
-        active = ui.setting(key, default) == value
-        return ft.Container(
-            T(label, size=C.FS_BODY, weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400,
-              color=C.TEXT if active else C.MUTED),
-            height=30, padding=ft.Padding.symmetric(horizontal=12), border_radius=C.R_SMALL,
-            bgcolor=C.RAISED if active else None, alignment=ft.Alignment.CENTER,
-            animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
-            on_click=lambda e, v=value: ui.set_setting(key, v))
-    return ft.Container(ft.Row([segment(label, value) for label, value in options], spacing=2),
-                        bgcolor=C.CARD, border_radius=C.R, padding=ft.Padding.all(2))
+    return Wg.segmented(options, ui.setting(key, default),
+                        lambda v, k=key: ui.set_setting(k, v))
 
 
 def _tile_segments(ui):
     return _segments(ui, "tile_size", "large",
                      (("Крупные", "large"), ("Плотные", "compact")))
-
-
-def _rail_segments(ui):
-    return _segments(ui, "rail_size", C.DEFAULT_RAIL_SIZE,
-                     (("Обычная", "normal"), ("Крупная", "large"), ("Очень крупная", "huge")))

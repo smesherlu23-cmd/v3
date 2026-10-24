@@ -65,7 +65,7 @@ def test_theme_excludes_meaning_colours():
     palette = theme.build_palette(222, "normal")
     ok("GREEN" not in palette and "DANGER" not in palette and "ACCENT" not in palette,
        "смысловые токены отсутствуют и в результате build_palette")
-    ok(C.GREEN == "#4ade80", "а исходное значение GREEN никто не менял")
+    ok(C.GREEN == "#30d158", "а исходное значение GREEN никто не менял")
 
 
 def test_theme_contrast_stays_within_safe_bounds():
@@ -96,7 +96,7 @@ def test_theme_apply_and_reset_round_trip():
     try:
         theme.apply_theme({"bg_tint": 222, "contrast": "strong"})
         ok(C.BG != original, "после apply_theme C.BG — уже другое значение")
-        ok(C.GREEN == "#4ade80", "а смысловые цвета не изменились и после apply_theme")
+        ok(C.GREEN == "#30d158", "а смысловые цвета не изменились и после apply_theme")
 
         theme.apply_theme({"bg_tint": "не число", "contrast": "?"})
         ok(C.BG == original,
@@ -136,7 +136,7 @@ def test_settings_screen_has_theme_controls():
 
         pane = ft.Column(ui.content_col.controls)
         texts = _texts(pane)
-        for caption in ("ОФОРМЛЕНИЕ", "ТЕМА", "АКЦЕНТ"):
+        for caption in ("Внешний вид", "Оформление", "Акцент"):
             ok(caption in texts, f"на экране настроек есть блок «{caption}»")
         for label in ("Тёмное", "Светлое", "Как в Windows"):
             ok(label in texts, f"оформление «{label}» на выбор")

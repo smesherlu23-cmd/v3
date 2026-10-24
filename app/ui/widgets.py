@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import flet as ft
 
 from ..core.view_state import SEARCH_FIELD
@@ -73,18 +75,98 @@ def track_typing(field: ft.TextField, view, key: str) -> ft.TextField:
     return field
 
 
+def anim(ms: int = C.ANIM_FAST, spring: bool = False) -> ft.Animation:
+    """Анимация на всё окно: замедление к концу, у появления — лёгкая пружина."""
+    return ft.Animation(ms, ft.AnimationCurve(C.SPRING if spring else C.EASE))
+
+
+def later(delay: float, fn) -> None:
+    """Сделать что-то через `delay` секунд — в фоне, не держа цикл событий."""
+    def run():
+        try:
+            fn()
+        except Exception:
+            from ..infra import log
+            log.exception("сбой отложенного действия интерфейса")
+    timer = threading.Timer(delay, run)
+    timer.daemon = True
+    timer.start()
+
+
+def enter(control, start: dict, end: dict, delay: float = 0.04) -> None:
+    """Появление с анимацией: сначала начальное состояние, кадр спустя — конечное.
+
+    Flutter анимирует свойство, только если видел прежнее значение: контрол,
+    который показали и сразу поставили в конечное состояние, появляется без
+    движения. Поэтому начальное ставится сейчас (уйдёт с ближайшей
+    перерисовкой), а конечное — чуть позже, отдельным обновлением.
+    """
+    for key, value in start.items():
+        setattr(control, key, value)
+
+    def finish():
+        for key, value in end.items():
+            setattr(control, key, value)
+        safe_update(control)
+    later(delay, finish)
+
+
+def hop(control, height: float = 0.22) -> None:
+    """Подскок, как у значка в Dock, когда программа запускается."""
+    if not attached(control):
+        return
+    control.animate_offset = ft.Animation(C.ANIM_HOP_UP, ft.AnimationCurve(C.EASE))
+    control.offset = ft.Offset(0, -height)
+    safe_update(control)
+
+    def land():
+        control.animate_offset = ft.Animation(C.ANIM_HOP_DOWN, ft.AnimationCurve(C.BOUNCE))
+        control.offset = ft.Offset(0, 0)
+        safe_update(control)
+    later(C.ANIM_HOP_UP / 1000, land)
+
+
+def lift(target: ft.Container, rest: float = 1.0, hover: float = C.HOVER_SCALE):
+    """Значок под курсором приподнимается, под нажатием — утапливается.
+
+    Возвращает обработчики для GestureDetector и on_hover: нажатие только
+    рисуется, запускает по-прежнему отпускание (нажатие может оказаться
+    началом перетаскивания).
+    """
+    target.animate_scale = anim(C.ANIM_HOVER, spring=True)
+    state = {"hot": False}
+
+    def settle():
+        target.scale = hover if state["hot"] else rest
+        safe_update(target)
+
+    def on_hover(hot: bool):
+        state["hot"] = hot
+        settle()
+
+    def on_down(e=None):
+        target.scale = C.PRESS_SCALE
+        safe_update(target)
+
+    def on_up(e=None):
+        settle()
+    return on_hover, on_down, on_up
+
+
 def hoverable(container: ft.Container, normal, hover) -> ft.Container:
     def on_hover(e):
         container.bgcolor = hover if entered(e) else normal
         safe_update(container)
     container.bgcolor = normal
     container.on_hover = on_hover
+    if container.animate is None:
+        container.animate = anim(C.ANIM_FAST)
     return container
 
 
-def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE,
-                anim: int = C.ANIM_HOVER) -> ft.Container:
-    container.animate_scale = ft.Animation(anim, ft.AnimationCurve.EASE_OUT)
+def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE_SUBTLE,
+                ms: int = C.ANIM_HOVER) -> ft.Container:
+    container.animate_scale = anim(ms, spring=True)
     prior = container.on_hover
 
     def on_hover(e):
@@ -98,8 +180,9 @@ def hover_scale(container: ft.Container, scale: float = C.HOVER_SCALE,
 
 
 def caps(text):
+    """Подпись раздела — как в боковой панели macOS: мелко, полужирно, без капса."""
     return T(text, size=C.FS_CAPTION, weight=ft.FontWeight.W_600, color=C.MUTED_2,
-             style=ft.TextStyle(letter_spacing=0.8))
+             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
 
 
 def divider(vertical: int = 0):
@@ -107,84 +190,128 @@ def divider(vertical: int = 0):
                         margin=ft.Margin.symmetric(vertical=vertical, horizontal=0))
 
 
+def glass(content=None, radius: int = C.R_LARGE, **kw) -> ft.Container:
+    """Матовое стекло: полупрозрачная панель, под которой размыто окно.
+
+    Как у меню и всплывающих панелей macOS: светлая кромка, мягкая тень.
+    """
+    kw.setdefault("bgcolor", C.GLASS)
+    kw.setdefault("border", ft.Border.all(1, C.EDGE))
+    kw.setdefault("shadow", ft.BoxShadow(blur_radius=40, offset=ft.Offset(0, 16),
+                                         color=C.SHADOW))
+    return ft.Container(content, border_radius=radius, blur=ft.Blur(30, 30),
+                        clip_behavior=ft.ClipBehavior.ANTI_ALIAS, **kw)
+
+
 def key_chip(label, accent=None, bright=False):
     return ft.Container(
         T(label, size=C.FS_CAPTION, weight=ft.FontWeight.W_600 if bright else None,
           color=C.on_color(accent) if bright and accent else C.MUTED,
           font_family="monospace"),
-        bgcolor=accent if bright and accent else C.RAISED,
-        border=None if bright else ft.Border.all(1, C.LINE),
+        bgcolor=accent if bright and accent else C.CARD,
         border_radius=C.R_SMALL, padding=ft.Padding.symmetric(vertical=2, horizontal=8))
 
 
 def toggle(value: bool, on_toggle, accent):
-    knob = ft.Container(width=14, height=14, border_radius=7,
-                        bgcolor=C.on_color(accent) if value else C.MUTED)
+    """Переключатель как в macOS: ручка скользит, включённый — цвета акцента."""
+    knob = ft.Container(width=18, height=18, border_radius=9, bgcolor=C.WHITE,
+                        shadow=ft.BoxShadow(blur_radius=3, offset=ft.Offset(0, 1),
+                                            color=C.with_alpha(C.INK, 0.35)))
     return ft.Container(
-        ft.Row([knob], alignment=ft.MainAxisAlignment.END if value
-               else ft.MainAxisAlignment.START),
-        width=36, height=20, border_radius=10, padding=ft.Padding.all(3),
+        knob, width=38, height=22, border_radius=11, padding=ft.Padding.all(2),
         bgcolor=accent if value else C.BORDER,
-        on_click=lambda e: on_toggle(not value),
-        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT))
+        alignment=ft.Alignment.CENTER_RIGHT if value else ft.Alignment.CENTER_LEFT,
+        on_click=lambda e: on_toggle(not value), animate=anim(C.ANIM_BAR, spring=True))
+
+
+def segmented(options, current, on_select, height: int = 28):
+    """Сегменты как в macOS: серая плашка, выбранный — светлее, с тенью."""
+    def segment(label, value, icon=None, tooltip=None):
+        active = current == value
+        body = (ft.Icon(as_icon(icon), size=16, color=C.TEXT if active else C.MUTED)
+                if icon else
+                T(label, size=C.FS_BODY, color=C.TEXT if active else C.MUTED,
+                  weight=ft.FontWeight.W_600 if active else ft.FontWeight.W_400))
+        return ft.Container(
+            body, height=height - 4, padding=ft.Padding.symmetric(horizontal=12),
+            border_radius=C.R_SMALL, alignment=ft.Alignment.CENTER, tooltip=tooltip,
+            bgcolor=(C.RAISED if C.MODE == "dark" else C.WHITE) if active else None,
+            shadow=ft.BoxShadow(blur_radius=4, offset=ft.Offset(0, 1),
+                                color=C.with_alpha(C.INK, 0.25)) if active else None,
+            animate=anim(C.ANIM_FAST),
+            on_click=lambda e, v=value: on_select(v))
+    items = [segment(*opt) for opt in options]
+    return ft.Container(ft.Row(items, spacing=2, tight=True), bgcolor=C.CARD,
+                        border_radius=C.R, padding=ft.Padding.all(2), height=height)
 
 
 # Три вида кнопок на всё окно: главная (залитая акцентом — одна на экран),
-# второстепенная (с рамкой) и тихая (только текст, подложка под курсором).
-# Подчёркнутая ссылка — только для того, что открывается в браузере.
+# второстепенная (серая, как кнопки macOS) и тихая (только текст, подложка
+# под курсором). Подчёркнутая ссылка — только для того, что открывается в
+# браузере.
 
 def _btn_row(label, icon, color, size, weight):
     row = [T(label, size=size, weight=weight, color=color)]
     if icon:
         row.insert(0, ft.Icon(as_icon(icon), size=16, color=color))
-    return ft.Row(row, spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER,
+    return ft.Row(row, spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER,
                   vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
 
-def primary_btn(label, on_click, accent, icon=None, height=36, expand=False):
+def _pressable(btn: ft.Container) -> ft.Container:
+    """Нажатие слегка утапливает кнопку — отклик ещё до отпускания."""
+    btn.animate_scale = anim(C.ANIM_FAST, spring=True)
+    return btn
+
+
+def primary_btn(label, on_click, accent, icon=None, height=32, expand=False):
     ink = C.on_color(accent)
     btn = ft.Container(
         _btn_row(label, icon, ink, C.FS_BODY, ft.FontWeight.W_600),
         height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=16),
         bgcolor=accent, border_radius=C.R, alignment=ft.Alignment.CENTER, expand=expand,
-        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
+        shadow=ft.BoxShadow(blur_radius=6, offset=ft.Offset(0, 2),
+                            color=C.with_alpha(accent, 0.35)),
         on_click=lambda e: on_click())
-    return hover_scale(hoverable(btn, accent, C.mix(accent, ink, 0.12)))
+    return _pressable(hoverable(btn, accent, C.mix(accent, C.WHITE, 0.12)))
 
 
-def secondary_btn(label, on_click, icon=None, danger=False, height=36,
+def secondary_btn(label, on_click, icon=None, danger=False, height=32,
                   active=False, icon_color=None, expand=False):
     color = C.ERR_TEXT if danger else C.TEXT
     btn = ft.Container(
         _btn_row(label, icon, color, C.FS_BODY, ft.FontWeight.W_500),
         height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
-        bgcolor=C.RAISED if active else None,
-        border=ft.Border.all(1, C.ERR_BORDER if danger else C.BORDER),
+        bgcolor=C.RAISED if active else C.CARD,
         border_radius=C.R, alignment=ft.Alignment.CENTER, expand=expand,
-        animate=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
         on_click=lambda e: on_click())
     if icon and icon_color and not danger:
         btn.content.controls[0].color = icon_color
-    return btn if active else hoverable(btn, None, C.RAISED)
+    if active:
+        btn.animate = anim(C.ANIM_FAST)
+        return btn
+    return _pressable(hoverable(btn, C.CARD, C.RAISED))
 
 
-def quiet_btn(label, on_click, icon=None, danger=False, height=32, color=None):
+def quiet_btn(label, on_click, icon=None, danger=False, height=30, color=None):
     tone = C.ERR_TEXT if danger else (color or C.TEXT_2)
     btn = ft.Container(
         _btn_row(label, icon, tone, C.FS_BODY, ft.FontWeight.W_500),
-        height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=12),
+        height=height, padding=ft.Padding.symmetric(vertical=0, horizontal=10),
         border_radius=C.R, alignment=ft.Alignment.CENTER,
         on_click=lambda e: on_click())
-    return hoverable(btn, None, C.RAISED)
+    return hoverable(btn, None, C.CARD)
 
 
-def icon_btn(icon, tooltip, on_click, size=32, color=None, glyph=16, active=False):
+def icon_btn(icon, tooltip, on_click, size=30, color=None, glyph=18, active=False):
     btn = ft.Container(
         ft.Icon(as_icon(icon), size=glyph, color=color or (C.TEXT if active else C.MUTED)),
         width=size, height=size, border_radius=C.R, alignment=ft.Alignment.CENTER,
         bgcolor=C.RAISED if active else None, tooltip=tooltip,
         on_click=lambda e: on_click())
-    return btn if active else hoverable(btn, None, C.RAISED)
+    if active:
+        return btn
+    return _pressable(hoverable(btn, None, C.CARD))
 
 
 def link_btn(label, on_click):
@@ -209,7 +336,7 @@ def mosaic(cells: list, size: int, radius: int):
     gap = max(2, size // 16)
     pad = max(2, size // 10)
     if not cells:
-        inner = ft.Icon(ft.Icons.LAYERS, size=round(size * 0.5), color=C.MUTED)
+        inner = ft.Icon(ft.Icons.LAYERS_ROUNDED, size=round(size * 0.5), color=C.MUTED)
     elif len(cells) == 1:
         inner = cells[0]
     else:
@@ -240,20 +367,21 @@ def dot(size=6, color=None):
                         bgcolor=color or C.GREEN)
 
 
+def dock_dot(on: bool, size: int = 5):
+    """Точка «открыто» под значком — как у программ в Dock."""
+    return ft.Container(width=size, height=size, border_radius=size / 2,
+                        bgcolor=C.TEXT_2 if on else C.TRANSPARENT,
+                        animate=anim(C.ANIM_FAST))
+
+
 def with_badge(control, size: int, badge, badge_size: int):
     """Метка в правом нижнем углу значка: «открыто», «не найден»."""
     return ft.Stack([control, ft.Container(badge, right=-3, bottom=-3)],
                     width=size, height=size, clip_behavior=ft.ClipBehavior.NONE)
 
 
-def running_badge(size: int, ring):
-    """Зелёный кружок «открыто» с обводкой цвета фона — виден на любом значке."""
-    return ft.Container(width=size, height=size, border_radius=size / 2, bgcolor=C.GREEN,
-                        border=ft.Border.all(2, ring))
-
-
 def missing_badge(size: int, ring):
-    return ft.Container(ft.Icon(ft.Icons.PRIORITY_HIGH, size=size - 6, color=C.INK),
+    return ft.Container(ft.Icon(ft.Icons.PRIORITY_HIGH_ROUNDED, size=size - 6, color=C.INK),
                         width=size, height=size, border_radius=size / 2, bgcolor=C.WARN,
                         border=ft.Border.all(2, ring), alignment=ft.Alignment.CENTER)
 
@@ -261,8 +389,8 @@ def missing_badge(size: int, ring):
 def win_btn(icon_name, tooltip, handler, danger=False):
     c = ft.Container(
         ft.Icon(as_icon(icon_name), size=14, color=C.MUTED),
-        width=40, height=32, border_radius=C.R_SMALL, alignment=ft.Alignment.CENTER,
-        on_click=lambda e: handler(),
+        width=40, height=30, border_radius=C.R, alignment=ft.Alignment.CENTER,
+        animate=anim(C.ANIM_FAST), on_click=lambda e: handler(),
     )
 
     def on_hover(e):
@@ -329,3 +457,8 @@ def icon_slot(app, size: int, radius: int, glyph: int | None = None,
         border=ft.Border.all(1, border) if border else None,
         alignment=ft.Alignment.CENTER,
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS)
+
+
+def squircle(size: int) -> int:
+    """Скругление значка как у иконок macOS — около 22% стороны."""
+    return max(4, round(size * 0.22))

@@ -12,12 +12,13 @@ DEFAULT_CONTRAST = "normal"
 APPEARANCES = ("dark", "light", "system")
 DEFAULT_APPEARANCE = "dark"
 
+# accent — индекс в C.ACCENT_CHOICES.
 THEME_PRESETS = (
-    {"id": "coal", "label": "Уголь", "bg_tint": None, "contrast": "normal", "accent": 0},
-    {"id": "midnight", "label": "Полночь", "bg_tint": 222, "contrast": "normal", "accent": 1},
-    {"id": "emerald", "label": "Изумруд", "bg_tint": 165, "contrast": "normal", "accent": 2},
-    {"id": "amethyst", "label": "Аметист", "bg_tint": 268, "contrast": "normal", "accent": 7},
-    {"id": "crisp", "label": "Контраст", "bg_tint": None, "contrast": "strong", "accent": 0},
+    {"id": "graphite", "label": "Графит", "bg_tint": None, "contrast": "normal", "accent": 0},
+    {"id": "midnight", "label": "Полночь", "bg_tint": 222, "contrast": "normal", "accent": 0},
+    {"id": "sage", "label": "Шалфей", "bg_tint": 150, "contrast": "normal", "accent": 6},
+    {"id": "plum", "label": "Слива", "bg_tint": 285, "contrast": "normal", "accent": 1},
+    {"id": "mono", "label": "Монохром", "bg_tint": None, "contrast": "strong", "accent": 8},
 )
 
 # Подстраиваются тоном и контрастом только поверхности, линии и текст.
@@ -80,6 +81,9 @@ def apply_theme(settings: dict, system: str | None = None) -> str:
         setattr(C, name, value)
     for name, value in _MEANINGS[mode].items():
         setattr(C, name, value)
+    # Стекло всплывающих панелей — та же панель, но полупрозрачная: под ней
+    # размыто содержимое окна. Считается от уже подкрашенной панели.
+    C.GLASS = C.with_alpha(C.PANEL, 0.82 if mode == "dark" else 0.86)
     C.MODE = mode
     return mode
 

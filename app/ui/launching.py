@@ -57,7 +57,7 @@ class LaunchMixin:
         if not app:
             return
         if not again and not as_admin and app_id in self.running and self._switch_to(app):
-            self.toast.show(f"{app['name']} — переключились", icon=ft.Icons.SYNC_ALT,
+            self.toast.show(f"{app['name']} — переключились", icon=ft.Icons.SYNC_ALT_ROUNDED,
                             icon_color=C.MUTED)
             self.after_launch(from_palette)
             return
@@ -74,8 +74,11 @@ class LaunchMixin:
         self.store.mark_launched(app_id)
         self.running = set(self.launcher.running_ids())
         if not again:
-            self.toast.show(f"{app['name']} открыт", icon=ft.Icons.PLAY_ARROW)
+            self.toast.show(f"{app['name']} открыт", icon=ft.Icons.PLAY_ARROW_ROUNDED)
         self.after_launch(from_palette)
+        if not from_palette:
+            # Значок подпрыгивает, как в Dock: видно, что щелчок дошёл.
+            self.grid.bounce(app_id)
 
     def _launch_failed(self, app, message):
         missing = "не найден" in message.lower()

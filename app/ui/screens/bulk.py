@@ -16,12 +16,12 @@ def build_bulk_bar(ui):
                                                                       else C.MUTED)),
                T(label, size=C.FS_BODY, weight=ft.FontWeight.W_500, color=tone)]
         if arrow:
-            row.append(ft.Icon(ft.Icons.KEYBOARD_ARROW_UP, size=14, color=C.FAINT))
+            row.append(ft.Icon(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, size=14, color=C.FAINT))
         btn = ft.Container(
             ft.Row(row, spacing=8, tight=True), height=36,
-            padding=ft.Padding.symmetric(horizontal=12), border_radius=C.R,
+            padding=ft.Padding.symmetric(horizontal=12), border_radius=18,
             alignment=ft.Alignment.CENTER, on_click=lambda e: on_click())
-        return Wg.hoverable(btn, None, C.RAISED)
+        return Wg.hoverable(btn, None, C.with_alpha(C.TEXT, 0.08))
 
     def divider():
         return ft.Container(width=1, height=20, bgcolor=C.LINE,
@@ -32,20 +32,20 @@ def build_bulk_bar(ui):
         ft.Row([
             T(f"Выбрано {len(ids)}", size=C.FS_BODY, weight=ft.FontWeight.W_600, color=C.TEXT),
             divider(),
-            action("Категория", ft.Icons.FOLDER, lambda: ui.context_menus.bulk_menu("cat"),
+            action("Категория", ft.Icons.FOLDER_ROUNDED, lambda: ui.context_menus.bulk_menu("cat"),
                    arrow=True),
-            action("В набор", ft.Icons.LAYERS, lambda: ui.context_menus.bulk_menu("set"),
+            action("В набор", ft.Icons.LAYERS_ROUNDED, lambda: ui.context_menus.bulk_menu("set"),
                    arrow=True),
-            action("В избранное", ft.Icons.STAR, lambda: ui._bulk_favorite(ids),
+            action("В избранное", ft.Icons.STAR_ROUNDED, lambda: ui._bulk_favorite(ids),
                    icon_color=C.STAR),
             action("Показать" if in_hidden else "Скрыть",
-                   ft.Icons.VISIBILITY if in_hidden else ft.Icons.VISIBILITY_OFF,
+                   ft.Icons.VISIBILITY_ROUNDED if in_hidden else ft.Icons.VISIBILITY_OFF_ROUNDED,
                    lambda: ui._hide_apps(ids, not in_hidden)),
-            action("Убрать", ft.Icons.DELETE_OUTLINE, lambda: ui._remove_apps(ids),
+            action("Убрать", ft.Icons.DELETE_OUTLINE_ROUNDED, lambda: ui._remove_apps(ids),
                    danger=True),
             divider(),
             Wg.quiet_btn("Отмена", ui.toggle_select_mode, height=36, color=C.MUTED),
         ], spacing=4, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=56, bgcolor=C.PANEL, border=ft.Border.all(1, C.BORDER),
-        border_radius=C.R_LARGE, padding=ft.Padding.only(left=16, right=8),
+        height=52, border_radius=26, padding=ft.Padding.only(left=20, right=8),
+        bgcolor=C.GLASS, border=ft.Border.all(1, C.EDGE), blur=ft.Blur(30, 30),
         shadow=ft.BoxShadow(blur_radius=40, offset=ft.Offset(0, 16), color=C.SHADOW))

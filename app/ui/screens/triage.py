@@ -61,7 +61,7 @@ def build_triage_screen(ui):
     if rest:
         more = ft.Container(
             ft.Row([T("Ещё…", size=C.FS_BODY, color=C.TEXT_2),
-                    ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN, size=16, color=C.FAINT)],
+                    ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, size=16, color=C.FAINT)],
                    spacing=4, tight=True),
             height=44, padding=ft.Padding.symmetric(horizontal=16), border_radius=C.R,
             border=ft.Border.all(1, C.BORDER),
@@ -125,7 +125,7 @@ def _triage_done(ui):
                   "автопроверку в настройках.")
     return ft.Container(
         ft.Column([
-            ft.Container(ft.Icon(ft.Icons.CHECK, size=28, color=C.GREEN),
+            ft.Container(ft.Icon(ft.Icons.CHECK_ROUNDED, size=28, color=C.GREEN),
                          width=64, height=64, border_radius=C.R_LARGE, bgcolor=C.OK_BG,
                          border=ft.Border.all(1, C.OK_BORDER),
                          alignment=ft.Alignment.CENTER),

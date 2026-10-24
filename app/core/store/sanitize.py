@@ -12,7 +12,10 @@ DEFAULT_CATEGORIES = [
 DEFAULT_SET_DELAY = 2.0
 MAX_SET_DELAY = 30.0
 
-UI_DEFAULTS_VERSION = 1
+UI_DEFAULTS_VERSION = 2
+# Акцент по умолчанию до второй версии — белый; кто его не менял, получает
+# новый синий вместе с остальным видом окна.
+OLD_DEFAULT_ACCENT = "#f5f5f7"
 
 DEFAULT_SETTINGS = {
     "autostart": False,
@@ -33,13 +36,15 @@ DEFAULT_SETTINGS = {
     "update_version": "",
     "update_url": "",
     "update_seen": "",
-    "accent": "#f5f5f7",
+    "accent": "#0a84ff",
     "bg_tint": None,
     "contrast": "normal",
     "tile_size": "large",
     "rail_size": "normal",
     # Подписи под значками категорий в полосе слева.
     "rail_labels": False,
+    # Боковая панель развёрнута с подписями; иначе — полоса значков.
+    "sidebar_open": True,
     # Оформление: «dark», «light» или «system» — как приложения в Windows.
     "appearance": "dark",
     "show_quick_row": True,
@@ -269,7 +274,7 @@ def clean_records(raw, clean) -> list[dict]:
 _BOOL_SETTINGS = {
     "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
     "first_run_done", "show_quick_row", "check_updates", "game_posters", "auto_rescan", "win_max", "hide_after",
-    "triage", "debug_log", "rail_labels",
+    "triage", "debug_log", "rail_labels", "sidebar_open",
 }
 
 _STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
@@ -317,5 +322,8 @@ def clean_settings(raw) -> dict:
             if key in raw:
                 settings[key] = clean_setting_value(key, raw[key], default)
     if settings["ui_defaults_version"] < UI_DEFAULTS_VERSION:
+        if settings["ui_defaults_version"] < 2 \
+                and str(settings.get("accent", "")).lower() == OLD_DEFAULT_ACCENT:
+            settings["accent"] = DEFAULT_SETTINGS["accent"]
         settings["ui_defaults_version"] = UI_DEFAULTS_VERSION
     return settings

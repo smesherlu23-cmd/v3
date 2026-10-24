@@ -589,7 +589,7 @@ def test_store_validates_settings_on_write_not_only_on_read():
         s = Store(path)
 
         bad = [("win_w", "not-an-int", None), ("minimize_to_tray", "yes", True),
-               ("collapsed", "oops", []), ("accent", 42, "#f5f5f7"),
+               ("collapsed", "oops", []), ("accent", 42, "#0a84ff"),
                ("icon_schema", True, 0)]
         for key, junk, expected in bad:
             s.set_setting(key, junk)
@@ -837,3 +837,17 @@ def test_auto_backups():
         store.data["apps"].append(dict(store.data["apps"][0], id="x"))
         os.utime(kept[0], (time.time() - 21 * hour,) * 2)
         ok(store.auto_backup() is None, "a library opened read-only is never copied")
+
+
+def test_old_default_accent_moves_to_the_new_one():
+    """Белый акцент прежней версии по умолчанию становится синим, выбранный — остаётся."""
+    from app.core.store.sanitize import UI_DEFAULTS_VERSION, clean_settings
+
+    moved = clean_settings({"accent": "#F5F5F7", "ui_defaults_version": 1})
+    ok(moved["accent"] == "#0a84ff" and moved["ui_defaults_version"] == UI_DEFAULTS_VERSION,
+       "the untouched old default follows the new look")
+    kept = clean_settings({"accent": "#ff375f", "ui_defaults_version": 1})
+    ok(kept["accent"] == "#ff375f", "an accent the person picked stays theirs")
+    chosen = clean_settings({"accent": "#f5f5f7", "ui_defaults_version": UI_DEFAULTS_VERSION})
+    ok(chosen["accent"] == "#f5f5f7",
+       "white picked after the change is a choice, not an old default")

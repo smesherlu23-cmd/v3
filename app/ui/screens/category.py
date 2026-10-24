@@ -15,7 +15,7 @@ def _image_row(ui, cat):
     art = Wg.cat_image(cat, AVATAR, fill=AVATAR) if has_image else None
     if art is None:
         art = ft.Container(
-            ft.Icon(ft.Icons.ADD_A_PHOTO, size=20, color=C.MUTED),
+            ft.Icon(ft.Icons.ADD_A_PHOTO_ROUNDED, size=20, color=C.MUTED),
             width=AVATAR, height=AVATAR, border_radius=AVATAR / 2, bgcolor=C.CARD,
             border=ft.Border.all(1, C.BORDER), alignment=ft.Alignment.CENTER)
 
@@ -64,7 +64,7 @@ def build_category_popover(ui, cat):
         ft.Container(name_field, height=34, bgcolor=C.CARD,
                      border=ft.Border.all(1, C.LINE), border_radius=C.R,
                      padding=ft.Padding.symmetric(horizontal=12), expand=True),
-        Wg.icon_btn(ft.Icons.CLOSE, "Закрыть", ui.close_popover),
+        Wg.icon_btn(ft.Icons.CLOSE_ROUNDED, "Закрыть", ui.close_popover),
     ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     swatches = [ft.Container(
@@ -123,7 +123,7 @@ def build_category_popover(ui, cat):
     footer = ft.Container(
         ft.Row([ft.Container(
             Wg.quiet_btn("Удалить категорию", lambda: ui._remove_category(cat["id"]),
-                         ft.Icons.DELETE_OUTLINE, danger=True))],
+                         ft.Icons.DELETE_OUTLINE_ROUNDED, danger=True))],
             vertical_alignment=ft.CrossAxisAlignment.CENTER),
         padding=ft.Padding.only(top=12), margin=ft.Margin.only(top=8),
         border=ft.Border.only(top=ft.BorderSide(1, C.LINE)))
@@ -131,12 +131,12 @@ def build_category_popover(ui, cat):
     return ft.Container(
         ft.Column([
             header,
-            _caps("ЦВЕТ"),
+            _caps("Цвет"),
             ft.Row(swatches, spacing=8, wrap=True, run_spacing=8),
             ft.Row([hex_box, sliders], spacing=12,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             Wg.divider(8),
-            _caps("ИКОНКА"),
+            _caps("Значок"),
             ft.Container(ft.Column([ft.Row(cells, spacing=4, wrap=True, run_spacing=4)],
                                    scroll=ft.ScrollMode.AUTO), height=120),
             image_row,
