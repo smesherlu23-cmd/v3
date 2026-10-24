@@ -9,33 +9,32 @@ from app.ui import colors as C
 
 
 def test_secondary_text_is_readable():
-    """Второстепенный текст держит контраст WCAG AA (4.5:1) на фоне и панелях.
+    """Подписи держат 4,5:1, значки — 3:1, на всех трёх поверхностях, в обеих темах.
 
-    Подсказки и пояснения были цвета 3.7:1 и 3.0:1 при кегле 10.5–13 px.
+    Раньше сочетания клавиш в меню, стрелки и «···» были цвета 2,4:1, точка в
+    быстром запуске — 2,0:1, номер версии — 1,8:1, «+» в пустом слоте — 1,5:1.
     """
-    def lum(hexval):
-        r, g, b = (int(hexval[i:i + 2], 16) / 255 for i in (1, 3, 5))
-
-        def f(c):
-            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
-        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
-
-    def ratio(a, b):
-        hi, lo = sorted((lum(a), lum(b)), reverse=True)
-        return (hi + 0.05) / (lo + 0.05)
-
     from app.ui import theme
-    theme.reset_theme()
-    for name in ("MUTED", "MUTED_2", "TEXT_DIM"):
-        for bg in ("BG_1", "PANEL", "PANEL_3"):
-            value = ratio(getattr(C, name), getattr(C, bg))
-            ok(value >= 4.5, f"{name} on {bg}: {value:.2f}:1")
+    try:
+        for mode in ("dark", "light"):
+            theme.apply_theme({"appearance": mode})
+            for bg in ("BG", "PANEL", "CARD", "RAISED"):
+                back = getattr(C, bg)
+                for name, need in (("TEXT", 7.0), ("TEXT_2", 7.0), ("MUTED", 4.5),
+                                   ("MUTED_2", 4.5), ("FAINT", 3.0)):
+                    value = C.contrast(getattr(C, name), back)
+                    ok(value >= need, f"{mode}: {name} on {bg}: {value:.2f}:1 (need {need})")
+            for bg in ("PANEL", "CARD", "RAISED"):
+                ok(C.contrast(getattr(C, bg), C.BG) >= 1.05,
+                   f"{mode}: {bg} stands apart from the window background")
+    finally:
+        theme.reset_theme()
 
 
 def test_theme_build_palette_is_identity_at_defaults():
-    """Нейтральный тон и обычный контраст дают тот же набор цветов, что и сейчас.
+    """Нейтральный тон и обычный контраст дают ровно тёмную палитру из colors.py.
 
-    Тонировка — новая надстройка над готовой палитрой; она не должна ничего
+    Тонировка — надстройка над готовой палитрой; она не должна ничего
     менять для тех, кто её не трогал. Иначе включение фичи само по себе
     оказалось бы визуальной регрессией для всех существующих пользователей.
     """
@@ -44,8 +43,10 @@ def test_theme_build_palette_is_identity_at_defaults():
     palette = theme.build_palette(None, "normal")
     ok(palette == theme._BASE_TOKENS,
        "тон=None и контраст=normal -> палитра совпадает с исходной побайтово")
-    ok(len(theme._BASE_TOKENS) > 40,
-       f"подстройка реально покрывает много токенов, а не единицы ({len(theme._BASE_TOKENS)})")
+    ok(set(palette) == {"BG", "PANEL", "CARD", "RAISED", "LINE", "BORDER",
+                        "TEXT", "TEXT_2", "MUTED", "MUTED_2", "FAINT"},
+       "подстройка покрывает все поверхности, линии и текст — одну шкалу по смыслу")
+    ok(set(C.LIGHT) == set(C.DARK), "у светлой темы те же имена, что у тёмной")
 
 
 def test_theme_excludes_meaning_colours():
@@ -71,16 +72,19 @@ def test_theme_contrast_stays_within_safe_bounds():
     """Ни один уровень контраста не схлопывает светлоту в 0 или 1 (клиппинг)."""
     from app.ui import theme
 
-    for key in theme.CONTRAST_LEVELS:
-        palette = theme.build_palette(None, key)
-        for name, hexval in palette.items():
-            _, light, _sat = theme.C.hex_to_hsl(hexval)
-            ok(0.0 <= light <= 1.0, f"{key}/{name}: светлота {light} вне [0,1]")
+    for mode in ("dark", "light"):
+        for key in theme.CONTRAST_LEVELS:
+            palette = theme.build_palette(None, key, mode)
+            for name, hexval in palette.items():
+                _, light, _sat = theme.C.hex_to_hsl(hexval)
+                ok(0.0 <= light <= 1.0, f"{mode}/{key}/{name}: светлота {light} вне [0,1]")
     # Сам факт, что "мягче"/"контрастнее" — это разные, но не крайние палитры.
     soft = theme.build_palette(None, "soft")
     strong = theme.build_palette(None, "strong")
-    ok(soft["BG_0"] != theme._BASE_TOKENS["BG_0"] != strong["BG_0"],
+    ok(soft["BG"] != theme._BASE_TOKENS["BG"] != strong["BG"],
        "мягкий и контрастный уровни реально отличаются от обычного")
+    tinted = theme.build_palette(222, "normal", "light")
+    ok(tinted["BG"] != C.LIGHT["BG"], "и светлая тема тоже подкрашивается тоном фона")
 
 
 def test_theme_apply_and_reset_round_trip():
@@ -88,22 +92,32 @@ def test_theme_apply_and_reset_round_trip():
     from app.ui import colors as C
     from app.ui import theme
 
-    original = C.BG_0
+    original = C.BG
     try:
         theme.apply_theme({"bg_tint": 222, "contrast": "strong"})
-        ok(C.BG_0 != original, "после apply_theme C.BG_0 — уже другое значение")
+        ok(C.BG != original, "после apply_theme C.BG — уже другое значение")
         ok(C.GREEN == "#4ade80", "а смысловые цвета не изменились и после apply_theme")
 
         theme.apply_theme({"bg_tint": "не число", "contrast": "?"})
-        ok(C.BG_0 == original,
+        ok(C.BG == original,
            "мусорные bg_tint/contrast -> тихий откат к нейтральным настройкам, не исключение")
+
+        mode = theme.apply_theme({"appearance": "light"})
+        ok(mode == "light" and C.MODE == "light" and C.BG == C.LIGHT["BG"],
+           "светлая тема подставляет свою палитру")
+        ok(C.GREEN != C.DARK_MEANING["GREEN"],
+           "и свои смысловые цвета — бледно-зелёное на белом не видно")
+        ok(theme.apply_theme({"appearance": "system"}, system="light") == "light"
+           and theme.apply_theme({"appearance": "system"}, system="dark") == "dark"
+           and theme.apply_theme({"appearance": "system"}) == "dark",
+           "«Как в Windows» следует яркости системы, а без неё — тёмная")
     finally:
         theme.reset_theme()
-        ok(C.BG_0 == original, "reset_theme возвращает исходное значение")
+        ok(C.BG == original and C.MODE == "dark", "reset_theme возвращает исходное значение")
 
 
 def test_settings_screen_has_theme_controls():
-    """Экран настроек показывает пресеты темы, тон фона и контраст — не только акцент."""
+    """Экран настроек: оформление, темы, акценты — на виду; свои цвета — свёрнуты."""
     try:
         from app.ui.app import CenturioUI  # noqa: F401
     except Exception as exc:
@@ -122,24 +136,40 @@ def test_settings_screen_has_theme_controls():
 
         pane = ft.Column(ui.content_col.controls)
         texts = _texts(pane)
-        for caption in ("ТЕМА", "ТОН ФОНА", "КОНТРАСТ"):
+        for caption in ("ОФОРМЛЕНИЕ", "ТЕМА", "АКЦЕНТ"):
             ok(caption in texts, f"на экране настроек есть блок «{caption}»")
+        for label in ("Тёмное", "Светлое", "Как в Windows"):
+            ok(label in texts, f"оформление «{label}» на выбор")
         for preset in theme.THEME_PRESETS:
             ok(preset["label"] in texts, f"пресет «{preset['label']}» показан")
+        ok(not _find_all(pane, lambda c: isinstance(c, ft.Slider)),
+           "ползунков на виду нет: свои цвета свёрнуты под «Свои цвета»")
+        ok("Свои цвета" in texts, "но до них один щелчок")
 
+        ui.view.custom_colors = True
+        ui.refresh()
+        pane = ft.Column(ui.content_col.controls)
+        texts = _texts(pane)
+        for caption in ("Тон фона", "Контраст"):
+            ok(caption in texts, f"раскрытые «Свои цвета» содержат «{caption}»")
         sliders = _find_all(pane, lambda c: isinstance(c, ft.Slider))
         ok(any(s.max == 359 for s in sliders if s is not None) and len(sliders) >= 3,
            "у тона фона свой ползунок 0-359, отдельный от акцентного")
 
         # Применение пресета меняет все три настройки разом — и, что важнее,
-        # реально пересчитывает C.BG_0 при следующей перерисовке.
+        # реально пересчитывает C.BG при следующей перерисовке.
         from app.ui import colors as C
-        before = C.BG_0
+        before = C.BG
         ui.set_settings({"accent": "#4f7dff", "bg_tint": 222, "contrast": "normal"})
         stored = store.state()["settings"]
         ok(stored["accent"] == "#4f7dff" and stored["bg_tint"] == 222,
            "все настройки пресета записались одним вызовом")
-        ok(C.BG_0 != before, "и палитра действительно пересчиталась при refresh()")
+        ok(C.BG != before, "и палитра действительно пересчиталась при refresh()")
+
+        ui.set_setting("appearance", "light")
+        ok(C.MODE == "light" and ui.page.theme_mode == ft.ThemeMode.LIGHT,
+           "«Светлое» переключает и наши цвета, и тему самого Flutter")
+        ok(ui.page.bgcolor == C.BG, "и фон страницы под окном")
         theme.reset_theme()
 
 
@@ -166,6 +196,8 @@ def test_ui_accent_is_fully_customisable():
         ui, _ = _ui_for(store)
         ui._open_settings()
         ui.set_settings_tab("view")
+        ui.view.custom_colors = True
+        ui.refresh()
 
         pane = ft.Column(ui.content_col.controls)
         sliders = _find_all(pane, lambda c: isinstance(c, ft.Slider))
@@ -184,16 +216,23 @@ def test_ui_accent_is_fully_customisable():
 
 
 def test_colors():
-    c1, c2 = C.cover_colors(200)
-    ok(c1.startswith("#") and len(c1) == 7, "cover color is hex")
-    ok(c1 != c2, "cover gradient has two stops")
-    ok(C.glyph_color(10) == "#ffffff", "glyph colour is white on a red hue")
-    ok(C.glyph_color(240) == "#ffffff", "glyph colour is white on a blue hue")
-    ok(C.glyph_color(60) == C.BG_1, "glyph colour is dark on a bright yellow hue")
-    ok(C.glyph_color(120) == C.BG_1, "glyph colour is dark on a bright green hue")
-    for hue in range(0, 360, 30):
-        col = C.glyph_color(hue)
-        ok(col.startswith("#") and len(col) == 7, f"glyph_color({hue}) is a valid hex colour")
+    """Помощники цвета: текст на фоне, смешение, видимость на текущей теме."""
+    from app.ui import theme
+    ok(C.on_color("#f5f5f7") == C.INK, "on a white accent the text is dark")
+    ok(C.on_color("#1b1b21") == C.WHITE, "on a near-black accent it is white")
+    ok(C.mix("#000000", "#ffffff", 0.5) in ("#7f7f7f", "#808080"), "mix goes half way")
+    ok(C.mix("#123456", "#ffffff", 0) == "#123456", "and zero keeps the first colour")
+    try:
+        theme.apply_theme({"appearance": "light"})
+        ok(C.readable("#f5f5f7") == C.TEXT,
+           "a white accent turns into the text colour on a light window")
+        green = C.readable("#4ade80")
+        ok(green != C.TEXT and C.contrast(green, C.BG) >= 2.0,
+           "a pale green is darkened to a visible green, not swapped for black")
+        ok(C.readable("#e34f4f") == "#e34f4f", "a colour that is visible stays as it is")
+    finally:
+        theme.reset_theme()
+    ok(C.readable("#f5f5f7") == "#f5f5f7", "on the dark window white is fine")
 
 
 def test_color_parsing():
@@ -206,6 +245,6 @@ def test_color_parsing():
     ok(C.hex_to_rgb("#ff8800") == (255, 136, 0), "hex_to_rgb")
     ok(C.rgb_to_hex(255, 136, 0) == "#ff8800", "rgb_to_hex")
     ok(C.rgb_to_hex(999, -5, 0) == "#ff0000", "rgb_to_hex clamps")
-    ok(C.category_color({"color": "#123456"}) == "#123456", "category_color uses explicit hex")
-    ok(C.category_color({"name": "Игры"}) == "#ffffff",
-       "and falls back to the theme's white when nothing was chosen")
+    ok(C.category_color({"color": "#4f7dff"}) == "#4f7dff", "category_color uses explicit hex")
+    ok(C.category_color({"name": "Игры"}) == C.TEXT,
+       "and falls back to the theme's text colour when nothing was chosen")

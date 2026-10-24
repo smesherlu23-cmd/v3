@@ -44,7 +44,8 @@ class Keymap:
             self.ui.view.move_palette(1 if key == "Arrow Down" else -1, count)
             self.ui._refresh_palette_only()
         elif key == "Tab":
-            self.ui.view.focus_palette_actions(len(rows))
+            self.ui.view.focus_palette_actions(len(rows) if actions or
+                                               self.ui.view.palette_focus == "actions" else 0)
             self.ui._refresh_palette_only()
             # Flutter уже передал фокус следующему элементу окна; курсор должен
             # остаться в поиске, иначе следующие буквы уходят мимо.
@@ -88,6 +89,8 @@ class Keymap:
             self.ui._remove_apps(list(self.ui.view.sel))
         elif e.ctrl and key in ("Enter", "Numpad Enter") and self.ui.view.screen == "add":
             self.ui.scan.commit_add()
+        elif (key == "F10" and e.shift) or key == "Context Menu":
+            self.ui.open_selected_menu()
         elif key in ("Arrow Right", "Arrow Down"):
             self.ui.move_selection(1)
         elif key in ("Arrow Left", "Arrow Up"):
@@ -110,9 +113,9 @@ class Keymap:
             return False
         item = queue[0]
         picks = queries.suggest_categories(item, self.ui.categories())
-        if key in ("1", "2", "3", "4"):
+        if len(key) == 1 and key in "123456789":
             index = int(key) - 1
-            if index < len(picks):
+            if index < min(len(picks), queries.TRIAGE_KEYS):
                 self.ui.triage.triage_place(item["id"], picks[index]["id"])
             return True
         if key in ("Enter", "Numpad Enter"):

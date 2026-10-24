@@ -20,6 +20,8 @@ class Settings(TypedDict, total=False):
     contrast: str
     tile_size: str
     rail_size: str
+    rail_labels: bool
+    appearance: str
     show_quick_row: bool
     game_posters: bool
     auto_rescan: bool

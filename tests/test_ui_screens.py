@@ -75,7 +75,8 @@ def test_ui_inbox_badge_and_triage():
         ui.open_triage()
         shown = _texts(ft.Column(ui.content_col.controls)) if False else _texts(
             ui.content_col.controls[0])
-        ok("Разбор" in shown, "the queue is a screen inside the window")
+        ok("Новые программы" in shown,
+           "the queue is a screen inside the window, named for what is on it")
         ok("OBS Studio" in shown, "showing one program at a time")
         ok("Творчество" in shown, "with the category it looks like")
         ok("похоже" not in shown, "the pure «suggested» label is a hint — stays hidden")
@@ -111,8 +112,31 @@ def test_ui_inbox_badge_and_triage():
 
         store.clear_inbox()
         ui.open_triage()
-        ok("Всё разобрано" in _texts(ui.content_col.controls[0]),
+        ok("Всё разложено" in _texts(ui.content_col.controls[0]),
            "an empty queue has its own finished screen")
+
+        # Все категории на выбор, цифрами 1–9 первые девять, остальные — «Ещё…».
+        for n in range(11):
+            store.add_category(f"Кат {n}")
+        store.queue_inbox([{"name": "Blender", "path": "C:/blender.exe",
+                            "source": "startmenu"}])
+        ui.open_triage()
+        shown = _texts(ui.content_col.controls[0])
+        cats = len(store.state()["categories"])
+        ok(cats > 9 and "Ещё…" in shown, "categories past the ninth sit behind «Ещё…»")
+        ok("9" in shown and "10" not in shown, "and the digits stop at nine")
+        ui.keymap.handle_key(_key("9"))
+        ok(len(ui.inbox()) == 0, "the ninth one is a key away")
+
+        # Уведомление «Посмотреть» не висит на самом экране новых программ.
+        store.queue_inbox([{"name": "Krita", "path": "C:/krita2.exe"}])
+        ui.back_to_grid()
+        ui.notify.show("Нашлись новые программы: 1", icon="inbox",
+                       action=ui.open_triage, action_label="Посмотреть")
+        ok(ui.toast.control.visible, "the news shows on the library")
+        ui.open_triage()
+        ok("Нашлись новые программы: 1" not in _texts(ui.toast.control),
+           "and goes away once the person is on the screen it pointed to")
 
 
 def test_ui_sets():
@@ -136,9 +160,11 @@ def test_ui_sets():
 
         screen = _texts(ft.Column(ui.content_col.controls))
         for label in ("РАСКЛАДКА", "ПОРЯДОК ЗАПУСКА", "Запустить набор",
-                      "Снять с текущих окон", "60 / 40", "Пауза между запусками"):
+                      "Запомнить, как стоят окна", "60 / 40", "Пауза между запусками"):
             ok(label in screen, f"the set screen carries «{label}»")
         ok("слева · 60%" in screen, "and says where each program's window goes")
+        ok("Снять с текущих окон" not in screen,
+           "«снять» read as «remove» — the button says what it does now")
 
         ui.view.close_set()
         ui.refresh()
@@ -196,8 +222,18 @@ def test_ui_sets():
         entry = store.get_set(rec["id"])["items"][1]
         ok(entry["minimized"] is True and entry["slot"] is None,
            "a member can start minimised, and then it has no place")
-        ok("свёрнутым" in _texts(ft.Column(ui.content_col.controls)) or True,
-           "which the screen says out loud")
+        ui._open_set(rec["id"])
+        board = _texts(ft.Column(ui.content_col.controls))
+        ok("БЕЗ МЕСТА" in board and "свёрнутым" in board,
+           "which the screen says out loud, under the layout — not only in the list")
+
+        # Из строки «без места» программу тащат на пустое место схемы.
+        from app.ui.screens import sets as set_screen
+        set_screen._drop_on_slot(ui, store.get_set(rec["id"]), 1,
+                                 types_ns(src=types_ns(data=ids[1])))
+        entry = store.get_set(rec["id"])["items"][1]
+        ok(entry["slot"] == 1 and not entry["minimized"],
+           "dropping it on a free place of the layout gives the window that place")
 
         ui.set_ops.move_set_item(rec["id"], ids[1], -1)
         ok(store.get_set(rec["id"])["apps"][0] == ids[1],
@@ -221,7 +257,7 @@ def test_ui_sets():
 
 
 def test_ui_add_screen():
-    """Найденное сгруппировано по источнику, путь можно вставить руками."""
+    """Найденное — группами по категории, новое отмечено, путь вставляется в то же поле."""
     try:
         from app.platform import discovery
         from app.ui.app import CenturioUI  # noqa: F401
@@ -230,6 +266,8 @@ def test_ui_add_screen():
         return
 
     import threading as _threading
+
+    from app.core.text import launch_key
 
     found = [
         {"name": "Elden Ring", "path": "steam://rungameid/1", "source": "steam"},
@@ -255,27 +293,46 @@ def test_ui_add_screen():
             ok(ui.view.screen == "add", "«Найти и добавить» is a screen, not a dialog")
             ok(not ui.toolbar_holder.visible, "which takes over the toolbar's space")
 
+            # Группы — по категории, куда программа ляжет, а не по источнику:
+            # человеку всё равно, Steam это или реестр.
             groups = ui.scan.found_groups()
-            ok([g["source"] for g in groups] == ["steam", "startmenu"],
-               "results are grouped by where they came from")
+            ok([g["label"] for g in groups] == ["Новая", "Игры"],
+               "results are grouped by the category they will land in")
+            rows = {r["name"]: r for g in groups for r in g["rows"]}
+            ok(rows["Elden Ring"]["source_label"] == "Steam",
+               "the source is still there, as a small caption on the row")
             ok(all(r["is_new"] for g in groups for r in g["rows"]),
                "«Только новые» is on by default")
+            ok(ui.view.add_sel == {rows["Elden Ring"]["key"], rows["OBS Studio"]["key"]},
+               "everything new is ticked from the start — unticking one beats ticking seven")
+            ok("Отмечено 2" in _texts(ft.Column(ui.content_col.controls)),
+               "and the footer counts it")
+
+            ui.scan.toggle_add_row(rows["OBS Studio"])
+            ok(rows["OBS Studio"]["key"] not in ui.view.add_sel,
+               "a tick taken off stays off after the screen is redrawn")
 
             # Пересборка экрана не должна пересоздавать поле поиска и
             # список найденного — иначе фокус слетает на каждую букву,
             # а прокрутка — на каждый клик по чекбоксу.
-            search_field = ui._add_ui["search_field"]
+            field = ui._add_ui["input_field"]
             rows_col = ui._add_ui["rows_col"]
-            ui.scan.set_add_query("o")
-            ok(ui._add_ui["search_field"] is search_field,
+            ui.scan.set_add_input("o")
+            ok(ui.view.add_query == "o" and not ui.view.manual_path,
+               "a name typed in the one field filters what was found")
+            ok(ui._add_ui["input_field"] is field,
                "typing keeps the very same TextField — it never loses focus")
             ok(ui._add_ui["rows_col"] is rows_col,
                "the scrollable results column is the same object too — scroll position holds")
-            ui.scan.set_add_query("")
+            ui.scan.set_add_input(r"C:\Tools\thing.exe")
+            ok(ui.view.manual_path and not ui.view.add_query,
+               "a path in the same field is not used as a filter")
+            ok("Добавить в список" in _texts(ui._add_ui["input_box"]),
+               "but offered for adding with a button right in the field")
+            ui.scan.set_add_input("")
 
             ui.scan.toggle_only_new()
-            ok(ui._add_ui["search_field"] is search_field
-               and ui._add_ui["rows_col"] is rows_col,
+            ok(ui._add_ui["input_field"] is field and ui._add_ui["rows_col"] is rows_col,
                "toggling «Только новые» reuses them as well")
             names = [r["name"] for g in ui.scan.found_groups() for r in g["rows"]]
             ok("Notion" in names, "turning it off shows what is already there")
@@ -287,34 +344,32 @@ def test_ui_add_screen():
             ok(ui.scan.add_category_for(rows["Elden Ring"]) != games_id,
                "and the proposal can be overridden in the row")
 
+            ticked = set(ui.view.add_sel)
             ui.scan.toggle_add_row(rows["Notion"])
-            ok(not ui.view.add_sel, "an app already in the library can't be ticked")
+            ok(ui.view.add_sel == ticked, "an app already in the library can't be ticked")
 
-            # Поле пути: вторая дорога в тот же список.
+            # Путь — вторая дорога в тот же список.
             fake_exe = os.path.join(d, "MyApp.exe")
             with open(fake_exe, "w") as fh:
                 fh.write("x")
-            ui.scan.add_manual_path(fake_exe)
-            manual = [g for g in ui.scan.found_groups() if g["source"] == "manual"]
-            ok(manual and manual[0]["rows"][0]["name"] == "MyApp",
-               "a pasted path shows up in its own «Вручную» group")
+            ui.scan.submit_add_input(fake_exe)
+            manual = ui.scan.found_groups()[0]
+            ok(manual["source"] == "manual" and manual["label"] == "Добавлено вами"
+               and manual["rows"][0]["name"] == "MyApp",
+               "a pasted path shows up first, in its own group")
             ok(fake_exe.lower() in ui.view.add_sel, "already ticked, since it was asked for")
 
             ui.scan.add_manual_path("/no/such/file.exe")
             ok(ui.toast.icon.color == C.DANGER, "a path that isn't there is refused")
 
-            ui.view.reset_add()
-            ui.scan.toggle_add_row(rows["Elden Ring"])
+            ui.view.add_sel = {launch_key(found[0])}
             ui.scan.defer_add()
-            ok(len(store.state()["inbox"]) == 1, "«Отложить в разбор» queues instead of adding")
-            ok(not store.state()["apps"] or len(store.state()["apps"]) == 1,
-               "and nothing new landed in the library")
+            ok(len(store.state()["inbox"]) == 1, "«Решу позже» queues instead of adding")
+            ok(len(store.state()["apps"]) == 1, "and nothing new landed in the library")
             store.clear_inbox()
 
             ui.open_add()
-            ui.view.reset_add()
-            rows = {r["name"]: r for g in ui.scan.found_groups() for r in g["rows"]}
-            ui.scan.toggle_add_row(rows["Elden Ring"])
+            ui.view.add_sel = {launch_key(found[0])}
             ui.scan.commit_add()
             ok(_settle_threads(before), "the post-add icon pass finishes")
             ok("Elden Ring" in [a["name"] for a in store.state()["apps"]],
@@ -358,7 +413,7 @@ def test_ui_scanning_is_just_a_spinner():
                 time.sleep(0.01)
             ui.refresh()
             shown = _texts(ui.content_col.controls[0])
-            ok("Сканирование" in shown, "the scan says only that it is scanning")
+            ok("Смотрю, что установлено" in shown, "the scan says only that it is scanning")
             ok(not any("%" in t for t in shown), "no percentage")
             ok(not any(t.isdigit() for t in shown), "no counter of what was found")
             ok(not any("Steam" in t for t in shown), "and no source name")
@@ -474,7 +529,7 @@ def test_ui_calm_mode():
             return (_texts(ui.header_holder) + _texts(ui.sidebar_container)
                     + _texts(ui.toolbar_holder)
                     + _texts(ft.Column(ui.content_col.controls))
-                    + _texts(ui.inspector_container))
+                    + _texts(ui.inspector_overlay))
 
         quiet = everything()
         ok("Ctrl+1" in quiet, "item 1: the tile's own hotkey still shows")
@@ -528,8 +583,8 @@ def test_ui_calm_mode():
         ui.open_triage()
         triage_screen = _texts(ui.content_col.controls[0])
         ok(any("Осталось" in t for t in triage_screen),
-           "group 2: and the in-screen «Осталось N · разобрано M» count")
-        ok("Меню «Пуск»" in triage_screen, "item 7: as does the item's source")
+           "group 2: and the in-screen «Осталось N · разложено M» count")
+        ok(any("Меню «Пуск»" in t for t in triage_screen), "item 7: as does the item's source")
         footer = _find_control(ui.content_col.controls[0],
                                lambda c: isinstance(c, ft.Container) and c.height == 52)
         ok(footer is not None and footer.visible is not False,
@@ -666,19 +721,28 @@ def test_ui_settings_screen():
             ok(tab in shown, f"the section «{tab}» is in the left column")
         ok("Категории" not in shown, "and «Категории» is not a settings section")
         ok(ui.view.settings_tab == "view", "«Вид» is the one open to begin with")
-        for row in ("АКЦЕНТ", "ПЛОТНОСТЬ", "Постеры для игр"):
+        for row in ("ОФОРМЛЕНИЕ", "АКЦЕНТ", "ПЛИТКИ", "Постеры для игр"):
             ok(row in shown, f"«{row}» is on it")
+        ok("Огромная" not in shown and "Очень крупная" in shown,
+           "the biggest rail size is «Очень крупная», not a joke")
+        # Настройки — на всю ширину: полоса категорий и панель библиотеки не
+        # стоят рядом с их собственной навигацией.
+        ok(not ui.rail_container.visible and not ui.sidebar_container.visible,
+           "the settings take the whole window, without the library's rail and sidebar")
         ok("Спокойный вид" not in shown,
            "calm mode is the only mode now — there is no switch left for it")
 
-        # Каждая настройка живёт ровно в одном разделе и ничего не свёрнуто.
+        # Каждая настройка живёт ровно в одном разделе.
         expected = {
-            "keys": ("Поиск по библиотеке", "Программы из «Быстрого запуска»", "Наборы"),
-            "startup": ("Запускать с Windows", "Крестик сворачивает в трей",
-                        "Прятать окно после запуска"),
-            "library": ("Складывать новое в разбор", "Проверять новое раз в 15 минут",
-                        "Кэш иконок", "Копия библиотеки", "Файл библиотеки",
-                        "Подробный лог"),
+            "keys": ("Поиск по библиотеке", "Программы из «Быстрого запуска»", "Наборы",
+                     "Меню выбранной плитки"),
+            "startup": ("Запускать вместе с Windows",
+                        "Закрытие окна оставляет Centurio в трее",
+                        "Свёрнутое окно уходит в трей, а не на панель задач",
+                        "Прятать окно после запуска программы"),
+            "library": ("Новое сначала в «Новые программы»", "Проверять новое раз в 15 минут",
+                        "Кэш значков", "Копия библиотеки", "Файл библиотеки",
+                        "Подробный журнал"),
         }
         for tab, rows in expected.items():
             ui.set_settings_tab(tab)
@@ -700,6 +764,12 @@ def test_ui_settings_screen():
         here = " ".join(_texts(ui.content_col.controls[0]))
         ok("только когда открыто окно Centurio" in here,
            "the keys tab says the shortcuts are window-only")
+
+        ui.set_settings_tab("startup")
+        here = _texts(ui.content_col.controls[0])
+        ok(any("Крестик прячет окно" in t for t in here),
+           "the two tray switches that read alike now explain what each does")
+        ok("Проверить сейчас" in here, "and checking for updates is a button, not a link")
 
         ui.set_settings_tab("library")
         ui.backup()
@@ -979,8 +1049,16 @@ def test_slow_adding_does_not_hold_the_window():
         path_field = _find_control(ui.content_col, lambda n: isinstance(n, ft.TextField)
                                    and "адрес сайта" in (n.hint_text or ""))
         path_field.on_submit(types_ns(control=types_ns(value="youtube.com")))
-        ok(handed and handed[-1] == (ui.scan.add_manual_path, ("youtube.com",)),
-           "Enter in the path field hands the work to a background thread")
+        ok(handed and handed[-1] == (ui.scan.submit_add_input, ("youtube.com",)),
+           "Enter in the add field hands the work to a background thread")
+        added = []
+        real_add = ui.scan.add_manual_path
+        ui.scan.add_manual_path = lambda text=None: added.append(text)
+        ui.scan.submit_add_input("youtube.com")
+        ui.scan.submit_add_input("telegram")
+        ui.scan.add_manual_path = real_add
+        ok(added == ["youtube.com"],
+           "where an address is added, and a plain name only filters — nothing to add")
 
         ui._open_set(rec["id"])
         target = _find_control(ui.content_col, lambda n: isinstance(n, ft.TextField)

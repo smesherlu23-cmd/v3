@@ -183,20 +183,22 @@ def test_ui_single_screen_layout():
         ok(not any("запущено" in t for t in _texts(ui.sidebar_container)),
            "the sidebar footer's running count is a pure hint — stays gone too")
 
+        width_before = ui._content_width()
         ui.view.select_one(chrome["id"])
         ui.refresh()
-        ok(ui.inspector_container.visible, "selecting a tile opens the inspector")
-        ok(ui.inspector_container.width == 300, "which is 300 wide")
-        insp = _texts(ui.inspector_container)
+        ok(ui.inspector_overlay.visible, "selecting a tile opens the inspector")
+        ok(ui.inspector_overlay.width == 320, "which is 320 wide")
+        insp = _texts(ui.inspector_overlay)
         ok("Категория" in insp and "Быстрый запуск" in insp,
            "and carries the properties the panel is for")
+        # Панель лежит поверх сетки: сбоку она отнимала две колонки, и плитка,
+        # по которой щёлкнули, уезжала в другой ряд.
+        ok(ui._content_width() == width_before,
+           "the grid keeps its width — no column is taken away from under the tile")
+        ok(ui.inspector_overlay.right == 0 and ui.inspector_overlay.top == 52,
+           "the panel floats on the right, under the header")
 
-        # Адаптивность: узкое окно кладёт инспектор поверх контента, ещё более
-        # узкое убирает панель.
-        page.window.width = 1100
-        ui.refresh()
-        ok(ui.inspector_overlay.visible and not ui.inspector_container.visible,
-           "below 1200 the inspector floats over the content")
+        # Ещё более узкое окно убирает боковую панель.
         page.window.width = 960
         ui.refresh()
         ok(not ui.sidebar_container.visible, "below 1000 the sidebar goes away")
@@ -206,10 +208,10 @@ def test_ui_single_screen_layout():
 
 
 def test_ui_matches_the_design_sizes():
-    """Макет high-fidelity: размеры воспроизводятся попиксельно.
+    """Макет: размеры воспроизводятся попиксельно.
 
     Ловит ровно то, что глазами в тестах не видно и что легко разъезжается при
-    следующей правке: плитка не 164, палитра не 640, полотно монитора не 280.
+    следующей правке: плитка не 120×128, палитра не 640, полотно монитора не 280.
     """
     try:
         from app.ui.app import CenturioUI  # noqa: F401
@@ -243,18 +245,21 @@ def test_ui_matches_the_design_sizes():
         content = ft.Column(ui.content_col.controls)
         ok(_sized(content, C.QUICK_W, 88) and C.QUICK_W == 132,
            "a quick-launch card is 132 wide")
-        ok(_sized(content, C.TILE_W, None) and C.TILE_W == 164, "a tile is 164 wide")
-        ok(_sized(content, None, C.TILE_COVER_H) and C.TILE_COVER_H == 90,
-           "its cover is 90 tall")
-        ok(_sized(content, C.TILE_SLOT, C.TILE_SLOT) and C.TILE_SLOT == 50,
-           "and the icon plate inside it is 50x50")
-        ok(_sized(content, C.POSTER_W, C.POSTER_H) and (C.POSTER_W, C.POSTER_H) == (132, 198),
-           "a game poster is 132x198")
+        # Плитка почти квадратная, значок крупно: у прежней 164×146 значок 50 px
+        # занимал десятую часть площади, остальное было тёмной пустотой.
+        ok(_sized(content, C.TILE_W, C.TILE_H) and (C.TILE_W, C.TILE_H) == (120, 128),
+           "a tile is 120x128")
+        ok(_sized(content, C.TILE_ICON, C.TILE_ICON) and C.TILE_ICON == 56,
+           "with a 56 px icon — almost half the tile")
+        ok(_sized(content, C.POSTER_W, C.POSTER_H) and (C.POSTER_W, C.POSTER_H) == (120, 180),
+           "a game poster is 120x180, as wide as a tile")
+        per_row = (ui._content_width() - 48 + C.TILE_GAP) // (C.TILE_W + C.TILE_GAP)
+        ok(per_row == 8, f"eight programs fit a row of the 1400 px window ({per_row})")
 
         ui._select_tile(app_id)
-        ok(ui.inspector_container.width == 300, "the inspector is 300 wide")
-        ok(_sized(ui.inspector_container, 46, 46), "its icon plate is 46x46")
-        ok(_sized(ui.inspector_container, 160, 32), "the category control is 160x32")
+        ok(ui.inspector_overlay.width == 320, "the inspector is 320 wide")
+        ok(_sized(ui.inspector_overlay, 48, 48), "its icon is 48x48")
+        ok(_sized(ui.inspector_overlay, 168, 34), "the category control is 168x34")
 
         ui._open_palette()
         ok(_sized(ui.palette_layer, C.PALETTE_W, None) and C.PALETTE_W == 640,
@@ -271,6 +276,8 @@ def test_ui_matches_the_design_sizes():
         ok(ui.bulk_layer.bottom == 26, "sitting 26 off the bottom")
         ok(_sized(ft.Column(ui.content_col.controls), 20, 20),
            "and the tiles carry a 20x20 checkbox in this mode")
+        ok(ui.bulk_layer.bottom == 26 and ui.toast.control.bottom > 56 + 26,
+           "the toasts step above the bar")
         ui.toggle_select_mode()
 
         rec = store.add_set("Набор", [app_id, second])
@@ -423,9 +430,9 @@ def test_ui_skips_work_while_hidden():
 
 
 def test_ui_context_menus():
-    """Правая кнопка на плитке открывает инспектор; меню остались там, где
-    они про массовые операции — выделение и категория. По пустому месту
-    сетки правая кнопка больше ничего не открывает."""
+    """Правая кнопка на плитке — меню, как везде в Windows; панель свойств —
+    его последний пункт «Свойства…». По пустому месту сетки правая кнопка
+    ничего не открывает."""
     try:
         from app.ui.app import CenturioUI  # noqa: F401
     except Exception as exc:
@@ -439,13 +446,30 @@ def test_ui_context_menus():
         ui, page = _ui_for(store)
 
         ui.context_menus.app_menu(store.get_app(ids[0]), _tap())
-        ok(not ui.menu.open,
-           "right-clicking a plain tile no longer opens a popup menu")
-        ok(ui.view.inspector == ids[0] and ui.inspector_container.visible,
-           "it opens the inspector instead — the launch/pin/folder/remove "
-           "actions that used to be in the popup all live there now")
+        ok(ui.menu.open and not ui.view.inspector,
+           "right-clicking a plain tile opens a menu, not the properties panel")
+        labels = _menu_labels(ui)
+        for entry in ("Запустить", "От имени администратора", "Показать в папке",
+                      "В избранное", "В быстрый запуск", "Переложить в…", "В набор…",
+                      "Переименовать", "Свойства…", "Убрать из библиотеки"):
+            ok(entry in labels, f"the tile menu offers «{entry}»")
+        ok(labels[-2:] == ["Свойства…", "Убрать из библиотеки"],
+           "with «Свойства…» at the end, next to removing")
         ok(not page.opened, "and nothing modal was opened to do it")
+        props = next(r for r in ui.menu._rows if r.get("label") == "Свойства…")
+        ui.menu._fire(props)
+        ok(not ui.menu.open and ui.view.inspector == ids[0] and ui.inspector_overlay.visible,
+           "«Свойства…» opens the panel for that program")
         ui._close_inspector()
+
+        ui.missing = {ids[2]}
+        ui.context_menus.app_menu(store.get_app(ids[2]), _tap())
+        labels = _menu_labels(ui)
+        ok(labels[0] == "Найти файл…" and "Запустить" not in labels,
+           "a program whose file is gone offers to find it instead of launching")
+        ok("файл не найден" in _texts(ui.menu.card), "and the menu header says why")
+        ui.menu.close()
+        ui.missing = set()
 
         ui.view.select_one(ids[0])
         ui.view.toggle_selection(ids[1])
@@ -504,15 +528,15 @@ def test_ui_inspector_replaces_the_modal_form():
         ui, page = _ui_for(store)
 
         ui._select_tile(app_id)
-        ok(ui.inspector_container.visible, "clicking a tile opens the panel")
+        ok(ui.inspector_overlay.visible, "clicking a tile opens the panel")
         ok(not page.opened, "and blocks nothing")
-        shown = _texts(ui.inspector_container)
-        name_field = _find_control(ui.inspector_container,
+        shown = _texts(ui.inspector_overlay)
+        name_field = _find_control(ui.inspector_overlay,
                                    lambda n: isinstance(n, ft.TextField) and n.value == "Excel")
         ok(name_field is not None, "the panel names the app in a field you can rename it in")
         ok(any("EXCEL.EXE" in t for t in shown), "and shows where it lives")
         ok("Запустить" in shown, "with the action that runs it")
-        ok("Показать в папке" in [c.tooltip for c in _walk(ui.inspector_container)
+        ok("Показать в папке" in [c.tooltip for c in _walk(ui.inspector_overlay)
                                   if getattr(c, "tooltip", None)],
            "opening the containing folder is a button here now, not a menu item")
         ok("Категория" in shown and "Быстрый запуск" in shown and "В наборах" in shown,
@@ -529,7 +553,7 @@ def test_ui_inspector_replaces_the_modal_form():
         ui._toggle_quick(app_id, True)
         ok(store.get_app(app_id)["quick"] is True, "the pin toggle writes through")
         ui.refresh()
-        ok("Место 1 · Ctrl+1 в окне" in _texts(ui.inspector_container),
+        ok("Место 1 · Ctrl+1 в окне" in _texts(ui.inspector_overlay),
            "and its slot shows up under «Быстрый запуск» right away")
         ui._set_args(app_id, "--profile work")
         ok(store.get_app(app_id)["args"] == ["--profile", "work"], "so do the arguments")
@@ -548,16 +572,16 @@ def test_ui_inspector_replaces_the_modal_form():
 
         ui.view.adv = True
         ui.refresh()
-        ok("EXCEL.EXE" in _texts(ui.inspector_container), "the process is shown when known")
+        ok("EXCEL.EXE" in _texts(ui.inspector_overlay), "the process is shown when known")
 
         second = store.add_app({"name": "Zoom", "path": "/x/z", "category_id": "work"})["id"]
         ui._select_tile(second)
-        ok(_find_control(ui.inspector_container,
+        ok(_find_control(ui.inspector_overlay,
                          lambda n: isinstance(n, ft.TextField) and n.value == "Zoom"),
            "selecting another tile switches the panel instead of stacking a window")
 
         ui._close_inspector()
-        ok(not ui.inspector_container.visible, "the cross closes it")
+        ok(not ui.inspector_overlay.visible, "the cross closes it")
 
 
 def test_ui_delete_is_undone_not_confirmed():
@@ -583,12 +607,12 @@ def test_ui_delete_is_undone_not_confirmed():
         # Слой тоста шириной ровно с карточку. Растянутый на всё окно (left=0 и
         # right=0 сразу) он съедал каждый клик на своей высоте: полоса боковой
         # панели и сетки не отзывалась, пока не истечёт отсчёт.
-        ok(ui.toast.control.right is None and ui.toast.control.width is None,
+        ok(ui.toast.control.left is None and ui.toast.control.width is None,
            "the toast layer is not pinned to both window edges")
-        left, width = ui.toast.control.left, ui.toast.card.width
-        ok(left > 0, f"it is positioned by hand instead ({left})")
-        ok(abs((left + width / 2) - 1400 / 2) <= 1,
-           "still centred over the window, just without the full-width hit box")
+        # В правом нижнем углу, как уведомления Windows: посередине окна они
+        # закрывали плитки.
+        ok(ui.toast.control.right == 16 and ui.toast.control.bottom == 16,
+           "it sits in the bottom-right corner")
         ui.toast.fire_action()
         ok(store.get_app(ids[0]) is not None, "«Вернуть» restores it")
 
@@ -652,8 +676,8 @@ def test_ui_reorder_apps_direction():
            "and dropping on the previous neighbour moves it back, in one step either way")
 
 
-def test_ui_click_launches_right_click_inspects():
-    """ЛКМ по плитке запускает программу, ПКМ открывает инспектор."""
+def test_ui_click_launches_right_click_opens_the_menu():
+    """ЛКМ по плитке запускает программу, ПКМ открывает меню, «···» — то же меню."""
     try:
         import flet as ft
 
@@ -686,12 +710,23 @@ def test_ui_click_launches_right_click_inspects():
         ui.context_menus.app_menu(store.get_app(ids[1]), _tap())
         ok(ui.launcher.launch.call_count == 1,
            "right-clicking a plain tile does not launch it")
-        ok(ui.view.inspector == ids[1] and ui.inspector_container.visible,
-           "right-clicking opens the inspector — the mirror image of the old ЛКМ")
+        ok(ui.menu.open and ui.view.inspector is None,
+           "right-clicking opens the tile's menu, as everywhere in Windows")
+        ui.menu.close()
+
+        more = [c for c in _walk(ft.Column(ui.content_col.controls))
+                if isinstance(c, ft.GestureDetector) and c.on_tap_down
+                and not c.on_tap and getattr(c.content, "tooltip", None) == "Меню"]
+        ok(len(more) == 2 and not any(c.visible for c in more),
+           "every tile carries «···», hidden until the pointer is over it")
+        more[0].on_tap_down(_tap(700, 320))
+        ok(ui.menu.open and ui.launcher.launch.call_count == 1,
+           "and «···» opens the same menu, launching nothing")
+        ok(ui.menu.card.left == 700, "right where it was pressed")
+        ui.menu.close()
 
         # В списке — то же самое.
         ui._set_mode("list")
-        ui._close_inspector()
         ui.launcher.launch.reset_mock()
         taps = tile_taps()
         ok(len(taps) == 2 and all(g.on_tap and not g.on_tap_down for g in taps),
@@ -699,7 +734,7 @@ def test_ui_click_launches_right_click_inspects():
         taps[0].on_tap(types_ns(control=taps[0]))
         ok(ui.launcher.launch.called, "list rows launch on a plain click too")
         ui.context_menus.app_menu(store.get_app(ids[1]), _tap())
-        ok(ui.view.inspector == ids[1], "and open the inspector on the right click")
+        ok(ui.menu.open, "and open the menu on the right click")
 
 
 def test_ui_bulk_operations():
@@ -721,7 +756,7 @@ def test_ui_bulk_operations():
         ok(not ui.bulk_layer.visible, "the floating bar is not there to begin with")
         ui.toggle_select_mode()
         ok(ui.view.select_mode, "«Выбрать» turns the mode on")
-        ok(not ui.inspector_container.visible, "the inspector steps aside for it")
+        ok(not ui.inspector_overlay.visible, "the inspector steps aside for it")
         ok(not ui.bulk_layer.visible, "and the bar waits until something is picked")
         bar = _texts(ui.toolbar_holder)
         ok("Выбрать всё" in bar, "the toolbar offers to take the whole view")
@@ -794,11 +829,10 @@ def test_ui_bulk_operations():
         ui.toggle_select_mode()
         ok(not ui.view.select_mode, "leaving select mode")
         ui.context_menus.app_menu(store.get_app(ids[0]), _tap())
-        ok(ui.view.inspector == ids[0] and not ui.menu.open,
-           "outside select mode, right-clicking an ordinary tile opens the "
-           "inspector instead of a menu — «Выбрать» in the toolbar is how the "
-           "mode is entered with the mouse now")
-        ui._close_inspector()
+        ok(ui.menu.open and "Отметить" not in _menu_labels(ui),
+           "outside select mode, right-clicking an ordinary tile opens its own "
+           "menu — «Выбрать» in the toolbar is how the mode is entered with the mouse")
+        ui.menu.close()
 
 
 def test_ui_quick_numbers_match_the_hotkeys():
@@ -942,7 +976,7 @@ def test_tab_from_the_palette_does_not_type_into_the_inspector():
         ui.refocus_search = lambda: focused.append(ui.search_field)
         ui.view.select_one(app_id)
         ui.refresh()
-        name = _find_control(ui.inspector_container,
+        name = _find_control(ui.inspector_overlay,
                              lambda n: isinstance(n, ft.TextField) and n.value == "Figma")
         ok(name is not None, "the inspector shows the name field")
 
@@ -964,7 +998,7 @@ def test_tab_from_the_palette_does_not_type_into_the_inspector():
 
         ui._close_palette()
         ui.refresh()
-        name = _find_control(ui.inspector_container,
+        name = _find_control(ui.inspector_overlay,
                              lambda n: isinstance(n, ft.TextField) and n.value == "Figma")
         name.on_focus(types_ns(control=name))
         ok(ui.view.typing == "app_name", "with the palette closed the field works as before")
@@ -997,7 +1031,7 @@ def test_ui_keys_belong_to_the_focused_field():
 
         ui.view.select_one(ids[0])
         ui._toggle_adv()
-        args = _find_control(ui.inspector_container,
+        args = _find_control(ui.inspector_overlay,
                              lambda n: isinstance(n, ft.TextField) and n.hint_text == "не заданы")
         ok(args is not None, "инспектор показывает поле «Аргументы»")
 
@@ -1148,9 +1182,9 @@ def test_ui_icons_are_never_letters():
         app = store.state()["apps"][0]
 
         slot = ui.icon_slot(app, 60, 16)
-        ok(slot.bgcolor == C.SLOT_BG, "an icon-less app gets the neutral pad")
+        ok(slot.bgcolor == C.RAISED, "an icon-less app gets the neutral pad")
         ok(isinstance(slot.content, ft.Icon), "with a glyph, not a letter")
-        ok(slot.content.color == C.SLOT_GLYPH, "in the muted placeholder colour")
+        ok(slot.content.color == C.MUTED, "in the muted placeholder colour")
         ok(slot.content.icon == ft.Icons.FOLDER, "and the glyph is its category's")
 
         icon_png = iconify.generate_icon(os.path.join(d, "real.png"), 32)

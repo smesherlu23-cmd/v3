@@ -853,8 +853,8 @@ def test_tray_mini_launcher():
         ok("8 приложений" in dialogs.library_summary(store), "and the menu sizes the library")
 
         store.queue_inbox([{"name": "New", "path": "C:/new.exe"}])
-        ok("в разборе" in dialogs.library_summary(store),
-           "and mentions the queue when something waits in it")
+        ok("новых: 1" in dialogs.library_summary(store),
+           "and mentions the new programs waiting for a place")
 
         opened = []
         tray = TrayController("/no/such/icon.png",

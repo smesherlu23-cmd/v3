@@ -24,6 +24,24 @@ def explorer_exe() -> str:
     return candidate if os.path.isfile(candidate) else "explorer"
 
 
+_URI = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
+
+
+def file_missing(app: dict) -> bool:
+    """Файла программы нет на диске — только для обычных путей.
+
+    Адреса (steam://, https://), `shell:` и сетевые пути не проверяются:
+    первые не файлы, а сетевой диск может минуту просыпаться.
+    """
+    if app.get("kind") == "web":
+        return False
+    path = (app.get("path") or "").strip().strip('"')
+    if not path or _URI.match(path) or path.lower().startswith("shell:") \
+            or path.startswith(("\\\\", "//")):
+        return False
+    return not os.path.exists(path)
+
+
 class Launcher:
     def __init__(self, on_change=None):
         self._procs: dict[str, subprocess.Popen] = {}

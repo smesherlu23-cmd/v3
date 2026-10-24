@@ -70,6 +70,7 @@ class LaunchMixin:
         if not res.get("ok"):
             self._launch_failed(app, res.get("error", "Не удалось запустить"))
             return
+        self.set_missing(app_id, False)
         self.store.mark_launched(app_id)
         self.running = set(self.launcher.running_ids())
         if not again:
@@ -78,6 +79,8 @@ class LaunchMixin:
 
     def _launch_failed(self, app, message):
         missing = "не найден" in message.lower()
+        if missing:
+            self.set_missing(app["id"], True)
         self.toast.error(f"{app['name']} не нашёлся на диске" if missing else message,
                          detail="Программу переустановили или перенесли" if missing else None,
                          action=(lambda: self._relocate(app["id"])) if missing else None,

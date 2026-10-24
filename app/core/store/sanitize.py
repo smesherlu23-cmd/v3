@@ -38,6 +38,10 @@ DEFAULT_SETTINGS = {
     "contrast": "normal",
     "tile_size": "large",
     "rail_size": "normal",
+    # Подписи под значками категорий в полосе слева.
+    "rail_labels": False,
+    # Оформление: «dark», «light» или «system» — как приложения в Windows.
+    "appearance": "dark",
     "show_quick_row": True,
     "game_posters": True,
     "auto_rescan": False,
@@ -265,11 +269,11 @@ def clean_records(raw, clean) -> list[dict]:
 _BOOL_SETTINGS = {
     "autostart", "autostart_adopted", "minimize_to_tray", "close_to_tray", "tray_hint_shown",
     "first_run_done", "show_quick_row", "check_updates", "game_posters", "auto_rescan", "win_max", "hide_after",
-    "triage", "debug_log",
+    "triage", "debug_log", "rail_labels",
 }
 
 _STR_SETTINGS = {"accent", "contrast", "tile_size", "rail_size", "view_filter", "view_sort",
-                 "view_mode"}
+                 "view_mode", "appearance"}
 
 # Здесь пустая строка — законное значение («новой версии нет»).
 _TEXT_SETTINGS = {"update_version", "update_url", "update_seen"}

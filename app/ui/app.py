@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from collections import OrderedDict
 
@@ -68,6 +69,10 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self._cat_index: dict[str, dict] = {}
         self._icon_size = 0
         self._icon_size_at = 0.0
+        # Программы, чьего файла нет на диске: метка на плитке и «Найти…» в
+        # меню держатся, пока путь не исправят, а не 8 секунд уведомления.
+        self.missing: set[str] = set()
+        self._mode = None
         self._visible = True
         self._dirty = False
         self._rail_scroll = 0.0
@@ -93,32 +98,29 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self.search_field = Wg.track_typing(ft.TextField(
             value="", hint_text="Найти или запустить", border=ft.NoInputBorder(),
             filled=False, dense=True, content_padding=ft.Padding.symmetric(vertical=0, horizontal=0),
-            text_size=13.5, color=C.WHITE,
-            hint_style=ft.TextStyle(color=C.MUTED_2, size=13.5),
-            cursor_color=C.ACCENT, on_change=self._on_search,
+            text_size=C.FS_BODY, color=C.TEXT,
+            hint_style=ft.TextStyle(color=C.MUTED_2, size=C.FS_BODY),
+            cursor_color=C.TEXT, on_change=self._on_search,
             on_click=lambda e: self._open_palette(), always_call_on_tap=True, expand=True,
         ), self.view, SEARCH_FIELD)
-        self.search_icon = ft.Icon(ft.Icons.SEARCH, size=15, color=C.MUTED_2)
+        self.search_icon = ft.Icon(ft.Icons.SEARCH, size=16, color=C.MUTED_2)
         self.search_tail = ft.Container()
         self.search_box = ft.Container(
             ft.Row([self.search_icon, self.search_field, self.search_tail],
                    spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            height=36, border_radius=10, padding=ft.Padding.only(left=12, top=0, right=8, bottom=0))
+            height=36, border_radius=C.R, padding=ft.Padding.only(left=12, top=0, right=8, bottom=0))
 
         self.header_holder = ft.Container()
-        self.rail_container = ft.Container(width=C.RAIL_W, bgcolor=C.BG_0)
-        self.sidebar_container = ft.Container(width=C.SIDEBAR_W, bgcolor=C.BG_2)
+        self.rail_container = ft.Container(width=C.RAIL_W)
+        self.sidebar_container = ft.Container(width=C.SIDEBAR_W)
         self.content_col = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, expand=True)
         self.content_holder = ft.Container(self.content_col, expand=True,
-                                           padding=ft.Padding.only(left=22, top=4, right=22, bottom=0))
+                                           padding=ft.Padding.only(left=24, top=4, right=24, bottom=0))
         self.toolbar_holder = ft.Container()
-        self.inspector_container = ft.Container(width=C.INSPECTOR_W, bgcolor=C.BG_2,
-                                                visible=False)
+        # Панель свойств всегда лежит поверх сетки: сбоку она отнимала у сетки
+        # две колонки, и плитка, по которой щёлкнули, уезжала в другой ряд.
         self.inspector_overlay = ft.Container(
-            width=C.INSPECTOR_W, bgcolor=C.BG_2, right=0, top=C.HEADER_H, bottom=0,
-            visible=False,
-            shadow=ft.BoxShadow(blur_radius=40, offset=ft.Offset(-10, 0),
-                                color=C.SHADOW_BAR))
+            width=C.INSPECTOR_W, right=0, top=C.HEADER_H, bottom=0, visible=False)
         self.library_body = ft.Container(expand=True)
         self.body = ft.Container(left=0, top=0, right=0, bottom=0)
 
@@ -127,7 +129,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
             animate_opacity=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT),
             animate_offset=ft.Animation(C.ANIM_FAST, ft.AnimationCurve.EASE_OUT))
         self.palette_scrim = ft.Container(
-            left=0, top=0, right=0, bottom=0, bgcolor=C.SCRIM_BODY,
+            left=0, top=0, right=0, bottom=0, bgcolor=C.SCRIM,
             on_click=lambda e: self._close_palette())
         # Слой начинается под шапкой: накрыв строку поиска, он забирал щелчок
         # по ней, и поле теряло фокус посреди набора.
@@ -173,10 +175,30 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         return self._settings.get(key, default)
 
     def _accent(self):
-        return C.parse_hex(self._settings.get("accent")) or C.ACCENT
+        return theme.effective_accent(self._settings.get("accent"))
+
+    def _on_accent(self):
+        return C.on_color(self._accent())
 
     def rail(self) -> dict:
-        return C.rail_metrics(self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE))
+        return C.rail_metrics(self._settings.get("rail_size", C.DEFAULT_RAIL_SIZE),
+                              labels=bool(self._settings.get("rail_labels")))
+
+    def _system_brightness(self) -> str | None:
+        value = getattr(self.page, "platform_brightness", None)
+        value = getattr(value, "value", value)
+        return value if value in ("light", "dark") else None
+
+    def _apply_theme(self):
+        mode = theme.apply_theme(self._settings, system=self._system_brightness())
+        if mode != self._mode:
+            self._mode = mode
+            try:
+                self.page.theme_mode = (ft.ThemeMode.LIGHT if mode == "light"
+                                        else ft.ThemeMode.DARK)
+                self.page.bgcolor = C.BG
+            except Exception:
+                log.exception("не удалось переключить оформление окна")
 
     def _window_width(self) -> float:
         win = getattr(self.page, "window", None)
@@ -186,18 +208,25 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         win = getattr(self.page, "window", None)
         return getattr(win, "height", None) or C.LIBRARY_H
 
-    def _show_sidebar(self) -> bool:
-        return self.view.sidebar_open and self._window_width() >= C.NARROW_SIDEBAR
+    def _full_width_screen(self) -> bool:
+        # Настройки — своё окно со своей навигацией: полоса категорий и
+        # панель библиотеки рядом с ними давали три колонки до первого
+        # переключателя.
+        return self.view.screen == "settings"
 
-    def _inspector_floats(self) -> bool:
-        return self._window_width() < C.NARROW_INSPECTOR
+    def _show_rail(self) -> bool:
+        return not self._full_width_screen()
+
+    def _show_sidebar(self) -> bool:
+        return (self.view.sidebar_open and self._window_width() >= C.NARROW_SIDEBAR
+                and not self._full_width_screen())
 
     def _content_width(self) -> float:
-        width = self._window_width() - self.rail()["rail"]
+        width = self._window_width()
+        if self._show_rail():
+            width -= self.rail()["rail"]
         if self._show_sidebar():
             width -= C.SIDEBAR_W
-        if self._inspector_visible() and not self._inspector_floats():
-            width -= C.INSPECTOR_W
         return max(240.0, width)
 
     def _inspector_visible(self) -> bool:
@@ -210,8 +239,8 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self.file_picker = ft.FilePicker()
         self.store.on_error = self._on_store_error
         main = ft.Column([self.toolbar_holder, self.content_holder], spacing=0, expand=True)
-        body = ft.Row([self.rail_container, self.sidebar_container, main,
-                       self.inspector_container], spacing=0, expand=True)
+        body = ft.Row([self.rail_container, self.sidebar_container, main],
+                      spacing=0, expand=True)
         self.library_body.content = ft.Column([self.header_holder, body],
                                               spacing=0, expand=True)
         root = ft.Stack([self.body, self.inspector_overlay, self.palette_layer,
@@ -282,10 +311,11 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         with self._refresh_lock:
             self._snapshot = self.store.state()
             self._settings = self._snapshot["settings"]
-            theme.apply_theme(self._settings)
+            self._apply_theme()
             self._accels, self._set_accels = resolve_accels(self._snapshot["apps"], self.sets())
             self._cat_index = {c["id"]: c for c in self._snapshot["categories"]}
             self._tile_epoch = (
+                self._mode,
                 self._settings.get("tile_size"),
                 self._settings.get("accent", C.ACCENT),
                 self._settings.get("bg_tint"),
@@ -333,12 +363,13 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
             # шапка — новое поле на стороне Flutter, без фокуса и с потерей
             # набранного. Меняется она только вместе с темой.
             header_key = (self._settings.get("accent"), self._settings.get("bg_tint"),
-                          self._settings.get("contrast"))
+                          self._settings.get("contrast"), self._mode)
             if self.header_holder.content is None or header_key != self._header_key:
                 self._header_key = header_key
                 self.header_holder.content = self.chrome.build_header()
             self.rail_container.width = self.rail()["rail"]
             self.rail_container.content = self.chrome.build_rail()
+        self.rail_container.visible = self._show_rail()
         show_sidebar = self._show_sidebar()
         self.sidebar_container.visible = show_sidebar
         self.sidebar_container.content = self.chrome.build_sidebar() if show_sidebar else None
@@ -352,11 +383,8 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         self.content_holder.padding = (ft.Padding.only(left=22, top=4, right=22, bottom=0) if on_grid
                                        else ft.Padding.all(0))
         inspector = self.inspector_panel.build_inspector() if self._inspector_visible() else None
-        floating = inspector is not None and self._inspector_floats()
-        self.inspector_container.visible = inspector is not None and not floating
-        self.inspector_container.content = None if floating else inspector
-        self.inspector_overlay.visible = floating
-        self.inspector_overlay.content = inspector if floating else None
+        self.inspector_overlay.visible = inspector is not None
+        self.inspector_overlay.content = inspector
 
     def set_visible(self, visible: bool):
         visible = bool(visible)
@@ -382,6 +410,36 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         return Wg.icon_slot(app, size, radius, glyph=glyph, border=border,
                             glyph_color=glyph_color, bgcolor=bgcolor, cat=cat,
                             source_glyph=kind or _source_glyph(app.get("source")))
+
+    def set_mosaic(self, rec, size: int, radius: int):
+        by_id = {a["id"]: a for a in self.apps()}
+        members = [by_id[i] for i in rec.get("apps", []) if i in by_id][:4]
+        cell = Wg.mosaic_cell(size, len(members))
+        cells = [self.icon_slot(a, cell, max(2, cell // 4), glyph=max(8, round(cell * 0.6)))
+                 for a in members]
+        return Wg.mosaic(cells, size, radius)
+
+    def check_missing(self):
+        """Какие файлы пропали с диска — в фоне: при запуске и после правок.
+
+        Только под Windows: пути в библиотеке — пути Windows, а сеть (\\\\сервер)
+        не трогаем вовсе, чтобы не ждать спящий диск.
+        """
+        if os.name != "nt":
+            return
+
+        def work():
+            from ..platform.launcher import file_missing
+            gone = {a["id"] for a in self.store.state()["apps"] if file_missing(a)}
+            if gone != self.missing:
+                self.missing = gone
+                self.background_refresh(content_only=True)
+        self.in_background(work)
+
+    def set_missing(self, app_id: str, missing: bool):
+        if missing == (app_id in self.missing):
+            return
+        self.missing = (self.missing | {app_id}) if missing else (self.missing - {app_id})
 
     def is_all_view(self):
         return self.view.is_all_view()
@@ -427,6 +485,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
 
     def open_triage(self):
         self.view.set_screen("triage")
+        self.toast.dismiss_if(self.open_triage)
         self.refresh()
 
     def _open_set(self, set_id):
@@ -466,6 +525,7 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         if cb:
             cb()
         self.refresh()
+        self.check_missing()
 
     def _on_store_error(self, message):
         try:

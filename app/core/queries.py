@@ -19,33 +19,56 @@ SOURCES = {
     "manual": {"label": "Вручную", "icon": "folder_open", "cat": None},
     "": {"label": "Другое", "icon": "folder", "cat": None},
 }
-SOURCE_ORDER = ("manual", "steam", "epic", "startmenu", "store", "registry", "localapps", "")
 
+# Словарь известных программ: по имени и пути программа получает несколько
+# «видов» по порядку, а категорией становится первая подходящая из тех, что
+# есть у человека. Мессенджеры раньше падали в «Работу» даже при наличии
+# «Общения»: Zoom и WhatsApp числились только там или нигде.
 _CATEGORY_HINTS = (
+    ("games", ("steam", "epic games", "gog galaxy", "battle.net", "ubisoft connect",
+               "origin", "ea app", "riot client", "roblox", "minecraft", "playnite",
+               "amazon games", "xbox", "lutris", "heroic games")),
     ("dev", ("jetbrains", "pycharm", "intellij", "webstorm", "rider", "clion", "goland",
              "phpstorm", "datagrip", "android studio", "visual studio", "vscode",
-             "vs code", "sublime text", "notepad++", "git", "github", "gitlab", "docker",
+             "vs code", "sublime text", "notepad++", "git bash", "git gui", "git-cmd",
+             "\\git\\", "github", "gitlab", "docker",
              "postman", "insomnia", "dbeaver", "putty", "windows terminal", "cmder",
-             "sourcetree", "unity", "godot", "unreal editor", "node.js", "python",
+             "sourcetree", "unity hub", "unity editor", "\\unity\\", "godot",
+             "unreal editor", "node.js", "python",
              "arduino", "xcode", "eclipse", "netbeans", "wireshark", "fiddler",
              "kubernetes", "vmware", "virtualbox", "wsl", "powershell", "mysql workbench",
-             "sql server management", "azure data studio", "figma dev mode")),
+             "sql server management", "azure data studio", "figma dev mode", "cursor")),
     ("create", ("photoshop", "illustrator", "premiere", "after effects", "lightroom",
                 "indesign", "figma", "blender", "krita", "gimp", "inkscape", "affinity",
-                "davinci", "obs", "audacity", "reaper", "ableton", "fl studio",
+                "davinci", "obs studio", "obs64", "audacity", "reaper", "ableton",
+                "fl studio",
                 "cubase", "capture one", "clip studio", "paint.net", "sketch",
                 "substance", "cinema 4d", "maya", "3ds max", "canva", "procreate",
                 "vegas pro", "camtasia", "streamlabs", "vmix", "nuke", "houdini",
                 "toon boom", "shotcut", "kdenlive", "corel painter", "coreldraw",
-                "xd", "webflow")),
-    ("games", ("steam", "epic games", "gog galaxy", "battle.net", "ubisoft connect",
-               "origin", "ea app", "riot client", "roblox", "minecraft", "playnite",
-               "amazon games", "xbox")),
+                "adobe xd", "webflow")),
+    ("chat", ("telegram", "whatsapp", "discord", "viber", "signal", "skype", "zoom",
+              "microsoft teams", "slack", "wechat", "icq", "mattermost",
+              "rocket.chat", "messenger", "мессенджер", "vk messenger", "teamspeak",
+              "mumble", "thunderbird", "outlook", "почта", "mail")),
+    ("browser", ("chrome", "firefox", "microsoft edge", "msedge", "opera", "brave",
+                 "vivaldi", "yandex browser", "яндекс браузер", "browser", "tor browser",
+                 "chromium", "waterfox", "librewolf")),
+    ("media", ("spotify", "vlc", "yandex music", "яндекс музыка", "itunes", "foobar",
+               "aimp", "media player", "winamp", "mpc-hc", "potplayer", "kodi", "plex",
+               "netflix", "youtube music", "audible", "deezer", "tidal", "kinopoisk",
+               "кинопоиск")),
+    ("utils", ("7-zip", "winrar", "everything", "powertoys", "ccleaner",
+               "process explorer", "total commander", "far manager", "sharex",
+               "greenshot", "lightshot", "keepass", "bitwarden", "1password", "qbittorrent",
+               "utorrent", "revo uninstaller", "cpu-z", "hwinfo", "afterburner", "rufus",
+               "autoruns", "rainmeter", "f.lux", "autohotkey", "translator", "переводчик")),
     ("work", ("outlook", "microsoft word", "winword", "excel", "powerpoint", "onenote",
               "microsoft teams", "slack", "zoom", "skype", "notion", "trello", "asana",
               "jira", "confluence", "miro", "todoist", "1c", "1с", "sap", "sharepoint",
               "adobe acrobat", "acrobat reader", "google docs", "google sheets",
-              "yandex.disk", "mail.ru", "citrix workspace", "anydesk", "teamviewer")),
+              "yandex.disk", "mail.ru", "citrix workspace", "anydesk", "teamviewer",
+              "obsidian", "evernote", "libreoffice", "wps office", "onlyoffice")),
 )
 
 _CATEGORY_NAME_HINTS = {
@@ -53,6 +76,12 @@ _CATEGORY_NAME_HINTS = {
     "dev": ("разработ", "программир", "код", "development", "coding", "programming",
             "software", "engineer", "инженер"),
     "create": ("творч", "дизайн", "creat", "design", "монтаж", "рисован", "иллюстрац"),
+    "chat": ("общен", "мессендж", "связь", "чат", "chat", "messag", "social", "соц",
+             "почт", "mail"),
+    "browser": ("браузер", "browser", "интернет", "internet", "сеть", "web"),
+    "media": ("музык", "видео", "медиа", "кино", "media", "music", "video", "плеер",
+              "развлеч", "entertain"),
+    "utils": ("утилит", "систем", "инструмент", "tool", "util", "system", "сервис"),
     "work": ("работ", "офис", "work", "office", "продуктивн", "productiv",
              "бизнес", "business", "документ", "document"),
 }
@@ -303,32 +332,60 @@ def palette_actions(app: dict | None) -> list[dict]:
     return out
 
 
+def category_kinds(item: dict) -> list[str]:
+    """Виды программы по словарю — от самого точного к запасному."""
+    kinds = []
+    source_kind = SOURCES.get((item.get("source") or "").lower(), {}).get("cat")
+    if source_kind:
+        kinds.append(source_kind)
+    haystack = f"{item.get('name', '')} {item.get('path', '')}".lower()
+    for cid, needles in _CATEGORY_HINTS:
+        if cid not in kinds and any(n in haystack for n in needles):
+            kinds.append(cid)
+    return kinds
+
+
 def suggest_category(item: dict, categories: list[dict]) -> str | None:
     if not categories:
         return None
-    kind = SOURCES.get((item.get("source") or "").lower(), {}).get("cat")
-    if not kind:
-        haystack = f"{item.get('name', '')} {item.get('path', '')}".lower()
-        for cid, needles in _CATEGORY_HINTS:
-            if any(n in haystack for n in needles):
-                kind = cid
-                break
-    match = _category_for_kind(categories, kind) if kind else None
-    return match or categories[0]["id"]
+    for kind in category_kinds(item):
+        match = _category_for_kind(categories, kind)
+        if match:
+            return match
+    # Ничего не подошло — «Работа», если она есть, иначе первая категория.
+    return _category_for_kind(categories, "work") or categories[0]["id"]
 
 
-def suggest_categories(item: dict, categories: list[dict], limit: int = 4) -> list[dict]:
+# На экране новых программ цифрами 1–9 выбираются первые девять категорий,
+# остальные — через «Ещё…». Раньше их было четыре, и пятая категория
+# («Игры») просто не предлагалась.
+TRIAGE_KEYS = 9
+
+
+def suggest_categories(item: dict, categories: list[dict],
+                       limit: int | None = None) -> list[dict]:
+    """Все категории, первой — та, что подходит программе лучше всего."""
     if not categories:
         return []
     best = suggest_category(item, categories)
     ordered = [c for c in categories if c["id"] == best]
     ordered += [c for c in categories if c["id"] != best]
-    return ordered[:limit]
+    return ordered[:limit] if limit else ordered
+
+
+MANUAL_GROUP = "manual"
 
 
 def group_found(found: list[dict], existing_keys: set, categories: list[dict],
                 only_new: bool = False, query: str = "") -> list[dict]:
+    """Найденное — группами по категории, куда программа ляжет.
+
+    Раньше группы шли по источнику (Steam, меню «Пуск», реестр): человеку
+    всё равно, откуда программа, ему важно, где она окажется. Источник
+    остаётся мелкой подписью у строки. Добавленное вручную — первой группой.
+    """
     q = (query or "").strip().lower()
+    by_id = {c["id"]: c for c in categories}
     buckets: dict[str, list[dict]] = {}
     for item in found:
         path = (item.get("path") or "").strip()
@@ -341,26 +398,39 @@ def group_found(found: list[dict], existing_keys: set, categories: list[dict],
         if source not in SOURCES:
             source = ""
         key = launch_key(item)
-        buckets.setdefault(source, []).append({
+        cat = suggest_category(item, categories)
+        group = MANUAL_GROUP if source == "manual" else (cat or "")
+        buckets.setdefault(group, []).append({
             "key": key,
             "item": item,
             "name": name,
             "path": path,
+            "source": source,
+            "source_label": SOURCES[source]["label"],
             "is_new": key not in existing_keys,
-            "cat": suggest_category(item, categories),
+            "cat": cat,
         })
 
+    order = [MANUAL_GROUP] + [c["id"] for c in categories] + [""]
+    order += [k for k in buckets if k not in order]
     groups = []
-    for source in SOURCE_ORDER:
-        rows = buckets.get(source)
+    for key in order:
+        rows = buckets.get(key)
         if not rows:
             continue
         rows.sort(key=lambda r: r["name"].lower())
         shown = [r for r in rows if r["is_new"]] if only_new else rows
         if not shown:
             continue
-        meta = SOURCES[source]
-        groups.append({"source": source, "label": meta["label"], "icon": meta["icon"],
+        cat = by_id.get(key)
+        if key == MANUAL_GROUP:
+            label, icon = "Добавлено вами", SOURCES["manual"]["icon"]
+        elif cat:
+            label, icon = cat["name"], cat.get("icon") or "folder"
+        else:
+            label, icon = "Без категории", "folder"
+        groups.append({"group": key, "source": key if key == MANUAL_GROUP else "",
+                       "label": label, "icon": icon, "cat": cat,
                        "rows": shown, "total": len(rows),
                        "new": sum(1 for r in rows if r["is_new"])})
     return groups

@@ -156,13 +156,13 @@ class Session:
             time.sleep(0.1)
         raise CheckFailed(f"не дождался: {what}. Состояние: {json.dumps(last, ensure_ascii=False)}")
 
-    def click(self, x: int, y: int) -> None:
+    def click(self, x: int, y: int, button: str = "1") -> None:
         gx, gy = self.geometry.get("X", 0) + x, self.geometry.get("Y", 0) + y
         # Без --sync: если указатель уже стоит в этой точке (второй щелчок по
         # тому же месту), xdotool ждёт движения, которого не будет.
         self.xdo("mousemove", str(gx), str(gy))
         time.sleep(0.1)
-        self.xdo("click", "1")
+        self.xdo("click", button)
 
     def drag(self, start: tuple[int, int], end: tuple[int, int], steps: int = 8) -> None:
         """Как человек: нажал, подержал, повёл и отпустил."""
@@ -206,6 +206,13 @@ class Session:
         Ctrl+K уходила мимо.
         """
         time.sleep(1.0)
+
+
+# «Добавить» в панели над сеткой, окно 1280×720: правый край минус отступ.
+ADD_BUTTON = (1210, 84)
+# Середина первой плитки (по алфавиту это Figma): над ней ряд «Быстрый
+# запуск» и заголовок категории.
+FIRST_TILE = (388, 356)
 
 
 def scenarios(s: Session):
@@ -258,11 +265,10 @@ def scenarios(s: Session):
         s.wait(lambda st: not st["palette_open"], "Esc закрыл палитру")
 
     def tab_keeps_typing_in_the_search():
-        # Над настройками: там есть другое поле (цвет акцента), куда Flutter
-        # уводил фокус по Tab, — и продолжение запроса набиралось туда.
-        s.key("ctrl+comma")
-        s.wait(lambda st: st["screen"] == "settings", "открылись настройки")
-        accent = s.state()["accent"]
+        # Над «Найти и добавить»: там своё поле ввода, куда Flutter уводил
+        # фокус по Tab, — и продолжение запроса набиралось туда.
+        s.click(*ADD_BUTTON)
+        s.wait(lambda st: st["screen"] == "add", "открылся экран «Найти и добавить»")
         s.key("ctrl+k")
         s.human_pause()
         s.type("tel")
@@ -275,7 +281,7 @@ def scenarios(s: Session):
         # заменит («e» вместо «tele») — это не страшно. Страшно было, когда
         # буквы уходили в другое поле окна и меняли, например, цвет или имя.
         s.wait(lambda st: st["query"] in ("tele", "e") and st["typing"] == "search"
-               and st["accent"] == accent,
+               and not st["add_query"] and not st["add_path"],
                "после Tab буквы по-прежнему идут в поиск, а не в другое поле окна")
         s.key("Escape")
         s.wait(lambda st: not st["palette_open"], "Esc закрыл палитру")
@@ -289,9 +295,7 @@ def scenarios(s: Session):
         s.wait(lambda st: st["screen"] == "grid", "Esc вернул к библиотеке")
 
     def dragging_a_tile_does_not_launch_it():
-        # Середина первой плитки (по алфавиту это Figma) в окне 1280×720:
-        # над ней ряд «Быстрый запуск» и заголовок категории.
-        tile = (408, 373)
+        tile = FIRST_TILE
         before = s.state()["launched"]
         s.drag(tile, (tile[0], tile[1] + 260))
         time.sleep(1)
@@ -302,10 +306,23 @@ def scenarios(s: Session):
         s.wait(lambda st: st["launched"] == [*before, "Figma"],
                "щелчок по той же плитке запустил Figma")
 
+    def right_click_opens_the_menu():
+        # Правый щелчок по плитке — меню, как везде в Windows, а не панель
+        # свойств; сама плитка при этом не запускается.
+        before = s.state()["launched"]
+        s.human_pause()
+        s.click(*FIRST_TILE, button="3")
+        s.wait(lambda st: st["menu"] and not st["inspector"],
+               "правый щелчок открыл меню плитки, а не панель свойств")
+        s.key("Escape")
+        s.wait(lambda st: not st["menu"], "Esc закрыл меню")
+        if s.state()["launched"] != before:
+            raise CheckFailed("правый щелчок запустил программу")
+
     return [search_takes_text_after_click, enter_launches_first_row,
             second_click_keeps_focus, arrows_pick_the_row_to_launch,
             ctrl_k_opens_search, tab_keeps_typing_in_the_search, settings_open_and_close,
-            dragging_a_tile_does_not_launch_it]
+            right_click_opens_the_menu, dragging_a_tile_does_not_launch_it]
 
 
 def screenshot(path: Path) -> None:

@@ -8,26 +8,26 @@ from ..format import T
 
 
 def _caps(text):
-    return T(text, size=10.5, weight=ft.FontWeight.W_600, color=C.MUTED_2,
-             style=ft.TextStyle(letter_spacing=0.85))
+    return T(text, size=C.FS_CAPTION, weight=ft.FontWeight.W_600, color=C.MUTED_2,
+             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS,
+             style=ft.TextStyle(letter_spacing=0.8))
 
 
 def _screen_header(title, subtitle, on_close, extra=None):
     right = list(extra or [])
-    right.append(ft.Container(ft.Icon(ft.Icons.CLOSE, size=20, color=C.MUTED_2),
-                              width=32, height=32, alignment=ft.Alignment.CENTER,
-                              on_click=lambda e: on_close(), tooltip="Закрыть"))
-    lines = [T(title, size=19, weight=ft.FontWeight.BOLD, color=C.TEXT)]
+    right.append(Wg.icon_btn(ft.Icons.CLOSE, "Закрыть", on_close, size=36, glyph=20))
+    lines = [T(title, size=C.FS_HEADING, weight=ft.FontWeight.BOLD, color=C.TEXT)]
     if subtitle:
-        lines.append(T(subtitle, size=12.5, color=C.MUTED_2))
+        lines.append(T(subtitle, size=C.FS_SMALL, color=C.MUTED_2))
     return ft.Container(
         ft.Row([ft.Column(lines, spacing=4, expand=True, tight=True)] + right,
                spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.Padding.only(left=24, top=20, right=24, bottom=16),
-        border=ft.Border.only(bottom=ft.BorderSide(1, C.LINE_2)))
+        padding=ft.Padding.only(left=24, top=20, right=16, bottom=16),
+        border=ft.Border.only(bottom=ft.BorderSide(1, C.LINE)))
 
 
-def _field(view, key, value, hint, on_change=None, on_submit=None, mono=False, size=13):
+def _field(view, key, value, hint, on_change=None, on_submit=None, mono=False, size=None):
+    size = size or C.FS_BODY
     return Wg.track_typing(ft.TextField(
         value=value or "", hint_text=hint, border=ft.NoInputBorder(), filled=False,
         dense=True, text_size=size, color=C.TEXT, cursor_color=C.TEXT, expand=True,

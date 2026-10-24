@@ -122,7 +122,7 @@ def _start(page: ft.Page):
     start_hidden = "--hidden" in sys.argv or (not is_web and autostart.started_minimized())
 
     page.title = "Centurio"
-    page.bgcolor = C.BG_1
+    page.bgcolor = C.BG
     page.padding = 0
     page.spacing = 0
     page.theme_mode = ft.ThemeMode.DARK
@@ -347,6 +347,13 @@ def _start(page: ft.Page):
     threading.Thread(target=_backfill, daemon=True).start()
     _optional("меню трея", refresh_runtime)
     _optional("монитор запущенных программ", launcher.start_monitor)
+    _optional("проверка файлов на диске", ui.check_missing)
+
+    def on_brightness(e):
+        # «Как в Windows»: светлая или тёмная тема приложений сменилась на ходу.
+        if ui.setting("appearance") == "system":
+            ui.background_refresh()
+    page.on_platform_brightness_change = on_brightness
     _optional("предложения на пустой библиотеке", ui.scan.offer_first_run)
     if os.environ.get("CENTURIO_UI_CHECK"):
         from app.ui import ui_check

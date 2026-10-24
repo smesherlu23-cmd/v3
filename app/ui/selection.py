@@ -60,6 +60,17 @@ class SelectionMixin:
             idx = self.view.selected if 0 <= self.view.selected < len(flat) else 0
         self._launch(flat[idx]["id"])
 
+    def open_selected_menu(self):
+        """Shift+F10 или клавиша меню — меню плитки, выбранной стрелками."""
+        if self.view.screen != "grid" or self.view.active_set:
+            return
+        with self._refresh_lock:
+            flat = self._flat_apps()
+            if not 0 <= self.view.selected < len(flat):
+                return
+            app = flat[self.view.selected]
+        self.context_menus.app_menu(app, None)
+
     def toggle_select_mode(self):
         if self.view.select_mode:
             self.view.leave_select_mode()

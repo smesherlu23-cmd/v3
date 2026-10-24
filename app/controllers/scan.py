@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core import queries
-from ..core.text import KINDS, launch_key, plu_apps
+from ..core.text import KINDS, launch_key, looks_like_target, plu_apps
 from ..infra import log
 from ..platform import discovery
 from . import targets
@@ -119,7 +119,11 @@ class ScanController:
         """Открыть весь список найденного с уже отмеченными предложениями."""
         picked = {s["key"] for s in self.suggestions() if s["on"]}
         self.ui.open_add()
-        self.ui.view.add_sel |= picked
+        view = self.ui.view
+        # Здесь отмечено то, что выбрал человек на карточках, — без
+        # предвыбора всего нового: остальное найденное им не пользуется.
+        view.add_sel = set(picked)
+        view.add_seen |= {launch_key(f) for f in self.cached_discovery() or []}
         self.ui.refresh()
 
     def _repair_bare_shortcuts(self, found) -> int:
@@ -211,6 +215,22 @@ class ScanController:
                                    only_new=self.ui.view.only_new,
                                    query=self.ui.view.add_query)
 
+    def preselect_new(self, groups=None):
+        """Новое отмечено сразу: обычно добавляют почти всё, и снять одну
+        галочку проще, чем поставить семь. Снятая отметка не возвращается.
+
+        Зовётся при показе экрана: отмечается то, что человек видит.
+        """
+        view = self.ui.view
+        seen = getattr(view, "add_seen", None)
+        if seen is None:
+            return
+        for group in self.found_groups() if groups is None else groups:
+            for row in group["rows"]:
+                if row["is_new"] and row["key"] not in seen:
+                    seen.add(row["key"])
+                    view.add_sel.add(row["key"])
+
     def toggle_only_new(self):
         self.ui.view.only_new = not self.ui.view.only_new
         self.ui.refresh()
@@ -218,6 +238,22 @@ class ScanController:
     def set_add_query(self, text):
         self.ui.view.add_query = text or ""
         self.ui.refresh()
+
+    def set_add_input(self, text):
+        """Одно поле на экране: имя ищет среди найденного, путь или адрес
+        предлагается добавить как есть."""
+        text = text or ""
+        if looks_like_target(text):
+            self.ui.view.manual_path = text
+            self.ui.view.add_query = ""
+        else:
+            self.ui.view.manual_path = ""
+            self.ui.view.add_query = text
+        self.ui.refresh()
+
+    def submit_add_input(self, text):
+        if looks_like_target(text or ""):
+            self.add_manual_path(text)
 
     def set_manual_path(self, text):
         self.ui.view.manual_path = text or ""
@@ -304,8 +340,8 @@ class ScanController:
         queued = self.store.queue_inbox([r["item"] for r in chosen])
         self.ui.view.reset_add()
         self.ui.view.set_screen("grid")
-        self.notify.show(f"В разборе: {queued}", icon="inbox", tone="muted",
-                           action=self.ui.open_triage, action_label="Разобрать")
+        self.notify.show(f"Отложено: {queued} — ждут в «Новых программах»", icon="inbox",
+                         tone="muted", action=self.ui.open_triage, action_label="Посмотреть")
         self.ui.on_library_changed()
 
     def _restore_added(self, records):
@@ -400,11 +436,10 @@ class ScanController:
                 if new and self.store.state()["settings"].get("triage", True):
                     queued = self.store.queue_inbox(new)
                     self.ui.on_library_changed()
-                    if queued:
-                        word = "новая программа ждёт" if queued == 1 else "новые программы ждут"
-                        self.notify.show(f"{queued} {word} в разборе", icon="inbox", tone="good",
-                                         action=self.ui.open_triage, action_label="Разобрать",
-                                         wait_for_undo=True)
+                    if queued and self.ui.view.screen != "triage":
+                        self.notify.show(f"Нашлись новые программы: {queued}", icon="inbox",
+                                         tone="good", action=self.ui.open_triage,
+                                         action_label="Посмотреть", wait_for_undo=True)
                     return
                 self.ui.on_library_changed()
                 if new:

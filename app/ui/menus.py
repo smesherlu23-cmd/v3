@@ -7,7 +7,7 @@ from . import widgets as Wg
 from .format import T, as_icon, cat_icon
 
 ROW_H = 36
-HEADER_H = 44
+HEADER_H = 48
 SEPARATOR_H = 11
 SUBMENU_W = 240
 
@@ -110,11 +110,12 @@ class MenuHost:
     def _card(self, rows, header, width, height=None):
         children = []
         if header is not None:
-            children += [header, ft.Container(height=1, bgcolor=C.LINE_2,
-                                              margin=ft.Margin.only(left=4, top=0, right=4, bottom=6))]
+            children += [header, ft.Container(height=1, bgcolor=C.LINE,
+                                              margin=ft.Margin.only(left=4, right=4, bottom=6))]
+        indent = any_icons(rows)
         for row in rows:
-            children.append(self._row(row) if row["kind"] == "item" else
-                            ft.Container(height=1, bgcolor=C.LINE_2,
+            children.append(self._row(row, indent) if row["kind"] == "item" else
+                            ft.Container(height=1, bgcolor=C.LINE,
                                          margin=ft.Margin.symmetric(vertical=5, horizontal=4)))
         full = height_of(rows) + (HEADER_H if header is not None else 0) + 16
         # Длинный список (много программ или категорий) не уходит за край окна,
@@ -124,34 +125,37 @@ class MenuHost:
             ft.Column(children, spacing=1, tight=not scroll,
                       scroll=ft.ScrollMode.AUTO if scroll else None),
             height=height if scroll else None,
-            width=width, bgcolor=C.PANEL, border=ft.Border.all(1, C.MENU_BORDER),
-            border_radius=14, padding=ft.Padding.all(8),
-            shadow=ft.BoxShadow(blur_radius=60, offset=ft.Offset(0, 24),
-                                color=C.SHADOW_MENU))
+            width=width, bgcolor=C.PANEL, border=ft.Border.all(1, C.LINE),
+            border_radius=C.R_LARGE, padding=ft.Padding.all(8),
+            shadow=ft.BoxShadow(blur_radius=48, offset=ft.Offset(0, 16),
+                                color=C.SHADOW))
 
-    def _row(self, row):
-        color = C.ERR_TEXT if row["danger"] else C.TEXT_2
+    def _row(self, row, indent: bool = False):
+        color = C.ERR_TEXT if row["danger"] else C.TEXT
         icon_color = C.ERR_TEXT if row["danger"] else C.MUTED
         if row["disabled"]:
-            color = icon_color = C.MUTED_3
+            color = icon_color = C.FAINT
         controls = []
         if row["icon"]:
-            controls.append(ft.Icon(as_icon(row["icon"]), size=17, color=icon_color))
-        controls.append(T(row["label"], size=13.5, color=color, expand=True,
+            controls.append(ft.Icon(as_icon(row["icon"]), size=16, color=icon_color))
+        elif indent:
+            controls.append(ft.Container(width=16))
+        controls.append(T(row["label"], size=C.FS_BODY, color=color, expand=True,
                           max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
         if row["hint"]:
-            controls.append(T(row["hint"], size=11, color=C.TEXT_FAINT,
-                              font_family="monospace" if len(row["hint"]) <= 3 else None))
+            controls.append(T(row["hint"], size=C.FS_CAPTION, color=C.MUTED_2,
+                              font_family="monospace" if len(row["hint"]) <= 5 else None))
         if row["submenu"]:
-            controls.append(ft.Icon(ft.Icons.CHEVRON_RIGHT, size=16, color=C.TEXT_FAINT))
+            controls.append(ft.Icon(ft.Icons.CHEVRON_RIGHT, size=16, color=C.FAINT))
 
         container = ft.Container(
             ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=ft.Padding.symmetric(vertical=9, horizontal=12), border_radius=9,
+            padding=ft.Padding.symmetric(vertical=8, horizontal=12), border_radius=C.R,
+            height=ROW_H,
             on_click=None if row["disabled"] else (lambda e, r=row: self._fire(r)))
         if not row["disabled"]:
             def on_hover(e, c=container):
-                c.bgcolor = C.PANEL_3 if Wg.entered(e) else None
+                c.bgcolor = C.RAISED if Wg.entered(e) else None
                 Wg.safe_update(c)
             container.on_hover = on_hover
         return container
@@ -172,29 +176,40 @@ class MenuHost:
             log.exception("не удалось обновить контекстное меню")
 
 
-def app_header(ui, app, running: bool):
-    row = [ui.icon_slot(app, 30, 9, glyph=16),
-           T(app["name"], size=14, weight=ft.FontWeight.BOLD, color=C.TEXT, expand=True,
-             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
-    if running:
-        row.append(ft.Container(width=6, height=6, border_radius=3, bgcolor=C.GREEN))
-    return ft.Container(ft.Row(row, spacing=11,
-                               vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))
+def any_icons(rows) -> bool:
+    """Есть ли в меню значки: тогда строки без значка получают отступ под него."""
+    return any(r.get("kind") == "item" and r.get("icon") for r in rows)
+
+
+def app_header(ui, app, running: bool, missing: bool = False):
+    lines = [T(app["name"], size=C.FS_BODY, weight=ft.FontWeight.BOLD, color=C.TEXT,
+               max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
+    if missing:
+        lines.append(T("файл не найден", size=C.FS_SMALL, color=C.WARN_TEXT))
+    elif running:
+        lines.append(T(ui.running_note(app), size=C.FS_SMALL, color=C.GREEN_TEXT))
+    return ft.Container(ft.Row([ui.icon_slot(app, 32, 8, glyph=16),
+                                ft.Column(lines, spacing=2, tight=True, expand=True)],
+                               spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=ft.Padding.only(left=12, top=8, right=12, bottom=8),
+                        height=HEADER_H)
 
 
 def text_header(label: str, count: str = ""):
-    row = [T(label, size=13.5, weight=ft.FontWeight.BOLD, color=C.TEXT, expand=True)]
+    row = [T(label, size=C.FS_BODY, weight=ft.FontWeight.BOLD, color=C.TEXT, expand=True,
+             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
     if count:
-        row.append(T(count, size=11, color=C.TEXT_FAINT))
-    return ft.Container(ft.Row(row, spacing=10), padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))
+        row.append(T(count, size=C.FS_SMALL, color=C.MUTED_2))
+    return ft.Container(ft.Row(row, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        padding=ft.Padding.only(left=12, top=8, right=12, bottom=8),
+                        height=HEADER_H)
 
 
 def category_header(ui, cat, count: int):
     return ft.Container(
         ft.Row([ft.Icon(cat_icon(cat.get("icon")), size=16, color=C.category_color(cat)),
-                T(cat["name"], size=13.5, weight=ft.FontWeight.BOLD, color=C.TEXT,
+                T(cat["name"], size=C.FS_BODY, weight=ft.FontWeight.BOLD, color=C.TEXT,
                   expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                T(str(count), size=11, color=C.TEXT_FAINT)],
-               spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=ft.Padding.only(left=12, top=10, right=12, bottom=12))
+                T(str(count), size=C.FS_SMALL, color=C.MUTED_2)],
+               spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=ft.Padding.only(left=12, top=8, right=12, bottom=8), height=HEADER_H)

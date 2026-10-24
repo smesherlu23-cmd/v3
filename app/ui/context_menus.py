@@ -23,6 +23,12 @@ class ContextMenus:
         self.ui.safe_refresh()
 
     def app_menu(self, app, e):
+        """Правый щелчок по плитке — меню, как везде в Windows.
+
+        Раньше он сразу открывал панель свойств, и «Показать в папке»,
+        «От имени администратора», «Переименовать» на сетке были спрятаны.
+        Панель теперь — последний пункт, «Свойства…».
+        """
         app = self.ui.store.get_app(app["id"]) or app
         if self.ui.view.select_mode:
             self._select_mode_menu(app, e)
@@ -30,7 +36,60 @@ class ContextMenus:
         if app["id"] in self.ui.view.sel and len(self.ui.view.sel) > 1:
             self._selection_menu(e)
             return
-        self.ui._select_tile(app["id"])
+        self._app_actions_menu(app, e)
+
+    def _app_actions_menu(self, app, e):
+        x, y = self.menu_at(e)
+        app_id = app["id"]
+        running = app_id in self.ui.running
+        missing = app_id in self.ui.missing
+        kind = app.get("kind")
+        rows = []
+        if missing:
+            rows.append(menus.item(ft.Icons.SEARCH, "Найти файл…",
+                                   lambda: self.ui._relocate(app_id)))
+        else:
+            rows.append(menus.item(
+                ft.Icons.SYNC_ALT if running
+                else (ft.Icons.OPEN_IN_NEW if kind else ft.Icons.PLAY_ARROW),
+                "Переключиться" if running else ("Открыть" if kind else "Запустить"),
+                lambda: self.ui._launch(app_id), hint="Enter"))
+            if not kind:
+                rows.append(menus.item(ft.Icons.ADD, "Открыть ещё окно",
+                                       lambda: self.ui._launch(app_id, again=True)))
+                rows.append(menus.item(ft.Icons.SHIELD, "От имени администратора",
+                                       lambda: self.ui._launch(app_id, as_admin=True)))
+        if kind != "web":
+            rows.append(menus.item(ft.Icons.FOLDER_OPEN, "Показать в папке",
+                                   lambda: self.ui._show_in_folder(app_id),
+                                   disabled=missing))
+        fav = bool(app.get("favorite"))
+        quick = bool(app.get("quick"))
+        rows += [
+            menus.separator(),
+            menus.item(ft.Icons.STAR if fav else ft.Icons.STAR_BORDER,
+                       "Убрать из избранного" if fav else "В избранное",
+                       lambda: self.ui._toggle_fav(app_id)),
+            menus.item(ft.Icons.BOLT,
+                       "Убрать из быстрого запуска" if quick else "В быстрый запуск",
+                       lambda: self.ui._toggle_quick(app_id, not quick)),
+            menus.item(ft.Icons.FOLDER, "Переложить в…",
+                       lambda: self.ui.menu.toggle_submenu(
+                           "cat", self._category_submenu([app_id]), y), submenu=True),
+            menus.item(ft.Icons.LAYERS, "В набор…",
+                       lambda: self.ui.menu.toggle_submenu(
+                           "set", self.set_submenu([app_id]), y), submenu=True),
+            menus.item(ft.Icons.EDIT, "Переименовать", lambda: self._rename(app_id)),
+            menus.separator(),
+            menus.item(ft.Icons.TUNE, "Свойства…", lambda: self.ui._select_tile(app_id)),
+            menus.item(ft.Icons.DELETE_OUTLINE, "Убрать из библиотеки",
+                       lambda: self.ui._remove_apps([app_id]), danger=True),
+        ]
+        self.ui.menu.show(x, y, rows, header=menus.app_header(self.ui, app, running, missing))
+
+    def _rename(self, app_id):
+        self.ui._select_tile(app_id)
+        self.ui.inspector_panel.focus_name()
 
     def _select_mode_menu(self, app, e):
         x, y = self.menu_at(e)
@@ -67,7 +126,8 @@ class ContextMenus:
         rows += [menus.separator(),
                  menus.item(ft.Icons.CLOSE, "Выйти из режима", self.ui.toggle_select_mode)]
         header = (menus.text_header(f"Выбрано {len(ids)}") if ids
-                  else menus.app_header(self.ui, app, app["id"] in self.ui.running))
+                  else menus.app_header(self.ui, app, app["id"] in self.ui.running,
+                                        app["id"] in self.ui.missing))
         self.ui.menu.show(x, y, rows, header=header)
 
     def _selection_menu(self, e):

@@ -49,7 +49,7 @@ class PaletteMixin:
         if not rows:
             return None
         if self.view.palette_focus == "actions":
-            return next((r for r in rows if r["kind"] == "app"), None)
+            return rows[min(self.view.palette_result, len(rows) - 1)]
         return rows[min(self.view.palette_index, len(rows) - 1)]
 
     def _palette_app(self, rows=None):
@@ -57,7 +57,9 @@ class PaletteMixin:
         current = self.palette_current(rows)
         if current is not None and current["kind"] == "app":
             return current["app"]
-        return next((r["app"] for r in rows if r["kind"] == "app"), None)
+        # У набора своих действий нет: «Открыть папку» первой попавшейся
+        # программы под строкой набора только путало.
+        return None
 
     def _render_palette(self):
         if not self.view.palette_open:

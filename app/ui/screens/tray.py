@@ -16,4 +16,4 @@ def library_summary(store) -> str:
     if not apps:
         return "библиотека пуста"
     text = f"{len(apps)} {plu_apps(len(apps))}"
-    return f"{text} · {waiting} в разборе" if waiting else text
+    return f"{text} · новых: {waiting}" if waiting else text

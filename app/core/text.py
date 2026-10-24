@@ -58,6 +58,22 @@ def web_address(raw: str) -> str | None:
     return "https://" + text
 
 
+def looks_like_target(raw: str) -> bool:
+    """Похоже ли введённое на путь или адрес сайта, а не на имя программы.
+
+    На экране «Найти и добавить» одно поле: имя ищет среди найденного, путь
+    или адрес предлагает добавить как есть.
+    """
+    text = (raw or "").strip().strip('"')
+    if not text:
+        return False
+    if re.match(r"^[a-zA-Z]:[\\/]", text) or text.startswith(("\\\\", "/", "~", "%")):
+        return True
+    if "\\" in text:
+        return True
+    return web_address(text) is not None
+
+
 def web_name(url: str) -> str:
     host = re.sub(r"^[a-z][a-z0-9+.-]*://", "", url or "", flags=re.IGNORECASE)
     host = re.split(r"[/?#]", host, maxsplit=1)[0].split("@")[-1]

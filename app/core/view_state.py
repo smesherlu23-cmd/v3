@@ -32,6 +32,8 @@ class ViewState:
         self.palette_open = False
         self.palette_index = 0
         self.palette_focus = "results"
+        # Строка выдачи, к которой относятся «Действия» после Tab.
+        self.palette_result = 0
         self.inspector: str | None = None
         self.sel: list[str] = []
         self.adv = False
@@ -57,6 +59,8 @@ class ViewState:
             if isinstance(collapsed, list) else set()
 
         self.settings_tab = "view"
+        # «Свои цвета» в настройках раскрыты: HEX, ползунки, тон фона, контраст.
+        self.custom_colors = False
 
         self.popover: str | None = None
 
@@ -64,6 +68,8 @@ class ViewState:
         self.add_query = ""
         self.manual_path = ""
         self.add_sel: set[str] = set()
+        # Что уже было предложено отметить: снятую отметку не ставим заново.
+        self.add_seen: set[str] = set()
         self.add_cat: dict[str, str] = {}
 
     def is_all_view(self):
@@ -85,6 +91,7 @@ class ViewState:
     def set_query(self, q):
         self.query = q
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def set_mode(self, m):
@@ -133,7 +140,11 @@ class ViewState:
         if screen in SCREENS:
             self.screen = screen
             self.active_set = None
-            self.typing = None
+            # Поля прежнего экрана исчезают вместе с ним, но строка поиска в
+            # шапке остаётся — и курсор в ней тоже: без этого Delete и
+            # стрелки в поиске на новом экране уходили бы в библиотеку.
+            if self.typing != SEARCH_FIELD:
+                self.typing = None
             self.close_palette()
             self.close_inspector()
 
@@ -149,12 +160,14 @@ class ViewState:
     def open_palette(self):
         self.palette_open = True
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def close_palette(self):
         self.palette_open = False
         self.query = ""
         self.palette_index = 0
+        self.palette_result = 0
         self.palette_focus = "results"
 
     def move_palette(self, delta: int, count: int):
@@ -164,12 +177,15 @@ class ViewState:
         self.palette_index = max(0, min(count - 1, self.palette_index + delta))
 
     def focus_palette_actions(self, count: int):
-        if self.palette_focus == "results" and count:
-            self.palette_focus = "actions"
-            self.palette_index = 0
+        """Tab: к действиям над выбранной строкой и обратно — к ней же."""
+        if self.palette_focus == "results":
+            if count:
+                self.palette_result = min(self.palette_index, count - 1)
+                self.palette_focus = "actions"
+                self.palette_index = 0
         else:
             self.palette_focus = "results"
-            self.palette_index = 0
+            self.palette_index = self.palette_result
 
     def clear_selection(self):
         self.sel = []
@@ -240,6 +256,7 @@ class ViewState:
 
     def reset_add(self):
         self.add_sel = set()
+        self.add_seen = set()
         self.add_cat = {}
         self.add_query = ""
         self.manual_path = ""
