@@ -157,6 +157,16 @@ def test_running_and_missing_marks_sit_on_the_icon():
         ui._launch(ids["Notion"])
         ok(ids["Notion"] not in ui.missing, "and the mark goes once it launches again")
 
+        ui.set_missing(ids["Excel"], True)
+        found = os.path.join(d, "excel.exe")
+        with open(found, "w") as fh:
+            fh.write("x")
+        ui.scan.backfill_icons_async = lambda: None
+        ui.relocating = ids["Excel"]
+        ui.scan.file_picked(found)
+        ok(ids["Excel"] not in ui.missing and store.get_app(ids["Excel"])["path"] == found,
+           "«Найти файл…» takes the mark off as soon as the new path is picked")
+
         from app.platform.launcher import file_missing
         ok(file_missing({"path": os.path.join(d, "nope.exe")}), "a missing file is noticed")
         ok(not file_missing({"path": d}), "an existing one is not")

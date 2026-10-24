@@ -364,6 +364,11 @@ class ScanController:
             steam = self._steam_redirect(path)
             patch = steam or {"path": path, "icon": None, "poster": None}
             self.store.update_app(target, patch)
+            # Файл нашёлся — метка «не найден» уходит сразу, не дожидаясь
+            # следующей проверки диска.
+            mark = getattr(self.ui, "set_missing", None)
+            if mark:
+                mark(target, False)
             self.notify.show("Путь обновлён — это игра Steam, запустится через клиент"
                               if steam else "Путь обновлён", icon="check")
             self.ui.on_library_changed()

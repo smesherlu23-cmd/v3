@@ -194,6 +194,9 @@ def _start(page: ft.Page):
     def show_window():
         _show_window(page)
         set_visible(True)
+        ui = ui_holder.get("ui")
+        if ui is not None:
+            ui.check_missing()
 
     def hide_window():
         _hide_window(page)

@@ -420,8 +420,9 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         return Wg.mosaic(cells, size, radius)
 
     def check_missing(self):
-        """Какие файлы пропали с диска — в фоне: при запуске и после правок.
+        """Какие файлы пропали с диска — в фоне: при запуске и при показе окна.
 
+        Пока Centurio сидел в трее, программу могли удалить или переставить.
         Только под Windows: пути в библиотеке — пути Windows, а сеть (\\\\сервер)
         не трогаем вовсе, чтобы не ждать спящий диск.
         """
@@ -525,7 +526,6 @@ class CenturioUI(PaletteMixin, SelectionMixin, LaunchMixin, AppEditsMixin, Categ
         if cb:
             cb()
         self.refresh()
-        self.check_missing()
 
     def _on_store_error(self, message):
         try:
