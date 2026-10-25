@@ -175,10 +175,10 @@ PALETTE_W = 640
 # Сетка как в Finder и Launchpad: значок без карточки, имя под ним. В ряд
 # на окне 1400 px входит девять программ.
 TILE_W = 104
-TILE_H = 116
+TILE_H = 130
 TILE_ICON = 60
 TILE_W_COMPACT = 88
-TILE_H_COMPACT = 100
+TILE_H_COMPACT = 112
 TILE_ICON_COMPACT = 48
 TILE_GAP = 12
 # Ряд быстрого запуска — полка в духе Dock: значки и подписи под ними.

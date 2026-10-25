@@ -307,7 +307,9 @@ class Chrome:
         footer = [
             self._row(self._icon(ft.Icons.INBOX_ROUNDED), "Новые программы",
                       view.screen == "triage", self.ui.open_triage, badge=waiting or None,
-                      tooltip=f"Новые программы · {waiting}" if waiting else None),
+                      # Подсказка нужна полосе значков: в панели число и так видно.
+                      tooltip=f"Новые программы · {waiting}"
+                      if waiting and not self.ui._sidebar_expanded() else None),
             self._row(self._icon(ft.Icons.SETTINGS_ROUNDED, C.MUTED), "Настройки", False,
                       self.ui._open_settings),
         ]

@@ -96,7 +96,8 @@ def test_sections_fold_by_their_title():
         store, chat, _ids = _library(d)
         ui, _ = _ui_for(store)
         heads = [c for c in _walk(ft.Column(ui.content_col.controls))
-                 if isinstance(c, ft.Container) and c.tooltip in ("Свернуть", "Развернуть")]
+                 if isinstance(c, ft.Container)
+                 and getattr(c.tooltip, "message", c.tooltip) in ("Свернуть", "Развернуть")]
         ok(len(heads) == 2, "each of the two sections can be folded")
         label = heads[1]
         row = label.content.controls
@@ -560,3 +561,91 @@ def test_small_layout_fixes():
         inner = C.POPOVER_W - 2 * 16 - 2
         need = len(C.CAT_PALETTE) * 24 + (len(C.CAT_PALETTE) - 1) * 5
         ok(need <= inner, f"the category colours fit one row ({need} of {inner} px)")
+
+
+def test_polish_details():
+    """Мелочи оформления: имя в две строки, звёздочка на значке, ровные заголовки,
+    «зебра» списка, обычный шрифт подсказок, подсказка пустой полки."""
+    problem = _ui_ready()
+    if problem:
+        skip("polish details test", problem)
+        return
+    import flet as ft
+
+    from app.ui import grid
+
+    with tempfile.TemporaryDirectory() as d:
+        store, chat, ids = _library(d)
+        store.update_app(ids["Excel"], {"name": "Microsoft Excel Professional",
+                                        "favorite": True})
+        ui, _ = _ui_for(store)
+        content = ft.Column(ui.content_col.controls)
+
+        names = [c for c in _walk(content) if isinstance(c, ft.Text)
+                 and c.value == "Microsoft Excel Professional"]
+        ok(names and names[0].max_lines == 2,
+           "a long name gets two lines under the icon, as in Finder")
+        ok(C.TILE_H >= 130, "and the cell is tall enough for them")
+
+        stars = [c for c in _walk(content) if isinstance(c, ft.Container)
+                 and getattr(c.tooltip, "message", c.tooltip) == "В избранном"]
+        icon_left = (C.TILE_W - C.TILE_ICON) / 2
+        ok(stars and icon_left - grid.STAR_BADGE <= stars[0].left <= icon_left,
+           "the favourite star sits on the icon's corner, not loose in the cell")
+
+        def head_row(name):
+            label = next(c for c in _walk(ft.Column(ui.content_col.controls))
+                         if isinstance(c, ft.Container) and isinstance(c.content, ft.Row)
+                         and name in _texts(c) and c.padding is not None
+                         and any(isinstance(x, ft.Icon) or (isinstance(x, ft.Container)
+                                                            and x.width == 18)
+                                 for x in c.content.controls[:1]))
+            return label.content.controls
+
+        before = head_row("Общение")
+        ui.toggle_select_mode()
+        after = head_row("Общение")
+        ok(isinstance(before[0], ft.Icon) and isinstance(after[0], ft.Container)
+           and after[0].width == 18,
+           "in select mode the fold arrow gives way to a spacer — the title stays put")
+        ui.toggle_select_mode()
+
+        ui._set_mode("list")
+        rows = [c for c in _walk(ft.Column(ui.content_col.controls))
+                if isinstance(c, ft.Container) and c.height == 40 and c.on_hover]
+        tints = {r.bgcolor for r in rows}
+        ok(len(rows) >= 2 and None in tints and len(tints) == 2,
+           "list rows alternate with a faint stripe, as in Finder")
+        ui._set_mode("grid")
+
+        shelf = _texts(ft.Column(ui.content_col.controls))
+        ok("Здесь будут ваши любимые программы" not in shelf,
+           "a shelf with pinned programs needs no hint")
+        store.update_app(ids["Notion"], {"quick": False})
+        ui.refresh()
+        shelf = _texts(ft.Column(ui.content_col.controls))
+        ok("Здесь будут ваши любимые программы" in shelf,
+           "an empty shelf says what it is for, next to its «+»")
+
+        ui._select_tile(ids["Excel"])
+        ui.view.adv = True
+        ui.refresh()
+        fields = [c for c in _walk(ui.inspector_overlay) if isinstance(c, ft.TextField)
+                  and c.hint_text == "не заданы"]
+        ok(fields and fields[0].hint_style.font_family == "Inter",
+           "a field's hint is in the normal font — mono stretched «не заданы»")
+        placeholders = [c for c in _walk(ui.inspector_overlay) if isinstance(c, ft.Text)
+                        and c.value in ("как у файла", "не определён")]
+        ok(placeholders and all(c.font_family != "mono" for c in placeholders),
+           "and so are the «как у файла» and «не определён» placeholders")
+
+        ui.context_menus.app_menu(store.get_app(ids["Excel"]), _tap())
+        hints = [c for c in _walk(ui.menu.card) if isinstance(c, ft.Text) and c.value == "Enter"]
+        ok(hints and hints[0].font_family != "mono",
+           "a menu's key hint is in the normal font, as in macOS menus")
+        ui.menu.close()
+
+        side = [c for c in _walk(ui.sidebar_container) if getattr(c, "tooltip", None)]
+        ok(not any("Новые программы ·" in str(getattr(c.tooltip, "message", c.tooltip))
+                   for c in side),
+           "the open sidebar shows the inbox count itself, without a tooltip repeating it")

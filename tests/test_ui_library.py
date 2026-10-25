@@ -254,8 +254,8 @@ def test_ui_matches_the_design_sizes():
         ok(_sized(content, C.DOCK_CELL, None) and (C.DOCK_CELL, C.DOCK_ICON) == (84, 48),
            "the quick-launch shelf holds 84 px cells with 48 px icons, like the Dock")
         # Как в Launchpad: значок без карточки, имя под ним.
-        ok(_sized(content, C.TILE_W, C.TILE_H) and (C.TILE_W, C.TILE_H) == (104, 116),
-           "a program cell is 104x116")
+        ok(_sized(content, C.TILE_W, C.TILE_H) and (C.TILE_W, C.TILE_H) == (104, 130),
+           "a program cell is 104x130 — room for a two-line name, as in Finder")
         ok(_sized(content, C.TILE_ICON, C.TILE_ICON) and C.TILE_ICON == 60,
            "with a 60 px icon")
         ok(_sized(content, C.POSTER_W, C.POSTER_H) and (C.POSTER_W, C.POSTER_H) == (104, 148),
