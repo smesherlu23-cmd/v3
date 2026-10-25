@@ -18,6 +18,15 @@ STATUS_H = 14
 DOCK_PAD = 8
 DOCK_SPACING = 4
 TIP_WAIT_MS = 700
+# Имя под значком — до двух строк; длиннее — целиком в подсказке.
+LABEL_LINES = 2
+LABEL_CHARS = 26
+# Звёздочка избранного — значком на углу иконки.
+STAR_BADGE = 18
+# «Зебра» списка: доля цвета текста в подложке каждой второй строки.
+STRIPE = 0.035
+# Подсказка на пустой полке — рядом с «+», в тот же ряд.
+DOCK_HINT_W = 360
 # Ячейка полки: отступ, значок, подпись, точка «открыто».
 DOCK_CELL_H = 4 + C.DOCK_ICON + 6 + 16 + 3 + 5 + 2
 
@@ -149,9 +158,14 @@ class GridView:
                 ("qcard", app["id"]), sig,
                 lambda a=app, ac=accel, r=running, m=missing: self._dock_app(a, ac, r, m)))
         free = free_quick_slot(self.ui.apps())
+        pinned = bool(cells)
         if free and (not cells or self._fits_in_row(len(cells))):
             cells.append(self._cached_piece(("qempty",), (self.ui._tile_epoch, free),
                                             lambda f=free: self._dock_empty(f)))
+        if not pinned:
+            # Пустая полка с одним «+» ничего не объясняла.
+            cells.append(self._cached_piece(("qhint",), self.ui._tile_epoch,
+                                            self._dock_hint))
 
         head = self._cached_piece(("qhead",), self.ui._tile_epoch, self._build_quick_head)
 
@@ -247,18 +261,30 @@ class GridView:
             self.ui._toast_hint_quick, label_color=C.FAINT)
         return cell
 
+    def _dock_hint(self):
+        return ft.Container(
+            ft.Column([T("Здесь будут ваши любимые программы", size=C.FS_BODY,
+                         weight=ft.FontWeight.W_500, color=C.TEXT_2),
+                       T("Правый щелчок по значку → «В быстрый запуск»", size=C.FS_SMALL,
+                         color=C.MUTED_2)],
+                      spacing=2, tight=True, alignment=ft.MainAxisAlignment.CENTER),
+            width=DOCK_HINT_W, height=DOCK_CELL_H, padding=ft.Padding.only(left=4, right=16),
+            alignment=ft.Alignment.CENTER_LEFT)
+
     def _section_head(self, sec, key, collapsible=True):
         cat = next((c for c in self.ui.categories() if c["id"] == sec.get("cid")), None)
-        collapsible = collapsible and bool(sec.get("cid")) and not self.ui.view.select_mode
+        foldable = collapsible and bool(sec.get("cid"))
+        collapsible = foldable and not self.ui.view.select_mode
         collapsed = collapsible and sec["cid"] in self.ui.view.collapsed
-        sig = (self.ui._tile_epoch, sec["name"], collapsed, collapsible, len(sec["apps"]),
+        sig = (self.ui._tile_epoch, sec["name"], collapsed, collapsible, foldable,
+               len(sec["apps"]),
                (cat.get("name"), cat.get("icon"), cat.get("color"), cat.get("image"))
                if cat else None)
         return self._cached_piece(
             ("head", key), sig,
-            lambda: self._build_section_head(sec, cat, collapsed, collapsible))
+            lambda: self._build_section_head(sec, cat, collapsed, collapsible, foldable))
 
-    def _build_section_head(self, sec, cat, collapsed, collapsible):
+    def _build_section_head(self, sec, cat, collapsed, collapsible, foldable=False):
         """Заголовок раздела сворачивает его щелчком по названию.
 
         Стрелка стоит слева от названия: значок 14 px у правого края окна, в
@@ -269,6 +295,10 @@ class GridView:
         if collapsible:
             row.append(ft.Icon(ft.Icons.CHEVRON_RIGHT_ROUNDED if collapsed
                                else ft.Icons.EXPAND_MORE_ROUNDED, size=18, color=C.FAINT))
+        elif foldable:
+            # В режиме выбора группы не сворачиваются, но название стоит на
+            # месте: без стрелки оно съезжало влево.
+            row.append(ft.Container(width=18))
         row += [Wg.cat_glyph(cat, size=16) if cat
                 else ft.Container(width=8, height=8, border_radius=4, bgcolor=C.FAINT),
                 T(sec["name"], size=C.FS_TITLE, weight=ft.FontWeight.W_600, color=C.TEXT),
@@ -276,7 +306,8 @@ class GridView:
         label = ft.Container(
             ft.Row(row, spacing=8, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding.symmetric(vertical=4, horizontal=6), border_radius=C.R,
-            tooltip=("Развернуть" if collapsed else "Свернуть") if collapsible else None,
+            tooltip=ft.Tooltip(message="Развернуть" if collapsed else "Свернуть",
+                               wait_duration=TIP_WAIT_MS) if collapsible else None,
             on_click=(lambda e, cid=sec["cid"]: self.ui._toggle_section(cid))
             if collapsible else None)
         if collapsible:
@@ -391,7 +422,7 @@ class GridView:
         """
         meta, _color, _mono = self._tile_meta(app, running)
         name = app["name"]
-        text = f"{name} · {meta}" if meta else (name if len(name) > 14 else None)
+        text = f"{name} · {meta}" if meta else (name if len(name) > LABEL_CHARS else None)
         if not text:
             return None
         return ft.Tooltip(message=text, wait_duration=TIP_WAIT_MS, prefer_below=True,
@@ -423,24 +454,40 @@ class GridView:
             mouse_cursor=ft.MouseCursor.CLICK, visible=visible,
             on_tap_down=lambda e, ap=app: self.ui.context_menus.app_menu(ap, e))
 
-    def _corner_marks(self, a, more):
+    def _corner_marks(self, a, more, star_at=(8, 6)):
         marks = []
         if self.ui.view.select_mode:
             marks.append(ft.Container(self._select_box(a["id"] in self.ui.view.sel),
                                       left=10, top=4))
             return marks
         if a.get("favorite"):
-            marks.append(ft.Container(ft.Icon(ft.Icons.STAR_ROUNDED, size=15, color=C.STAR),
-                                      left=8, top=6, tooltip="В избранном"))
+            # На углу самой иконки, на кружке цвета фона: в углу ячейки
+            # звёздочка висела отдельно от значка.
+            left, top = star_at
+            marks.append(ft.Container(
+                ft.Icon(ft.Icons.STAR_ROUNDED, size=13, color=C.STAR),
+                width=STAR_BADGE, height=STAR_BADGE, border_radius=STAR_BADGE / 2,
+                bgcolor=C.BG, alignment=ft.Alignment.CENTER, left=left, top=top,
+                shadow=ft.BoxShadow(blur_radius=3, offset=ft.Offset(0, 1),
+                                    color=C.with_alpha(C.INK, 0.3)),
+                tooltip="В избранном"))
         marks.append(ft.Container(more, right=6, top=4))
         return marks
 
+    @staticmethod
+    def _star_spot(width, size, top):
+        """Где встаёт звёздочка: на левом верхнем углу значка, чуть внутрь."""
+        corner = (width - size) / 2
+        return corner - STAR_BADGE / 2 + 3, top + ICON_PAD - STAR_BADGE / 2 + 3
+
     def _label(self, text, width, selected, size=C.FS_SMALL):
-        """Имя под значком. У выбранного — плашка акцента по ширине имени, как в Finder."""
+        """Имя под значком — в две строки, как в Finder: «Microsoft Excel» и
+        «Visual Studio Code» больше не обрезаются на полуслове. У выбранного —
+        плашка акцента по ширине имени."""
         accent = self.ui._accent()
         pill = ft.Container(
             T(text, size=size, weight=ft.FontWeight.W_500,
-              color=C.on_color(accent) if selected else C.TEXT, max_lines=1,
+              color=C.on_color(accent) if selected else C.TEXT, max_lines=LABEL_LINES,
               overflow=ft.TextOverflow.ELLIPSIS, text_align=ft.TextAlign.CENTER),
             bgcolor=accent if selected else None, border_radius=C.R_SMALL - 1,
             padding=ft.Padding.symmetric(vertical=1, horizontal=6),
@@ -481,10 +528,11 @@ class GridView:
 
         more = self._more_button(a)
         border = ft.Border.all(2, C.TRANSPARENT)
+        top = 4 if compact else 6
         tile = ft.Container(
-            ft.Stack([ft.Container(body, left=0, right=0, top=4 if compact else 6,
+            ft.Stack([ft.Container(body, left=0, right=0, top=top,
                                    alignment=ft.Alignment.TOP_CENTER)]
-                     + self._corner_marks(a, more)),
+                     + self._corner_marks(a, more, self._star_spot(width, size, top))),
             width=width, height=height, border=border, border_radius=C.R_LARGE,
             tooltip=self._tile_tip(a, running, height), animate=Wg.anim(C.ANIM_TILE))
         if box is not None:
@@ -521,7 +569,7 @@ class GridView:
                          spacing=0, tight=True,
                          horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         border = ft.Border.all(2, C.TRANSPARENT)
-        cell_h = height + 4 + 6 + 18 + STATUS_H + 6
+        cell_h = height + 4 + 6 + 32 + STATUS_H + 4
         # Ширина ячейки — как у значков: колонки игр и программ совпадают.
         tile = ft.Container(
             ft.Stack([ft.Container(body, left=0, right=0, top=4)]
@@ -553,7 +601,7 @@ class GridView:
 
     def _list(self, apps, key):
         ids = [a["id"] for a in apps]
-        rows = [self._list_row(a, ids) for a in apps]
+        rows = [self._list_row(a, ids, index % 2 == 1) for index, a in enumerate(apps)]
         self._used.add(("list", key))
         holder = self._section_holders.get(("list", key))
         if holder is None:
@@ -564,13 +612,15 @@ class GridView:
             holder.content.controls = rows
         return holder
 
-    def _list_row(self, a, ids):
-        """Строка списка как в Finder: без карточки, выбранная — залита акцентом."""
+    def _list_row(self, a, ids, striped=False):
+        """Строка списка как в Finder: без карточки, через одну — чуть темнее,
+        чтобы взгляд не терял строку на всю ширину окна; выбранная — залита
+        акцентом."""
         running = a["id"] in self.ui.running
         picked = a["id"] in self.ui.view.sel
         selected = picked or (not self.ui.view.select_mode and a["id"] == self.ui._sel_id)
         cat = self.ui.cat_of(a)
-        sig = self._tile_signature(a, running, selected, picked, cat)
+        sig = self._tile_signature(a, running, selected, picked, cat) + (striped,)
         self.ui._tiles_used.add(a["id"])
         hit = self.ui._tile_cache.get(a["id"])
         if hit is not None and hit[0] == sig:
@@ -610,7 +660,7 @@ class GridView:
                            bgcolor=accent if selected else None,
                            animate=Wg.anim(C.ANIM_FAST))
         if not selected:
-            Wg.hoverable(row, None, C.CARD)
+            Wg.hoverable(row, C.with_alpha(C.TEXT, STRIPE) if striped else None, C.CARD)
         built = ft.GestureDetector(
             row,
             on_tap=lambda e, i=a["id"], ib=ids_box: self.ui._tile_tap(i, ib["ids"], e),

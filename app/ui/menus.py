@@ -172,8 +172,8 @@ class MenuHost:
         controls.append(label)
         tinted.append((label, color))
         if row["hint"]:
-            hint = T(row["hint"], size=C.FS_CAPTION, color=C.MUTED_2,
-                     font_family="monospace" if len(row["hint"]) <= 5 else None)
+            # Клавиши — обычным шрифтом, как в меню macOS.
+            hint = T(row["hint"], size=C.FS_SMALL, color=C.MUTED_2)
             controls.append(hint)
             tinted.append((hint, C.MUTED_2))
         if row["submenu"]:

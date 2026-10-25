@@ -10,6 +10,8 @@ from ..format import T
 from .common import _caps, _field
 
 PANEL_PAD = 16
+# Разделитель в списке порядка — под текстом: ручка, значок и отступы.
+ORDER_TEXT_INDENT = 8 + 16 + 12 + 32 + 12
 
 
 def build_set_screen(ui, rec):
@@ -66,8 +68,7 @@ def _meta_divider():
 
 
 def _layout_column(ui, rec):
-    head = ft.Row([_caps("Раскладка"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
-                  spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+    head = _caps("Раскладка")
     panel = ft.Container(
         ft.Column([_canvas(ui, rec), _no_place(ui, rec)], spacing=12, tight=True),
         bgcolor=C.PANEL, border_radius=C.R_LARGE, padding=ft.Padding.all(PANEL_PAD))
@@ -285,22 +286,30 @@ def _preset_thumb(ui, rec, key):
 
 
 def _order_column(ui, rec):
-    head = ft.Row([_caps("Порядок запуска"), ft.Container(height=1, bgcolor=C.LINE, expand=True)],
-                  spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-    rows = [_order_row(ui, rec, entry) for entry in rec["items"]]
+    head = _caps("Порядок запуска")
+    # Порядок — одним списком на карточке с разделителями, как в настройках.
+    items = []
+    for entry in rec["items"]:
+        if items:
+            items.append(ft.Container(height=1, bgcolor=C.LINE,
+                                      margin=ft.Margin.only(left=ORDER_TEXT_INDENT)))
+        items.append(_order_row(ui, rec, entry))
+    rows = [ft.Container(ft.Column(items, spacing=0), bgcolor=C.CARD,
+                         border_radius=C.R_LARGE, clip_behavior=ft.ClipBehavior.ANTI_ALIAS)]
+    # Обычная второстепенная кнопка, как везде, а не единственная в окне с рамкой.
     add = ft.Container(
-        ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=C.MUTED),
-                T("Добавить программу", size=C.FS_BODY, color=C.TEXT_2)],
-               spacing=8, tight=True, alignment=ft.MainAxisAlignment.CENTER),
-        height=44, border_radius=C.R, border=ft.Border.all(1, C.BORDER),
-        alignment=ft.Alignment.CENTER,
+        ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, size=16, color=C.TEXT_2),
+                T("Добавить программу", size=C.FS_BODY, weight=ft.FontWeight.W_500,
+                  color=C.TEXT)],
+               spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER),
+        height=36, border_radius=C.R, alignment=ft.Alignment.CENTER,
         on_click=lambda e: ui.context_menus.add_to_set_picker(rec["id"], e))
-    rows.append(Wg.hoverable(add, None, C.RAISED))
+    rows.append(Wg.hoverable(add, C.CARD, C.RAISED))
     rows.append(_target_row(ui, rec))
 
     delay = ft.Container(
         ft.Row([T("без паузы" if not rec["delay_seconds"] else f"{rec['delay_seconds']:g} с",
-                  size=C.FS_SMALL, color=C.TEXT, font_family="monospace"),
+                  size=C.FS_BODY, color=C.TEXT),
                 ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED, size=14, color=C.FAINT)],
                spacing=4, tight=True),
         height=30, padding=ft.Padding.symmetric(horizontal=12),
@@ -351,11 +360,11 @@ def _order_row(ui, rec, entry):
              else "свёрнутым" if entry.get("minimized")
              else L.slot_label(conf["preset"], entry.get("slot"), conf["split"])
              or ("своё место" if placed else "без места"))
-    rest_bg = C.PANEL if muted else C.CARD
+    rest_bg = None
     row = ft.Container(
         ft.Row([
             ft.Icon(ft.Icons.DRAG_INDICATOR_ROUNDED, size=16, color=C.FAINT),
-            ui.icon_slot(app, 32, 8, glyph=16),
+            ui.icon_slot(app, 32, Wg.squircle(32), glyph=16),
             ft.Column([T(app["name"], size=C.FS_BODY, weight=ft.FontWeight.W_500,
                          color=C.TEXT_2 if muted else C.TEXT, max_lines=1,
                          overflow=ft.TextOverflow.ELLIPSIS),
@@ -366,7 +375,7 @@ def _order_row(ui, rec, entry):
                         lambda en=entry: ui.context_menus.set_item_menu(rec, en, None),
                         size=28, color=C.FAINT),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=52, padding=ft.Padding.only(left=8, right=8), border_radius=C.R,
+        height=52, padding=ft.Padding.only(left=8, right=8),
         bgcolor=rest_bg, border=ft.Border.all(1, C.TRANSPARENT))
     Wg.hoverable(row, rest_bg, C.RAISED)
     tapper = ft.GestureDetector(

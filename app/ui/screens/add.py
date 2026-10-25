@@ -8,6 +8,9 @@ from .. import widgets as Wg
 from ..format import T, cat_icon
 from .common import _field, _screen_header
 
+# Отступ разделителя в списке: под текстом, а не под флажком и значком.
+ROW_TEXT_INDENT = 12 + 18 + 12 + 32 + 12
+
 
 def _add_state(ui):
     state = ui._add_ui
@@ -198,16 +201,27 @@ def _add_group(ui, group):
     count = f"{len(picked)} из {len(keys)}" if keys else "уже в библиотеке"
     head = [ft.Icon(box, size=18, color=box_color), glyph,
             T(group["label"], size=C.FS_BODY, weight=ft.FontWeight.W_600, color=C.TEXT),
-            T(count, size=C.FS_SMALL, color=C.MUTED_2),
-            ft.Container(height=1, bgcolor=C.LINE, expand=True)]
+            T(count, size=C.FS_SMALL, color=C.MUTED_2)]
 
-    header = ft.Container(ft.Row(head, spacing=8,
+    header = ft.Container(ft.Row(head, spacing=8, tight=True,
                                  vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                          height=40, padding=ft.Padding.symmetric(horizontal=12),
+                          height=36, padding=ft.Padding.symmetric(horizontal=12),
+                          border_radius=C.R,
                           tooltip="Отметить или снять всю группу",
                           on_click=lambda e, g=group: ui.scan.toggle_add_group(g))
-    rows = [header] + [_add_row(ui, row) for row in group["rows"]]
-    return ft.Container(ft.Column(rows, spacing=2), padding=ft.Padding.only(bottom=12))
+    Wg.hoverable(header, None, C.CARD)
+    # Группа — одним списком на карточке с тонкими разделителями, как в
+    # настройках: отдельные плашки через 2 px рябили полосами.
+    items = []
+    for index, row in enumerate(group["rows"]):
+        if index:
+            items.append(ft.Container(height=1, bgcolor=C.LINE,
+                                      margin=ft.Margin.only(left=ROW_TEXT_INDENT)))
+        items.append(_add_row(ui, row))
+    card = ft.Container(ft.Column(items, spacing=0), bgcolor=C.CARD,
+                        border_radius=C.R_LARGE, clip_behavior=ft.ClipBehavior.ANTI_ALIAS)
+    return ft.Container(ft.Column([ft.Row([header]), card], spacing=4),
+                        padding=ft.Padding.only(bottom=16))
 
 
 def _add_row(ui, row):
@@ -241,18 +255,17 @@ def _add_row(ui, row):
                     ft.Icon(ft.Icons.SWAP_VERT_ROUNDED, size=14, color=C.FAINT)],
                    spacing=8, tight=True),
             height=28, padding=ft.Padding.symmetric(horizontal=12),
-            bgcolor=C.RAISED if checked else C.CARD, border_radius=14,
+            bgcolor=C.RAISED, border_radius=14,
             tooltip="Другая категория",
             on_click=lambda e, r=row: ui.scan.cycle_add_category(r))
         controls.append(chip)
 
-    rest = C.CARD if checked else None
     container = ft.Container(
         ft.Row(controls, spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        height=52, padding=ft.Padding.symmetric(horizontal=12), border_radius=C.R,
-        bgcolor=rest, opacity=0.5 if not row["is_new"] else 1,
+        height=52, padding=ft.Padding.symmetric(horizontal=12),
+        opacity=0.5 if not row["is_new"] else 1,
         on_click=lambda e, r=row: ui.scan.toggle_add_row(r))
-    return Wg.hoverable(container, rest, C.RAISED) if row["is_new"] else container
+    return Wg.hoverable(container, None, C.RAISED) if row["is_new"] else container
 
 
 def _add_footer(ui):

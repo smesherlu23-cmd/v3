@@ -26,7 +26,9 @@ def _field(view, key, value, hint, on_commit, mono=False, tooltip=None):
         color=C.TEXT, bgcolor=C.CARD, border_color=C.LINE, focused_border_color=C.BORDER,
         border_radius=C.R, cursor_color=C.TEXT, tooltip=tooltip,
         content_padding=ft.Padding.symmetric(horizontal=12),
-        hint_style=ft.TextStyle(color=C.MUTED_2, size=C.FS_SMALL),
+        # Подсказка — обычным шрифтом: моноширинный растягивал «не заданы»
+        # в «не  заданы». Моноширинный — только для набранного значения.
+        hint_style=ft.TextStyle(color=C.MUTED_2, size=C.FS_SMALL, font_family="Inter"),
         text_style=ft.TextStyle(font_family="mono") if mono else None, expand=True,
         on_blur=lambda e: on_commit(e.control.value),
         on_submit=lambda e: on_commit(e.control.value)), view, key)
@@ -237,7 +239,7 @@ class InspectorPanel:
             return f"Место {accel.split('+')[-1]} · {accel} в окне"
         if app.get("quick"):
             return "Свободных мест не осталось"
-        return "Появится в ряду сверху"
+        return "Появится на полке сверху"
 
     def _insp_advanced(self, app):
         args_value = " ".join(app.get("args") or []) if isinstance(app.get("args"), list) \
@@ -247,9 +249,8 @@ class InspectorPanel:
         head = ft.Container(
             ft.Row([ft.Icon(ft.Icons.EXPAND_MORE_ROUNDED if open_now else ft.Icons.CHEVRON_RIGHT_ROUNDED,
                             size=18, color=C.FAINT),
-                    Wg.caps("Параметры запуска"),
-                    ft.Container(height=1, bgcolor=C.LINE, expand=True)],
-                   spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    Wg.caps("Параметры запуска")],
+                   spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             on_click=lambda e: self.ui._toggle_adv())
         if not open_now:
             return ft.Container(head, padding=ft.Padding.only(left=PAD, top=24, right=PAD))
@@ -260,7 +261,8 @@ class InspectorPanel:
         workdir = (app.get("working_dir") or "").strip()
         folder = ft.Container(
             ft.Row([T(_short_path(workdir) if workdir else "как у файла", size=C.FS_SMALL,
-                      color=C.TEXT_2 if workdir else C.MUTED_2, font_family="monospace",
+                      color=C.TEXT_2 if workdir else C.MUTED_2,
+                      font_family="monospace" if workdir else None,
                       expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     Wg.icon_btn(ft.Icons.FOLDER_OPEN_ROUNDED, "Выбрать папку",
                                 lambda: self.ui._pick_working_dir(app["id"]), size=26)],
@@ -270,7 +272,8 @@ class InspectorPanel:
 
         proc = (app.get("track_exe") or "").strip()
         proc_box = ft.Container(
-            ft.Row([T(proc or "не определён", size=C.FS_SMALL, font_family="monospace",
+            ft.Row([T(proc or "не определён", size=C.FS_SMALL,
+                      font_family="monospace" if proc else None,
                       color=C.TEXT if proc else C.MUTED_2, expand=True,
                       max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                     T("найден" if proc and app["id"] in self.ui.running else "",
